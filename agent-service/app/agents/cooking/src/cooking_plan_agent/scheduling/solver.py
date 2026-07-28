@@ -1,6 +1,6 @@
 """CP-SAT solver — runs the model and maps solver statuses.
 
-Handbook 7.8 (Stage F): configure and run CP-SAT, then map every official
+Note: configure and run CP-SAT, then map every official
 CpSolverStatus to a domain SolverStatus.  Never treat UNKNOWN as INFEASIBLE.
 """
 
@@ -20,7 +20,7 @@ from cooking_plan_agent.scheduling.models import ScheduleResult
 class ScheduleSolver:
     """Configures and runs the CP-SAT solver on a ModelInfo.
 
-    Handbook 7.1: solves only — does not build models or extract results.
+    Note: solves only — does not build models or extract results.
 
     Usage::
 
@@ -49,6 +49,7 @@ class ScheduleSolver:
         # Log search progress only in verbose mode (not in tests).
         solver.parameters.log_search_progress = False
 
+        # Run the solver and measure wall-clock time.
         start_time = time.monotonic()
         cp_status = solver.solve(model_info.model)
         elapsed = time.monotonic() - start_time
@@ -63,7 +64,7 @@ class ScheduleSolver:
     def map_status(self, cp_status: int) -> SolverStatus:
         """Map CP-SAT's CpSolverStatus enum to domain SolverStatus.
 
-        Handbook 7.8 table:
+        Note:
         - OPTIMAL       → OPTIMAL
         - FEASIBLE      → FEASIBLE
         - INFEASIBLE    → INFEASIBLE

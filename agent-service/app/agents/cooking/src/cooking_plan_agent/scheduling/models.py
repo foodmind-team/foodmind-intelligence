@@ -1,6 +1,6 @@
 """Scheduling domain models — problem input, solution output, verification.
 
-Handbook 7.2: Domain-neutral scheduler input/output.  All durations are
+Domain-neutral scheduler input/output.  All durations are
 integer minutes because CP-SAT uses integer variables.
 
 See also
@@ -68,7 +68,7 @@ class ScheduledInterval(StrictModel):
 class ScheduleResult(StrictModel):
     """The output of one CP-SAT solve attempt.
 
-    Handbook 7.8: map CP-SAT statuses before exposing to callers.
+    Note: map CP-SAT statuses before exposing to callers.
     """
 
     status: SolverStatus
@@ -108,7 +108,7 @@ class VerificationIssue(StrictModel):
 class VerificationReport(StrictModel):
     """Independent verification report — does not use OR-Tools APIs.
 
-    Handbook 7.13: the verifier must not reuse CP-SAT variables or assume
+    Note: the verifier must not reuse CP-SAT variables or assume
     the model was constructed correctly.
     """
 

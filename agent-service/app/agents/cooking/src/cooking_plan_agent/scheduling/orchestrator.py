@@ -165,14 +165,18 @@ class ScheduleOrchestrator:
         """
         model = cp_model.CpModel()
 
-        # Re-use the builder for basic variable creation (stages A-D).
-        phase1_model = self._builder.build(problem)
-        horizon = phase1_model.horizon
-
-        # Reconstruct the same model, but now fix makespan.
-        starts, ends, intervals = self._rebuild_model(
-            model, problem, horizon, makespan
+        # Compute horizon and build constraints (Stages A–D) on the new model.
+        horizon = self._builder.compute_horizon(problem.tasks)
+        starts, ends, intervals = self._builder.build_constraints(
+            model, problem, horizon
         )
+
+        # Fix makespan to Phase 1's optimal value
+        final_task_ids = self._final_task_ids(problem)
+        final_ends_list = [ends[tid] for tid in final_task_ids if tid in ends]
+        makespan_var = model.new_int_var(0, horizon, "makespan")
+        model.add_max_equality(makespan_var, final_ends_list)
+        model.add(makespan_var == makespan)
 
         # --- Holding objective ---
         # Group tasks by dish_id and compute a per-dish completion time.
@@ -228,7 +232,7 @@ class ScheduleOrchestrator:
                     ends=ends,
                     intervals={tid: intervals[tid] for tid in intervals},
                     horizon=horizon,
-                    makespan_var=phase1_model.makespan_var,
+                    makespan_var=makespan_var,
                 ),
             )
             intervals = self._extractor.extract(run)
@@ -244,84 +248,6 @@ class ScheduleOrchestrator:
 
         # Fall back to Phase 1 result.
         return phase1_result
-
-    # ------------------------------------------------------------------
-    # Helper: rebuild model for Phase 2 with fixed makespan
-    # ------------------------------------------------------------------
-
-    def _rebuild_model(
-        self,
-        model: cp_model.CpModel,
-        problem: SchedulingProblem,
-        horizon: int,
-        makespan: int,
-    ) -> tuple[
-        dict[str, cp_model.IntVar],
-        dict[str, cp_model.IntVar],
-        dict[str, cp_model.IntervalVar],
-    ]:
-        """Rebuild Stages A-D with makespan fixed."""
-        from cooking_plan_agent.domain.enums import WorkMode
-
-        starts: dict[str, cp_model.IntVar] = {}
-        ends: dict[str, cp_model.IntVar] = {}
-        intervals: dict[str, cp_model.IntervalVar] = {}
-
-        # Stage A: variables
-        for task in problem.tasks:
-            tid = task.task_id
-            start = model.new_int_var(0, horizon, f"start:{tid}")
-            end = model.new_int_var(0, horizon, f"end:{tid}")
-            iv = model.new_interval_var(start, task.duration_minutes, end, f"interval:{tid}")
-            starts[tid] = start
-            ends[tid] = end
-            intervals[tid] = iv
-
-        # Stage B: precedence
-        for task in problem.tasks:
-            for dep in task.dependencies:
-                if dep.predecessor_id in starts and task.task_id in starts:
-                    model.add(starts[task.task_id] >= ends[dep.predecessor_id] + dep.minimum_lag_minutes)
-                    if dep.maximum_lag_minutes is not None:
-                        model.add(starts[task.task_id] <= ends[dep.predecessor_id] + dep.maximum_lag_minutes)
-
-        # Stage C: active no-overlap
-        active_ivs = [
-            intervals[t.task_id]
-            for t in problem.tasks
-            if t.work_mode == WorkMode.ACTIVE
-        ]
-        if active_ivs:
-            model.add_no_overlap(active_ivs)
-
-        # Stage D: resources
-        res_capacity: dict[str, int] = {}
-        for r in problem.resources:
-            if r.available:
-                cap = int(r.capacity) if r.capacity else 1
-                res_capacity[r.resource_type] = res_capacity.get(r.resource_type, 0) + cap
-
-        for res_type, capacity in res_capacity.items():
-            res_ivs: list[cp_model.IntervalVar] = []
-            res_demands: list[int] = []
-            for task in problem.tasks:
-                for need in task.resources:
-                    if need.resource_type == res_type:
-                        res_ivs.append(intervals[task.task_id])
-                        res_demands.append(need.quantity)
-                        break
-            if res_ivs:
-                model.add_cumulative(intervals=res_ivs, demands=res_demands, capacity=capacity)
-
-        # Fix makespan
-        final_task_ids = self._final_task_ids(problem)
-        final_ends_list = [ends[tid] for tid in final_task_ids if tid in ends]
-        if final_ends_list:
-            makespan_var = model.new_int_var(0, horizon, "makespan")
-            model.add_max_equality(makespan_var, final_ends_list)
-            model.add(makespan_var == makespan)
-
-        return starts, ends, intervals
 
     # ------------------------------------------------------------------
     # Helper: identify final tasks (no successors)
