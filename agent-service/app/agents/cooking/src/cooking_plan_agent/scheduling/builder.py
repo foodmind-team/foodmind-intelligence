@@ -1,7 +1,5 @@
 """CP-SAT model construction — variables, intervals, constraints, objective.
 
-Handbook 7.3–7.7: Stages A through E build the model in small, testable layers.
-
 Design decisions:
 - Horizon = sum of all task durations (safe but loose upper bound).
 - Variables are stored in dicts keyed by task_id — never depend on list position.
@@ -26,11 +24,10 @@ from cooking_plan_agent.scheduling.models import SchedulingProblem
 class ScheduleModelBuilder:
     """Creates a CP-SAT CpModel with variables and constraints for scheduling.
 
-    Handbook 7.1: this class is responsible for model construction only.
+    Note: this class is responsible for model construction only.
     Solving and extraction are handled by separate classes.
 
     Usage::
-
         builder = ScheduleModelBuilder()
         model_info = builder.build(problem)
         # model_info contains the CpModel, variable dicts, and horizon
@@ -63,19 +60,12 @@ class ScheduleModelBuilder:
         self._starts = {}
         self._ends = {}
         self._intervals = {}
-        self._horizon = self._compute_horizon(problem.tasks)
+        self._horizon = self.compute_horizon(problem.tasks)
 
-        # Stage A: create interval variables for every task
-        self._build_variables(problem.tasks)
-
-        # Stage B: enforce precedence and lag constraints
-        self._build_precedence(problem.tasks)
-
-        # Stage C: single active cook — no_overlap for ACTIVE tasks
-        self._build_cook_no_overlap(problem.tasks)
-
-        # Stage D: reusable resource constraints (cumulative)
-        self._build_resources(problem)
+        # Stages A–D: variables and constraints (reusable)
+        self._starts, self._ends, self._intervals = self.build_constraints(
+            self._model, problem, self._horizon
+        )
 
         # Stage E: makespan objective
         self._build_objective(problem)
@@ -93,7 +83,7 @@ class ScheduleModelBuilder:
     # 7.3 Stage A — Variables and intervals
     # ------------------------------------------------------------------
 
-    def _compute_horizon(self, tasks: tuple[CookingTask, ...]) -> int:
+    def compute_horizon(self, tasks: tuple[CookingTask, ...]) -> int:
         """Compute a safe upper bound: sum of all durations + all lags.
 
         The bare sum of durations is insufficient when tasks have
@@ -121,101 +111,73 @@ class ScheduleModelBuilder:
         )
         return base + total_lag
 
-    def _build_variables(self, tasks: tuple[CookingTask, ...]) -> None:
-        """Stage A: create start, end, and interval variables per task.
+    def build_constraints(
+        self,
+        model: cp_model.CpModel,
+        problem: SchedulingProblem,
+        horizon: int,
+    ) -> tuple[
+        dict[str, cp_model.IntVar],
+        dict[str, cp_model.IntVar],
+        dict[str, cp_model.IntervalVar],
+    ]:
+        """Build Stages A–D (variables + constraints) on an existing model.
 
-        Handbook 7.3: store in dicts keyed by task_id.
+        Does NOT set an objective — the caller is responsible for Stage E.
+        Returns variable dicts for downstream use (e.g. Phase 2 objectives).
         """
-        model = self._model
-        assert model is not None
+        starts: dict[str, cp_model.IntVar] = {}
+        ends: dict[str, cp_model.IntVar] = {}
+        intervals: dict[str, cp_model.IntervalVar] = {}
 
-        for task in tasks:
+        # Stage A: create start, end, and interval variables per task
+        for task in problem.tasks:
             tid = task.task_id
-            start = model.new_int_var(0, self._horizon, f"start:{tid}")
-            end = model.new_int_var(0, self._horizon, f"end:{tid}")
-            interval = model.new_interval_var(
+            start = model.new_int_var(0, horizon, f"start:{tid}")
+            end = model.new_int_var(0, horizon, f"end:{tid}")
+            iv = model.new_interval_var(
                 start,
                 task.duration_minutes,
                 end,
                 f"interval:{tid}",
             )
-            self._starts[tid] = start
-            self._ends[tid] = end
-            self._intervals[tid] = interval
+            starts[tid] = start
+            ends[tid] = end
+            intervals[tid] = iv
 
-    # ------------------------------------------------------------------
-    # 7.4 Stage B — Precedence and lag constraints
-    # ------------------------------------------------------------------
-
-    def _build_precedence(self, tasks: tuple[CookingTask, ...]) -> None:
-        """Stage B: for each TaskDependency, add start >= end + lag.
-
-        Handbook 7.4:
-        - Minimum lag: successor.start >= predecessor.end + minimum_lag
-        - Maximum lag: successor.start <= predecessor.end + maximum_lag
-        """
-        model = self._model
-        assert model is not None
-
-        for task in tasks:
+        # Stage B: enforce precedence and lag constraints
+        for task in problem.tasks:
             for dep in task.dependencies:
                 pred_id = dep.predecessor_id
                 succ_id = task.task_id
 
-                if pred_id not in self._starts or succ_id not in self._starts:
+                if pred_id not in starts or succ_id not in starts:
                     continue  # Skip dependencies on tasks not in this problem
 
-                # Minimum lag: successor starts at or after predecessor ends + lag
+                # Minimum lag: successor.start >= predecessor.end + min_lag
                 model.add(
-                    self._starts[succ_id]
-                    >= self._ends[pred_id] + dep.minimum_lag_minutes
+                    starts[succ_id]
+                    >= ends[pred_id] + dep.minimum_lag_minutes
                 )
 
-                # Maximum lag: successor must start by predecessor end + max_lag
+                # Maximum lag: successor.start <= predecessor.end + max_lag
                 if dep.maximum_lag_minutes is not None:
                     model.add(
-                        self._starts[succ_id]
-                        <= self._ends[pred_id] + dep.maximum_lag_minutes
+                        starts[succ_id]
+                        <= ends[pred_id] + dep.maximum_lag_minutes
                     )
 
-    # ------------------------------------------------------------------
-    # 7.5 Stage C — Single active cook (no_overlap)
-    # ------------------------------------------------------------------
-
-    def _build_cook_no_overlap(self, tasks: tuple[CookingTask, ...]) -> None:
-        """Stage C: active tasks cannot overlap — the human cook is single-threaded.
-
-        Handbook 7.5: passive intervals are NOT added to this list.
-        They still occupy their cookware/appliance resources (Stage D).
-        """
-        model = self._model
-        assert model is not None
-
-        active_intervals = [
-            self._intervals[t.task_id]
-            for t in tasks
+        # Stage C: single active cook — no_overlap for ACTIVE tasks
+        # Passive tasks are NOT included (they don't occupy the cook).
+        active_ivs = [
+            intervals[t.task_id]
+            for t in problem.tasks
             if t.work_mode == WorkMode.ACTIVE
         ]
+        if active_ivs:
+            model.add_no_overlap(active_ivs)
 
-        if active_intervals:
-            model.add_no_overlap(active_intervals)
-
-    # ------------------------------------------------------------------
-    # 7.6 Stage D — Reusable resources
-    # ------------------------------------------------------------------
-
-    def _build_resources(self, problem: SchedulingProblem) -> None:
-        """Stage D: enforce resource capacity via cumulative constraints.
-
-        For each resource type with interchangeable identical capacity,
-        group tasks that require that type and add add_cumulative.
-
-        Handbook 7.6: Implement identical resources first.
-        """
-        model = self._model
-        assert model is not None
-
-        # Group resources by type and compute total available capacity.
+        # Stage D: enforce resource capacity via cumulative constraints
         resource_capacity: dict[str, int] = {}
         resource_available: dict[str, bool] = {}
         for r in problem.resources:
@@ -226,28 +188,28 @@ class ScheduleModelBuilder:
             if not r.available:
                 resource_available[r.resource_type] = False
 
-        # Build cumulative constraints per resource type.
         for res_type, capacity in resource_capacity.items():
             if not resource_available[res_type]:
                 continue
 
-            # Collect tasks that require this resource type.
-            res_intervals: list[cp_model.IntervalVar] = []
+            res_ivs: list[cp_model.IntervalVar] = []
             res_demands: list[int] = []
 
             for task in problem.tasks:
                 for need in task.resources:
                     if need.resource_type == res_type:
-                        res_intervals.append(self._intervals[task.task_id])
+                        res_ivs.append(intervals[task.task_id])
                         res_demands.append(need.quantity)
                         break  # Each task counts once per resource type
 
-            if res_intervals:
+            if res_ivs:
                 model.add_cumulative(
-                    intervals=res_intervals,
+                    intervals=res_ivs,
                     demands=res_demands,
                     capacity=capacity,
                 )
+
+        return starts, ends, intervals
 
     # ------------------------------------------------------------------
     # 7.7 Stage E — Makespan objective
@@ -296,7 +258,7 @@ class ScheduleModelBuilder:
 class ModelInfo:
     """Container for a constructed CP-SAT model and its variable dictionaries.
 
-    Handbook 7.1: separates model construction (builder) from solving (solver)
+    Note: separates model construction (builder) from solving (solver)
     and extraction (extractor).  This class bridges the gap.
     """
 

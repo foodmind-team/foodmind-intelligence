@@ -7,8 +7,6 @@ Exports the pipeline components:
 - Extractor: converts solution to domain intervals
 - Verifier: independent correctness check
 - Orchestrator: convenience schedule() and lexicographic multi-objective
-
-Handbook Chapter 7 reference implementation.
 """
 
 from cooking_plan_agent.scheduling.builder import ModelInfo, ScheduleModelBuilder

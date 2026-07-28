@@ -1,6 +1,6 @@
 """Schedule extractor — converts CP-SAT solution values to domain ScheduledIntervals.
 
-Handbook 7.1: converts a feasible solution to domain output (ScheduledInterval
+Note: converts a feasible solution to domain output (ScheduledInterval
 instances).  Only call after the solver returns OPTIMAL or FEASIBLE.
 """
 
