@@ -1,0 +1,44 @@
+[project]
+name = "cooking-plan-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "2692341798", email = "2692341798@qq.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard-no-fastapi-cloud-cli]>=0.140.0",
+    "httpx>=0.28.1",
+    "langchain-core>=1.5.1",
+    "langgraph>=1.2.9",
+    "ortools>=9.15.6755",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.2",
+    "tenacity>=9.1.4",
+]
+
+[project.scripts]
+cooking-plan-agent = "cooking_plan_agent:main"
+
+[build-system]
+requires = ["uv_build>=0.9.8,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.161.5",
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.fastapi]
+
+entrypoint = "cooking_plan_agent.main:app"
+pythonpath = ["src"]
