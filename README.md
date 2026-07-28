@@ -131,6 +131,22 @@ foodmind-intelligence/
 | Platform Search Agent | Search intent | Call authorised backend search and return source references | Public internet search, inaccessible content |
 | Content Summary Agent | Shared-content summary/compare intent | Summarise resolved authorised references | Unshared data, unsupported facts |
 
+## Product-Experience Alignment
+
+- Recommendation remains the default home workflow on Android and Web.
+- The Recommendation Agent returns an ordered set of up to three grounded
+  candidates: Personal, Exploratory, and Group-inspired when enough valid
+  candidates exist.
+- The first candidate is the lead result shown initially. Client-side “try
+  another” reveals another candidate from the same response; it does not rerun
+  inference or create a new session.
+- Group evidence comes only from context authorised by Spring Boot.
+- Cooking consumes manually supplied or authorised pantry/ingredient context;
+  automatic inventory capture is outside the MVP.
+- Explore is not a sixth Agent. It is a client presentation of authorised
+  group-visible and curated platform content through existing backend search
+  and feed boundaries.
+
 ## Agent Design Rules
 
 Every graph must define:

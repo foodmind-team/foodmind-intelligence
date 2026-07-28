@@ -38,12 +38,17 @@ The two services may share a deployment unit for MVP cost control, but their mod
 5. Agent requests inference for valid candidates.
 6. Inference service loads the approved immutable model.
 7. Inference service returns scores and model metadata.
-8. Agent applies diversity policy and phrases verified reason codes.
+8. Agent applies diversity policy, orders the candidates, and phrases verified reason codes.
 9. Backend validates and persists the structured result.
-10. Backend returns three cards to the client.
+10. Backend returns up to three ordered candidates to the client.
 ```
 
 The inference score does not replace hard filtering and is not itself an explanation.
+
+The first candidate is the lead result for the recommendation-first home
+experience. Personal, Exploratory, and Group-inspired candidates remain in the
+same structured response. Moving between those candidates is a client
+presentation action and must not trigger a hidden inference call.
 
 ## Tool Boundary
 
@@ -114,6 +119,13 @@ Do not retain unrestricted user data or credentials in graph state.
 
 - Explain the supported FoodMind search/summary scope.
 - Do not route to recommendation, cooking, or public internet tools.
+
+### Explore request
+
+- Explore does not invoke a new Agent workflow.
+- Spring Boot returns only authorised group-visible or curated platform content.
+- The Agent service must not reinterpret Explore as public internet search or a
+  public/follower feed.
 
 ## Observability
 

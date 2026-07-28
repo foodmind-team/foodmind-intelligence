@@ -62,6 +62,12 @@ Every inference response should include:
 
 Do not expose filesystem paths, registry credentials, or internal serialized objects.
 
+The model package ranks candidates; it does not define the client layout.
+Runtime responses preserve stable score order and candidate identifiers so Web
+and Android can show one lead recommendation first and reveal remaining
+Personal, Exploratory, or Group-inspired candidates without rerunning the
+model.
+
 ## Rollback
 
 Rollback is configuration-driven:
