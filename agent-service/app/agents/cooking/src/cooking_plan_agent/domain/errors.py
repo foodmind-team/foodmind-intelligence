@@ -1,0 +1,223 @@
+"""
+
+Domain error types for the Cooking Plan Agent.
+
+This module defines all stable, traceable error codes and the base exception
+class for the domain/application layer—the first layer of the three-level
+error boundary (handbook 8.10). Every domain service exposes errors through
+the types defined here, ensuring consistent semantics across service and
+module boundaries so downstream consumers (LangGraph workflow nodes, FastAPI
+exception handlers) can route them deterministically.
+
+Core responsibilities:
+  1. DomainErrorCode — enumerates every known domain error scenario. Each code
+     maps to a specific, auditable business failure reason.
+  2. WorkflowException — base domain exception carrying an error code and a
+     human-readable description. Raised by domain services, caught by workflow
+     nodes, and routed to the corresponding terminal response.
+
+Author: cooking-plan-agent team
+Created: 2026-07
+"""
+
+from enum import StrEnum
+
+# ===========================================================================
+# DomainErrorCode — stable domain error code enumeration (handbook 3.8)
+# ===========================================================================
+
+
+class DomainErrorCode(StrEnum):
+    """
+
+    Stable identifiers for every known domain-level failure scenario.
+
+    Design principles (handbook 3.8):
+      - Error codes are stable; their semantics must not change across
+        refactors.
+      - Each code represents a specific business failure reason, never a
+        technical implementation detail.
+      - Workflow nodes and the API layer route decisions based on these codes.
+      - No catch-all "uncategorized" or "other" codes are defined; every error
+        must have a clear home.
+
+    """
+
+    # ------------------------------------------------------------------
+    # Recipe input errors (handbook 4.2, 4.6)
+    # ------------------------------------------------------------------
+
+    # The input text cannot form a usable recipe: empty content, pure binary,
+    # oversized file, or preprocessing yielded no recognizable
+    # ingredient/step information.
+    INVALID_RECIPE_TEXT = "INVALID_RECIPE_TEXT"
+
+    # ------------------------------------------------------------------
+    # Unit conversion errors (handbook 5.3, 5.4)
+    # ------------------------------------------------------------------
+
+    # A requested unit conversion lacks required product-specific data.
+    # Example: converting "1 onion" to grams without density or average-weight
+    # data for onions. The system should request user confirmation rather than
+    # applying an unreliable default.
+    UNSUPPORTED_UNIT_CONVERSION = "UNSUPPORTED_UNIT_CONVERSION"
+
+    # ------------------------------------------------------------------
+    # Safety constraint errors (handbook 5.7, 5.8, 5.9)
+    # ------------------------------------------------------------------
+
+    # A hard safety rule was triggered and cannot be repaired automatically.
+    # Typical scenarios: cross-contamination risk (raw meat sharing a board
+    # with ready-to-eat ingredients and no sanitisation task can be inserted),
+    # allergen matches, or missing safe-cooking endpoint temperatures that
+    # cannot be filled from a trusted source.
+    # This error typically produces an INFEASIBLE terminal response.
+    SAFETY_CONSTRAINT_VIOLATION = "SAFETY_CONSTRAINT_VIOLATION"
+
+    # ------------------------------------------------------------------
+    # Inventory and resource errors (handbook 5.5, 5.6)
+    # ------------------------------------------------------------------
+
+    # Required consumable ingredient quantity is insufficient.
+    # A shortage remains even after applying the FEFO (First-Expired-First-Out)
+    # allocation strategy. The system should generate RepairOptions for the
+    # user to select (reduce servings, substitute ingredients, etc.).
+    INSUFFICIENT_INVENTORY = "INSUFFICIENT_INVENTORY"
+
+    # No compatible kitchen equipment instance can perform a required task.
+    # Example: the recipe requires oven baking but the user's kitchen has no
+    # oven, or the only available oven's capacity is below the minimum.
+    # Distinct from a scheduling resource conflict: this error occurs during
+    # the feasibility check phase and means "does not exist at all" rather
+    # than "temporarily occupied".
+    NO_COMPATIBLE_RESOURCE = "NO_COMPATIBLE_RESOURCE"
+
+    # ------------------------------------------------------------------
+    # Task graph errors (handbook 6.8, 6.9)
+    # ------------------------------------------------------------------
+
+    # A cycle was detected in the generated task dependency graph.
+    # Typically discovered during topological sort (Kahn's algorithm) inside
+    # build_task_graph(). A cyclic graph must never be passed to the CP-SAT
+    # solver.
+    TASK_GRAPH_CYCLE = "TASK_GRAPH_CYCLE"
+
+    # ------------------------------------------------------------------
+    # Scheduling solver errors (handbook 7.6, 7.7, 7.8)
+    # ------------------------------------------------------------------
+
+    # The CP-SAT solver proved that no feasible schedule exists under the
+    # current constraints. Typical causes: excessively tight time windows,
+    # insufficient resource capacity, or conflicting task lag constraints.
+    # May lead to an INFEASIBLE response or trigger repair options such as
+    # time relaxation or recipe replacement.
+    SCHEDULE_INFEASIBLE = "SCHEDULE_INFEASIBLE"
+
+    # The solver could not determine feasibility or infeasibility before
+    # timing out. Unlike INFEASIBLE: UNKNOWN means the solver "found no
+    # answer" rather than "proved no solution exists". The schedule result is
+    # unusable—return a FAILED response.
+    # This is a direct mapping of OR-Tools CpSolverStatus.UNKNOWN.
+    SCHEDULE_UNKNOWN = "SCHEDULE_UNKNOWN"
+
+    # The independent verifier (ScheduleVerifier) rejected the solver's output.
+    # This indicates the solver produced a result that appears valid but
+    # violates constraints—a possible signal of a bug in CP-SAT model
+    # construction or a numerical-precision issue. Rejected results must never
+    # be returned to the user with READY status.
+    SCHEDULE_VERIFICATION_FAILED = "SCHEDULE_VERIFICATION_FAILED"
+
+    # ------------------------------------------------------------------
+    # External dependency errors (handbook 4.11, 10.4)
+    # ------------------------------------------------------------------
+
+    # The LLM provider or web search service is unavailable after bounded
+    # retries. Used when recipe parsing or gap research requires an external
+    # call and all attempts have failed. Nodes should map this to a stable
+    # FAILED response—never expose raw provider exceptions to the client.
+    EXTERNAL_PROVIDER_UNAVAILABLE = "EXTERNAL_PROVIDER_UNAVAILABLE"
+
+    # ------------------------------------------------------------------
+    # System-level errors
+    # ------------------------------------------------------------------
+
+    # An unexpected internal error that cannot be classified into any of the
+    # above categories. Reserved for the FastAPI global exception handler as a
+    # last resort; workflow nodes should prefer more specific error codes.
+    # Must carry a correlation_id in the client response for investigation.
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+# ===========================================================================
+# WorkflowException — base domain exception (handbook 8.10 layer 1)
+# ===========================================================================
+
+
+class WorkflowException(Exception):
+    """
+
+    Unified base class for all domain-level exceptions.
+
+    Design intent (handbook 8.10 three-level error boundary):
+      Layer 1 (this layer): domain/application services raise
+        WorkflowException carrying a DomainErrorCode and a human-readable
+        description.
+      Layer 2: LangGraph workflow nodes catch WorkflowException, convert it
+        to NodeExecutionError, and route to the appropriate terminal response
+        node.
+      Layer 3: the FastAPI global exception handler catches unexpected
+        exceptions, logs the correlation_id, and returns a generic
+        INTERNAL_ERROR.
+
+    Typical triggers:
+      - Recipe preprocessing yields invalid content
+      - Safety rule engine detects an unrepairable safety violation
+      - CP-SAT solver returns infeasible or unknown status
+      - Independent verifier rejects the solver output
+      - External LLM / search provider is unavailable
+
+    Usage conventions:
+      - Always carry an explicit DomainErrorCode; never use a meaningless
+        generic code.
+      - The message should be a short, human-readable description—never
+        include stack traces, provider prompts, or secrets.
+      - Do not implement automatic retry or fallback logic in this base class;
+        those responsibilities belong to the workflow node layer.
+
+    """
+
+    # Domain error code identifying the specific failure category
+    # (a DomainErrorCode enum member).
+    code: DomainErrorCode
+    # Human-readable error description used in logs and terminal responses.
+    # Must not contain provider prompts, API keys, or user private data.
+    message: str
+
+    def __init__(self, code: DomainErrorCode, message: str) -> None:
+        """
+
+        Initialise a domain exception instance.
+
+        Args:
+            code: Domain error code; must be a member of DomainErrorCode,
+                  indicating the business category of the failure.
+            message: Human-readable error description string for logging and
+                     terminal response rendering. Keep it short and free of
+                     sensitive information.
+
+        Initialisation behaviour:
+          1. Store code and message as instance attributes for downstream
+             consumers.
+          2. Call the parent Exception constructor with a formatted error
+             string in the pattern "[ERROR_CODE] message"
+             (e.g. "[TASK_GRAPH_CYCLE] Cyclic dependency detected").
+             This ensures that even when the exception is not explicitly
+             caught, its string representation contains all critical
+             diagnostic information.
+
+        """
+        self.code = code
+        self.message = message
+        # Build a standardised error string with the error code prefix for
+        # easy log retrieval.
+        super().__init__(f"[{code.value}] {message}")

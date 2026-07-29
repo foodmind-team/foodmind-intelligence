@@ -1,0 +1,121 @@
+"""Pure routing functions for LangGraph conditional edges.
+
+Per handbook 8.6: each function returns explicit node name literals.
+No side effects, no service calls — only state inspection.
+"""
+
+from typing import Literal
+
+from cooking_plan_agent.workflow.state import PlanState
+
+# ---------------------------------------------------------------------------
+# 8.6 Routing after gap detection
+# ---------------------------------------------------------------------------
+
+
+def route_after_gap_detection(
+    state: PlanState,
+) -> Literal["infer_local", "validate_recipe_ir"]:
+    """If gaps exist, try local inference before validation.
+    Otherwise, proceed directly to IR validation."""
+    if state.get("gaps"):
+        return "infer_local"
+    return "validate_recipe_ir"
+
+
+# ---------------------------------------------------------------------------
+# 8.6 Routing after local inference
+# ---------------------------------------------------------------------------
+
+
+def route_after_local_inference(
+    state: PlanState,
+) -> Literal["research_missing", "build_confirmation_response", "validate_recipe_ir"]:
+    """After local inference, remaining critical gaps route to:
+    - web research (if enabled and gap is researchable)
+    - confirmation (if evidence insufficient)
+    - IR validation (if gaps resolved)."""
+    gaps = state.get("gaps", ())
+    critical_gaps = [g for g in gaps if g.gap_class in ("critical", "safety_critical")]
+
+    if not critical_gaps:
+        return "validate_recipe_ir"
+
+    # STUB: In MVP, all remaining critical gaps -> confirmation.
+    # When research is implemented, add route to "research_missing".
+    return "build_confirmation_response"
+
+
+# ---------------------------------------------------------------------------
+# 8.6 Routing after safety validation
+# ---------------------------------------------------------------------------
+
+
+def route_after_safety(
+    state: PlanState,
+) -> Literal["check_feasibility", "render_infeasible_response"]:
+    """Hard unrepairable safety findings -> INFEASIBLE.
+    Otherwise, proceed to feasibility check."""
+    safety_report = state.get("safety_report")
+    if safety_report is not None and safety_report.has_unrepairable:
+        return "render_infeasible_response"
+    return "check_feasibility"
+
+
+# ---------------------------------------------------------------------------
+# 8.6 Routing after feasibility check
+# ---------------------------------------------------------------------------
+
+
+def route_after_feasibility(
+    state: PlanState,
+) -> Literal["merge_preparation", "build_confirmation_response", "render_infeasible_response"]:
+    """If infeasible: confirmation with repair options (if any) or INFEASIBLE."""
+    report = state.get("feasibility_report")
+    if report is None:
+        return "merge_preparation"
+
+    if not report.is_feasible:
+        repair_options = state.get("repair_options", ())
+        if repair_options:
+            return "build_confirmation_response"
+        return "render_infeasible_response"
+
+    return "merge_preparation"
+
+
+# ---------------------------------------------------------------------------
+# 8.6 Routing after schedule solve
+# ---------------------------------------------------------------------------
+
+
+def route_after_solve(
+    state: PlanState,
+) -> Literal["verify_schedule", "render_infeasible_response", "render_failed_response"]:
+    """Solver result determines next step."""
+    result = state.get("schedule_result")
+    if result is None:
+        return "render_failed_response"
+
+    status = result.status
+    if status in ("OPTIMAL", "FEASIBLE"):
+        return "verify_schedule"
+    if status == "INFEASIBLE":
+        return "render_infeasible_response"
+    # MODEL_INVALID, UNKNOWN -> FAILED
+    return "render_failed_response"
+
+
+# ---------------------------------------------------------------------------
+# 8.6 Routing after verification
+# ---------------------------------------------------------------------------
+
+
+def route_after_verification(
+    state: PlanState,
+) -> Literal["render_ready_response", "render_failed_response"]:
+    """Verification passes -> READY; fails -> FAILED."""
+    report = state.get("verification_report")
+    if report is not None and report.passed:
+        return "render_ready_response"
+    return "render_failed_response"

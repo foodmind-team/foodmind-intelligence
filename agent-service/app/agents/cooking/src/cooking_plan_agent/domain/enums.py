@@ -1,4 +1,7 @@
-from enum import StrEnum  # String enum base class (Python 3.11+), auto-casts member values to str
+from enum import (
+    StrEnum,  # String enum base class (Python 3.11+), auto-casts member values to str
+)
+
 
 # Lifecycle status of a cooking plan
 class PlanStatus(StrEnum):

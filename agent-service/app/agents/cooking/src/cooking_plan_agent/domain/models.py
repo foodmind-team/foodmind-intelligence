@@ -1,6 +1,8 @@
 from datetime import date  # Date type for expiry_date (no time component needed)
 from decimal import Decimal  # Exact decimal arithmetic — never float for inventory
-from typing import Annotated  # Typed annotation composition (e.g. PositiveDecimal)
+from typing import (  # Typed annotation composition (e.g. PositiveDecimal)
+    Annotated,
+)
 
 from pydantic import (  # Pydantic v2 building blocks
     BaseModel,
@@ -235,3 +237,255 @@ class InventoryConsumptionProposal(StrictModel):
 
     inventory_snapshot_version: str           # Version of the inventory snapshot this was computed from
     items: tuple[CompletionItem, ...]         # Per-ingredient completion groups
+
+
+# ---------------------------------------------------------------------------
+# 3.8  Evidence models — structured web research I/O
+# ---------------------------------------------------------------------------
+
+
+class EvidenceQuery(StrictModel):
+    """A structured question for web research. Contains only the gap info,
+    never private user data."""
+
+    query_text: str
+    gap_type: str
+    recipe_context: str
+    target_fields: tuple[str, ...] = ()
+
+
+class EvidenceResult(StrictModel):
+    """One cited piece of evidence from web research."""
+
+    source_title: str
+    source_url: str
+    snippet: str
+    confidence: Confidence
+    extracted_fact: str
+    fact_type: str
+    fact_value: str
+
+
+# ---------------------------------------------------------------------------
+# 3.9  LLM extraction intermediate models
+# ---------------------------------------------------------------------------
+
+
+class ExtractedIngredient(StrictModel):
+    """Raw ingredient as extracted by LLM, before canonicalisation."""
+
+    raw_text: str
+    name: str
+    quantity: Decimal | None = None
+    unit: str | None = None
+    preparation: str | None = None
+    extraction_source: str = "EXPLICIT"
+    confidence: Confidence = Decimal("1.0")
+
+
+class ExtractedStep(StrictModel):
+    """Raw step as extracted by LLM, before decomposition."""
+
+    step_number: int = Field(ge=1)
+    instruction: str
+    category: str = "general"
+    active_duration_minutes: int | None = None
+    passive_duration_minutes: int | None = None
+    heat_level: HeatLevel = HeatLevel.NONE
+    target_temperature_c: Decimal | None = None
+    resources_hint: tuple[str, ...] = ()
+    extraction_source: str = "EXPLICIT"
+    confidence: Confidence = Decimal("1.0")
+
+
+class ExtractedRecipeCandidate(StrictModel):
+    """LLM extraction output — optional fields allowed, raw spans retained."""
+
+    recipe_id: str
+    dish_name: str
+    original_servings: PositiveDecimal
+    source_language: str
+    ingredients: tuple[ExtractedIngredient, ...]
+    steps: tuple[ExtractedStep, ...]
+    extraction_source: str = "LLM"
+
+
+# ---------------------------------------------------------------------------
+# 3.10  Recipe gap detection
+# ---------------------------------------------------------------------------
+
+
+class RecipeGap(StrictModel):
+    """A detected gap in a recipe candidate."""
+
+    gap_id: str
+    recipe_id: str
+    field_path: str
+    current_value: str | None = None
+    gap_class: str  # "critical" | "safety_critical" | "resource_critical" | "optimisation" | "cosmetic"
+    description: str
+    confidence: Confidence
+    evidence: tuple[EvidenceRef, ...] = ()
+
+
+# ---------------------------------------------------------------------------
+# 3.11  Safety rule engine models
+# ---------------------------------------------------------------------------
+
+
+class SafetyFinding(StrictModel):
+    """Output of a single safety rule evaluation."""
+
+    rule_id: str
+    severity: str  # "hard_unrepairable" | "hard_repairable" | "warning"
+    description: str
+    affected_task_ids: tuple[str, ...] = ()
+    affected_ingredient_names: tuple[str, ...] = ()
+    recommended_action: str | None = None
+    evidence: tuple[EvidenceRef, ...] = ()
+
+
+class SafetyReport(StrictModel):
+    """Aggregated safety evaluation for the entire plan."""
+
+    report_id: str
+    findings: tuple[SafetyFinding, ...] = ()
+    is_safe: bool
+    has_unrepairable: bool
+    required_safety_task_ids: tuple[str, ...] = ()
+
+
+class SafetyContext(StrictModel):
+    """Input context for safety rule evaluation."""
+
+    recipes: tuple["RecipeIR", ...]
+    dietary_restrictions: tuple[str, ...] = ()
+    user_allergens: tuple[str, ...] = ()
+    inventory_lots: tuple["InventoryLotSnapshot", ...] = ()
+    cooking_date: date | None = None
+
+
+# ---------------------------------------------------------------------------
+# 3.12  Feasibility check and repair models
+# ---------------------------------------------------------------------------
+
+
+class IngredientFeasibility(StrictModel):
+    """Feasibility result for one ingredient."""
+
+    ingredient_name: str
+    required: Decimal
+    available: Decimal
+    shortage: Decimal
+    unit: str
+    proposed_allocations: tuple["LotAllocation", ...] = ()
+
+
+class FeasibilityReport(StrictModel):
+    """Aggregated feasibility across all dimensions."""
+
+    report_id: str
+    ingredient_shortages: tuple["IngredientFeasibility", ...] = ()
+    missing_resources: tuple[str, ...] = ()
+    is_feasible: bool
+
+
+class RepairOption(StrictModel):
+    """A validated choice the user can select to resolve infeasibility."""
+
+    option_id: str
+    option_type: str  # "substitute_ingredient" | "reduce_servings" | "alternative_equipment" | "replace_dish" | "extend_time" | "purchase"
+    description: str
+    changes: tuple[str, ...]
+    effects: tuple[str, ...]
+    revalidation_status: str = "validated"
+
+
+class WorkflowError(StrictModel):
+    """Structured error for workflow-level failures."""
+
+    error_code: str
+    message: str
+    correlation_id: str
+    node_name: str | None = None
+    recoverable: bool = False
+
+
+# ---------------------------------------------------------------------------
+# 3.13  API request / response contracts
+# ---------------------------------------------------------------------------
+
+
+class GeneratePlanRequest(StrictModel):
+    """Internal request from Spring Boot."""
+
+    request_id: str
+    user_id: str
+    recipes: tuple[dict, ...]  # Each: {recipe_id, text, target_servings}
+    dietary_restrictions: tuple[str, ...] = ()
+    user_allergens: tuple[str, ...] = ()
+    time_limit_minutes: int | None = None
+    serving_time: str | None = None
+    inventory_lots: tuple["InventoryLotSnapshot", ...] = ()
+    kitchen_resources: tuple["KitchenResourceSnapshot", ...] = ()
+    approved_decisions: tuple[str, ...] = ()
+    schema_version: str = "1.0"
+
+
+class ReadyPlanResponse(StrictModel):
+    """READY response: verified plan with schedule."""
+
+    plan_id: str
+    status: str = "READY"
+    solver_status: str
+    makespan_minutes: int
+    timeline: tuple[dict, ...]
+    completion_checklist: tuple["CompletionItem", ...]
+    mise_en_place: tuple[dict, ...]
+    dish_completions: tuple[dict, ...]
+
+
+class ConfirmationPlanResponse(StrictModel):
+    """NEEDS_CONFIRMATION response."""
+
+    plan_id: str
+    status: str = "NEEDS_CONFIRMATION"
+    assumptions: tuple["Assumption", ...] = ()
+    repair_options: tuple["RepairOption", ...] = ()
+    questions: tuple[str, ...] = ()
+
+
+class InfeasiblePlanResponse(StrictModel):
+    """INFEASIBLE response."""
+
+    plan_id: str
+    status: str = "INFEASIBLE"
+    reasons: tuple[str, ...]
+    safe_alternatives: tuple[str, ...] = ()
+
+
+class FailedPlanResponse(StrictModel):
+    """FAILED response."""
+
+    status: str = "FAILED"
+    error_code: str
+    correlation_id: str
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# Union type for polymorphic response
+# ---------------------------------------------------------------------------
+
+PlanResponse = ReadyPlanResponse | ConfirmationPlanResponse | InfeasiblePlanResponse | FailedPlanResponse
+
+# ---------------------------------------------------------------------------
+# Resolve forward references via model_rebuild()
+# ---------------------------------------------------------------------------
+
+EvidenceQuery.model_rebuild()
+SafetyContext.model_rebuild()
+IngredientFeasibility.model_rebuild()
+GeneratePlanRequest.model_rebuild()
+ReadyPlanResponse.model_rebuild()
+ConfirmationPlanResponse.model_rebuild()
