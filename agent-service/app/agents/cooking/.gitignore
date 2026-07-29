@@ -12,3 +12,6 @@ wheels/
 
 # Coverage
 .coverage
+
+# Project rules (local only, not for remote)
+.trae/
