@@ -28,34 +28,46 @@ class PlanState(TypedDict, total=False):
 
     Only serialisable domain objects. No provider clients, request-scoped
     secrets, or OR-Tools model objects (handbook 8.2).
+
+    total=False means every field is Optional — nodes only return the
+    CHANGED subset, and downstream nodes use .get() to safely read.
     """
 
-    # --- Input ---
+    # --- Input (populated once, never mutated) ---
     request: GeneratePlanRequest
 
     # --- Parsing & inference ---
+    # Candidates are raw extraction output; RecipeIR is the validated form
     extracted_candidates: tuple[ExtractedRecipeCandidate, ...]
     gaps: tuple[RecipeGap, ...]
-    evidence: tuple[dict, ...]  # EvidenceRef-like dicts (serialisable)
+    # Evidence stored as plain dicts to keep state serialisable (no dataclass coupling)
+    evidence: tuple[dict, ...]
 
     # --- Validation ---
     parsed_recipes: tuple[RecipeIR, ...]
     safety_report: SafetyReport
     feasibility_report: FeasibilityReport
+    # Repair options injected by check_feasibility when infeasible but fixable
     repair_options: tuple[RepairOption, ...]
 
     # --- Preparation & scheduling ---
+    # Tasks are split into three categories so merge_preparation can
+    # apply different dedup/priority rules per category
     recipe_tasks: tuple[CookingTask, ...]
     prep_tasks: tuple[CookingTask, ...]
     safety_tasks: tuple[CookingTask, ...]
     task_graph: TaskGraph
     schedule_result: ScheduleResult
+    # Independent verification report (separate from solver's internal check)
     verification_report: VerificationReport
 
     # --- Terminal output ---
+    # Exactly ONE terminal field is populated by the terminal node that fires
     response: PlanResponse
     needs_confirmation: bool
     confirmation_context: ConfirmationPlanResponse
 
     # --- Error ---
+    # Set by any node that encounters a recoverable/terminal error;
+    # the graph uses this to route to error terminal nodes
     error: WorkflowError

@@ -17,7 +17,10 @@ def route_after_gap_detection(
     state: PlanState,
 ) -> Literal["infer_local", "validate_recipe_ir"]:
     """If gaps exist, try local inference before validation.
-    Otherwise, proceed directly to IR validation."""
+
+    Otherwise, proceed directly to IR validation.
+    The gap detection may return empty tuples — only non-empty gaps trigger inference.
+    """
     if state.get("gaps"):
         return "infer_local"
     return "validate_recipe_ir"
@@ -34,7 +37,11 @@ def route_after_local_inference(
     """After local inference, remaining critical gaps route to:
     - web research (if enabled and gap is researchable)
     - confirmation (if evidence insufficient)
-    - IR validation (if gaps resolved)."""
+    - IR validation (if gaps resolved).
+
+    Only "critical" and "safety_critical" gaps block progress — minor gaps
+    (e.g., garnish variation) are tolerated and passed through.
+    """
     gaps = state.get("gaps", ())
     critical_gaps = [g for g in gaps if g.gap_class in ("critical", "safety_critical")]
 
@@ -55,7 +62,10 @@ def route_after_safety(
     state: PlanState,
 ) -> Literal["check_feasibility", "render_infeasible_response"]:
     """Hard unrepairable safety findings -> INFEASIBLE.
-    Otherwise, proceed to feasibility check."""
+
+    Otherwise, proceed to feasibility check.
+    Safety findings that ARE repairable are injected as safety_tasks in merge_preparation.
+    """
     safety_report = state.get("safety_report")
     if safety_report is not None and safety_report.has_unrepairable:
         return "render_infeasible_response"
@@ -70,7 +80,11 @@ def route_after_safety(
 def route_after_feasibility(
     state: PlanState,
 ) -> Literal["merge_preparation", "build_confirmation_response", "render_infeasible_response"]:
-    """If infeasible: confirmation with repair options (if any) or INFEASIBLE."""
+    """If infeasible: confirmation with repair options (if any) or INFEASIBLE.
+
+    A None report means feasibility was not checked (e.g., safety short-circuited)
+    — in that case, default to merge_preparation (downstream nodes handle it).
+    """
     report = state.get("feasibility_report")
     if report is None:
         return "merge_preparation"
@@ -92,7 +106,13 @@ def route_after_feasibility(
 def route_after_solve(
     state: PlanState,
 ) -> Literal["verify_schedule", "render_infeasible_response", "render_failed_response"]:
-    """Solver result determines next step."""
+    """Solver result determines next step.
+
+    None result = solver errored without producing output -> FAILED.
+    OPTIMAL/FEASIBLE proceed to independent verification.
+    INFEASIBLE means the solver proved no solution exists.
+    MODEL_INVALID/UNKNOWN -> FAILED (likely a model construction bug).
+    """
     result = state.get("schedule_result")
     if result is None:
         return "render_failed_response"
@@ -114,7 +134,11 @@ def route_after_solve(
 def route_after_verification(
     state: PlanState,
 ) -> Literal["render_ready_response", "render_failed_response"]:
-    """Verification passes -> READY; fails -> FAILED."""
+    """Verification passes -> READY; fails -> FAILED.
+
+    The verifier checks constraint satisfaction independently from the solver,
+    catching optimiser bugs before they reach the user.
+    """
     report = state.get("verification_report")
     if report is not None and report.passed:
         return "render_ready_response"

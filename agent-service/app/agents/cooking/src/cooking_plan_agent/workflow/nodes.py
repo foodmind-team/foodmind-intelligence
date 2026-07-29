@@ -33,6 +33,10 @@ async def validate_input_node(
 
     Checks: non-empty recipes, reasonable serving/task counts, schema version.
     STUB: passes through. Full validation when contract is finalized.
+
+    Returns an empty dict on success or {'error': WorkflowError} on failure.
+    The graph does NOT have an error edge from validate_input, so an error
+    here will propagate as a runtime exception.
     """
     request = state["request"]
     if not request.recipes:
@@ -177,6 +181,9 @@ async def merge_preparation_node(
     Uses existing preparation/decompose.py and preparation/prep_trie.py.
     STUB: returns empty task sets. Full wiring requires ingredient demand
     to operation chain extraction bridge.
+
+    Returns three task tuples — downstream nodes concatenate them before
+    building the DAG.
     """
     return {
         "recipe_tasks": (),
@@ -192,6 +199,9 @@ async def build_task_graph_node(
     """Build the task DAG from recipe, prep, and safety tasks.
 
     Wired to existing preparation/task_graph.py.
+
+    Lazy-imports build_task_graph inside the function so the module
+    can be imported even when preparation dependencies are missing.
     """
     from cooking_plan_agent.preparation.task_graph import build_task_graph
 
@@ -199,6 +209,7 @@ async def build_task_graph_node(
     prep_tasks = state.get("prep_tasks", ())
     safety_tasks = state.get("safety_tasks", ())
 
+    # Defensive: if merge_preparation returned nothing, skip building
     if not recipe_tasks and not prep_tasks:
         return {}
 
@@ -210,6 +221,7 @@ async def build_task_graph_node(
         )
         return {"task_graph": graph}
     except (ValueError, TypeError, RuntimeError) as exc:
+        # Cycle detection or invalid dependencies -> workflow error
         return {
             "error": WorkflowError(
                 error_code="TASK_GRAPH_CYCLE",
@@ -229,6 +241,9 @@ async def solve_schedule_node(
     Wired to existing scheduling/orchestrator.py.
     schedule() returns tuple[ScheduleResult, VerificationReport] — we store
     only the result; verification is done independently in verify_schedule_node.
+
+    Lazy-imports inside the function avoid coupling to OR-Tools at import time
+    (OR-Tools is a heavy C++ dependency).
     """
     from cooking_plan_agent.scheduling.models import SchedulingProblem
     from cooking_plan_agent.scheduling.orchestrator import schedule as solve_schedule_fn
@@ -272,6 +287,10 @@ async def verify_schedule_node(
 
     Wired to existing scheduling/verifier.py.
     verify() signature: verify(problem: SchedulingProblem, result: ScheduleResult)
+
+    Verification is done in a SEPARATE node (not inside solve_schedule) so that:
+    - verification can be skipped/instrumented independently
+    - the verifier catches bugs in the solver itself
     """
     from cooking_plan_agent.scheduling.models import SchedulingProblem
     from cooking_plan_agent.scheduling.verifier import ScheduleVerifier
@@ -349,7 +368,12 @@ async def render_infeasible_response_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
 ) -> dict:
-    """Render INFEASIBLE response with hard reasons."""
+    """Render INFEASIBLE response with hard reasons.
+
+    Merges reasons from safety findings, feasibility shortages, and
+    workflow errors into a single response. Order matters: safety
+    reasons come first as they are the strongest blockers.
+    """
     error = state.get("error")
     safety = state.get("safety_report")
     feasibility = state.get("feasibility_report")
@@ -378,7 +402,12 @@ async def render_failed_response_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
 ) -> dict:
-    """Render FAILED response with stable error code and correlation ID."""
+    """Render FAILED response with stable error code and correlation ID.
+
+    Graceful fallback: if no error is in state, returns INTERNAL_ERROR
+    with the request ID. This prevents the graph from producing a
+    response with missing fields.
+    """
     error = state.get("error")
     response = FailedPlanResponse(
         status="FAILED",

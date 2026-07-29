@@ -52,10 +52,12 @@ def build_cooking_plan_graph():
     builder.add_node("parse_recipes", parse_recipes_node)
     builder.add_node("detect_gaps", detect_gaps_node)
     builder.add_node("infer_local", infer_local_node)
+    # research_missing is a future node — currently unreachable in MVP
     builder.add_node("research_missing", research_missing_node)
     builder.add_node("validate_recipe_ir", validate_recipe_ir_node)
     builder.add_node("validate_safety", validate_safety_node)
     builder.add_node("check_feasibility", check_feasibility_node)
+    # build_confirmation_response is a terminal node reachable from multiple paths
     builder.add_node("build_confirmation_response", build_confirmation_response_node)
     builder.add_node("merge_preparation", merge_preparation_node)
     builder.add_node("build_task_graph", build_task_graph_node)
@@ -75,6 +77,8 @@ def build_cooking_plan_graph():
     # ------------------------------------------------------------------
     # 8.6 Conditional edges
     # ------------------------------------------------------------------
+
+    # detect_gaps: gaps exist -> infer_local; no gaps -> skip to validation
     builder.add_conditional_edges(
         "detect_gaps",
         route_after_gap_detection,
@@ -84,6 +88,8 @@ def build_cooking_plan_graph():
         },
     )
 
+    # infer_local: resolved -> validate; unresolved critical -> confirm;
+    #   researchable (future) -> research_missing
     builder.add_conditional_edges(
         "infer_local",
         route_after_local_inference,
@@ -94,9 +100,11 @@ def build_cooking_plan_graph():
         },
     )
 
+    # research_missing always converges back into the main validation pipeline
     builder.add_edge("research_missing", "validate_recipe_ir")
     builder.add_edge("validate_recipe_ir", "validate_safety")
 
+    # validate_safety: unrepairable safety issue -> INFEASIBLE; else -> feasibility
     builder.add_conditional_edges(
         "validate_safety",
         route_after_safety,
@@ -106,6 +114,8 @@ def build_cooking_plan_graph():
         },
     )
 
+    # check_feasibility: feasible -> merge; infeasible+repairable -> confirm;
+    #   infeasible+unrepairable -> INFEASIBLE
     builder.add_conditional_edges(
         "check_feasibility",
         route_after_feasibility,
@@ -119,9 +129,12 @@ def build_cooking_plan_graph():
     # ------------------------------------------------------------------
     # 8.7 Fixed edges — preparation & scheduling pipeline
     # ------------------------------------------------------------------
+    # Linear chain: merge -> task graph -> CP-SAT solve -> verify
     builder.add_edge("merge_preparation", "build_task_graph")
     builder.add_edge("build_task_graph", "solve_schedule")
 
+    # solve_schedule: OPTIMAL/FEASIBLE -> verify; INFEASIBLE -> infeasible;
+    #   MODEL_INVALID/error -> FAILED
     builder.add_conditional_edges(
         "solve_schedule",
         route_after_solve,
@@ -132,6 +145,7 @@ def build_cooking_plan_graph():
         },
     )
 
+    # verify_schedule: independent check passes -> READY; fails -> FAILED
     builder.add_conditional_edges(
         "verify_schedule",
         route_after_verification,
