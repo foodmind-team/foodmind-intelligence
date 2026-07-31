@@ -15,6 +15,7 @@ from cooking_plan_agent.domain.models import (
     PlanResponse,
     RecipeGap,
     RecipeIR,
+    ReconciledEvidence,
     RepairOption,
     SafetyReport,
     WorkflowError,
@@ -42,6 +43,8 @@ class PlanState(TypedDict, total=False):
     gaps: tuple[RecipeGap, ...]
     # Evidence stored as plain dicts to keep state serialisable (no dataclass coupling)
     evidence: tuple[dict, ...]
+    # Per-gap reconciled research results (keyed by gap_id for traceability)
+    research_evidence: dict[str, ReconciledEvidence]
 
     # --- Validation ---
     parsed_recipes: tuple[RecipeIR, ...]

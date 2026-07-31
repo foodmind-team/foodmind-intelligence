@@ -266,6 +266,55 @@ class EvidenceResult(StrictModel):
     fact_value: str
 
 
+class SearchDocument(StrictModel):
+    """Provider-neutral search result document.
+
+    Normalised from any concrete provider (Tavily, Brave, SerpAPI, Fake).
+    No provider-specific fields — the rest of the code only sees this shape."""
+
+    title: str
+    url: str
+    snippet: str
+    # Raw content fetched from the page (may be empty for snippet-only providers)
+    raw_content: str = ""
+    # Domain extracted from URL for allow-list matching
+    domain: str = ""
+
+
+class CookingEvidence(StrictModel):
+    """Evidence extracted from a single search document (handbook 10.6).
+
+    Narrow schema: only cooking-relevant fields. Rejects unexpected fields.
+    Excerpts limited to the shortest text needed for traceability."""
+
+    operation: str                              # e.g. "stir-fry", "bake", "boil"
+    heat_level: HeatLevel | None = None         # Stove intensity if stated
+    duration_min_minutes: int | None = None     # Lower bound of duration range
+    duration_max_minutes: int | None = None     # Upper bound of duration range
+    explicit_temperature_c: Decimal | None = None  # Target temperature in Celsius
+    source_url: str                             # Source page URL
+    source_title: str                           # Source page title
+    source_excerpt: str                         # Shortest text for traceability (not full page)
+
+
+class ReconciledEvidence(StrictModel):
+    """Consensus output from multi-source reconciliation (handbook 10.7).
+
+    Reports both the reconciled value AND whether sources disagreed enough
+    to warrant user confirmation."""
+
+    heat_level: HeatLevel | None = None
+    duration_min_minutes: int | None = None
+    duration_max_minutes: int | None = None
+    explicit_temperature_c: Decimal | None = None
+    # How many independent sources contributed to each reconciled value
+    source_count: int = 0
+    # If True, disagreement exceeded threshold — surface for user confirmation
+    needs_confirmation: bool = False
+    # Raw evidence items that fed into the reconciliation
+    evidence_items: tuple["CookingEvidence", ...] = ()
+
+
 # ---------------------------------------------------------------------------
 # 3.9  LLM extraction intermediate models
 # ---------------------------------------------------------------------------
@@ -489,3 +538,4 @@ IngredientFeasibility.model_rebuild()
 GeneratePlanRequest.model_rebuild()
 ReadyPlanResponse.model_rebuild()
 ConfirmationPlanResponse.model_rebuild()
+ReconciledEvidence.model_rebuild()

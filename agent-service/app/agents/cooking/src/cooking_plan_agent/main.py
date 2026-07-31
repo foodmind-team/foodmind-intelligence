@@ -27,13 +27,34 @@ async def lifespan(app: FastAPI):
     Handbook 9.5: construct provider clients and workflow context during
     lifespan. Tests may override app.state to inject fakes.
     """
-    # Build the immutable workflow context. In MVP, the RecipeExtractor
-    # and RecipeResearcher are not yet wired — the graph's stub nodes
-    # handle this gracefully. When providers are integrated, instantiate
-    # real implementations here and pass them into WorkflowContext.
+    from cooking_plan_agent.config.settings import get_settings
+    from cooking_plan_agent.research.config import DomainAllowList
+    from cooking_plan_agent.research.providers.fake import FakeSearchProvider
+    from cooking_plan_agent.research.researcher import Researcher
+
+    settings = get_settings()
+
+    # Wire RecipeResearcher when web research is enabled (handbook 10.1).
+    # MVP uses FakeSearchProvider; swap to a real provider (Tavily/Brave/etc.)
+    # when the provider adapter is implemented.
+    recipe_researcher: Researcher | None = None
+    if settings.web_research_enabled:
+        allow_list = DomainAllowList.from_settings(
+            custom_domains=settings.allowed_research_domains,
+        )
+        provider = FakeSearchProvider()
+        recipe_researcher = Researcher(
+            provider=provider,
+            allow_list=allow_list,
+            settings=settings,
+        )
+
+    # Build the immutable workflow context. RecipeExtractor is not yet wired
+    # (stub nodes handle this gracefully). RecipeResearcher is wired when
+    # web_research_enabled=True.
     workflow_context = WorkflowContext(
         recipe_extractor=None,  # type: ignore[arg-type] — wired when LLM integration lands
-        recipe_researcher=None,
+        recipe_researcher=recipe_researcher,
     )
 
     # Build and compile the LangGraph workflow graph once at startup.

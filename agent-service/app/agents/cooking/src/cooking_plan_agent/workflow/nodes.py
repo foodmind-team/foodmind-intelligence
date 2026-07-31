@@ -89,11 +89,92 @@ async def research_missing_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
 ) -> dict:
-    """Query web research for low-confidence critical gaps.
+    """Query web research for low-confidence critical gaps (handbook 10).
 
-    STUB: passes through.
+    For each critical gap in state, query the RecipeResearcher from
+    WorkflowContext. Gaps that are heat or duration related are prioritised.
+    Returns evidence dict keyed by gap_id for traceability.
+
+    On any failure (timeout, provider error, no results), the evidence
+    stays empty and routing falls back to confirmation — never unsafe guess.
     """
-    return {}
+    researcher = runtime.context.recipe_researcher
+    if researcher is None:
+        # No researcher wired — nothing to do (MVP without research)
+        return {}
+
+    gaps = state.get("gaps", ())
+    if not gaps:
+        return {}
+
+    # Only research critical gaps that are heat/duration/temperature related
+    # (handbook 10.1: "only for missing cooking heat or duration")
+    _RESEARCHABLE_FIELDS = {"heat_level", "duration", "temperature", "target_temperature_c"}
+
+    researchable_gaps = [
+        g for g in gaps
+        if g.gap_class in ("critical", "safety_critical")
+        and any(f in g.field_path.lower() for f in _RESEARCHABLE_FIELDS)
+    ]
+
+    if not researchable_gaps:
+        return {}
+
+    # Extract dish name from recipe candidates for query context
+    candidates = state.get("extracted_candidates", ())
+    dish_name = candidates[0].dish_name if candidates else ""
+
+    # Resolve each gap (handbook 10.9: at most 2 queries per dish)
+    # For MVP, we use the Researcher directly rather than the Protocol
+    # since the Protocol's research() signature returns list[EvidenceResult]
+    from cooking_plan_agent.domain.models import ReconciledEvidence
+    from cooking_plan_agent.research.researcher import Researcher
+
+    research_evidence: dict[str, ReconciledEvidence] = {}
+
+    if isinstance(researcher, Researcher):
+        for gap in researchable_gaps[:2]:  # At most 2 queries (handbook 10.9)
+            try:
+                reconciled = await researcher.resolve_gap(gap, dish_name)
+                research_evidence[gap.gap_id] = reconciled
+            except Exception:  # noqa: BLE001 — any failure → confirmation, not unsafe guess
+                # Search failure routes to confirmation (handbook 10.9)
+                research_evidence[gap.gap_id] = ReconciledEvidence(
+                    source_count=0,
+                    needs_confirmation=True,
+                )
+    else:
+        # Non-Researcher RecipeResearcher — fallback to Protocol's research()
+        for gap in researchable_gaps[:2]:
+            from cooking_plan_agent.domain.models import EvidenceQuery
+            from cooking_plan_agent.research.query_builder import build_minimal_query
+
+            query_text = build_minimal_query(gap, dish_name)
+            query = EvidenceQuery(
+                query_text=query_text,
+                gap_type=gap.gap_class,
+                recipe_context=dish_name,
+            )
+            try:
+                results = await researcher.research(query)
+                if results:
+                    # Map results to ReconciledEvidence as best-effort
+                    research_evidence[gap.gap_id] = ReconciledEvidence(
+                        source_count=len(results),
+                        needs_confirmation=False,
+                    )
+                else:
+                    research_evidence[gap.gap_id] = ReconciledEvidence(
+                        source_count=0,
+                        needs_confirmation=True,
+                    )
+            except Exception:  # noqa: BLE001 — any failure → confirmation
+                research_evidence[gap.gap_id] = ReconciledEvidence(
+                    source_count=0,
+                    needs_confirmation=True,
+                )
+
+    return {"research_evidence": research_evidence}
 
 
 async def validate_recipe_ir_node(
