@@ -260,4 +260,4 @@ class ScheduleOrchestrator:
                 predecessor_ids.add(dep.predecessor_id)
         all_ids = {t.task_id for t in problem.tasks}
         final = all_ids - predecessor_ids
-        return final if final else all_ids
+        return final or all_ids
