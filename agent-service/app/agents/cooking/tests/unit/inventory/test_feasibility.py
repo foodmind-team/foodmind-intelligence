@@ -2,7 +2,6 @@
 
 from datetime import date
 from decimal import Decimal
-from math import isclose
 
 import pytest
 

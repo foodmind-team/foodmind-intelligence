@@ -2,18 +2,13 @@
 
 from decimal import Decimal
 
-import pytest
-
 from cooking_plan_agent.domain.models import (
     FeasibilityReport,
     GeneratePlanRequest,
     IngredientFeasibility,
-    InventoryLotSnapshot,
     RepairOption,
 )
 from cooking_plan_agent.repair.options import (
-    RepairValidation,
-    Shortage,
     apply_approved_decisions,
     calculate_exact_shortages,
     propose_dish_replacements,
@@ -24,7 +19,6 @@ from cooking_plan_agent.repair.options import (
     rank_repair_options,
     validate_repair_option,
 )
-
 
 # ======================================================================
 # 5.17  calculate_exact_shortages
