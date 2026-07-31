@@ -1,0 +1,47 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment (installed from lock in the image)
+.venv/
+
+# Environment variables — NEVER in the image
+.env
+.env.*
+!.env.example
+
+# Testing — not needed at runtime
+tests/
+.pytest_cache/
+.coverage
+coverage.xml
+
+# Lint/type check caches (not needed at runtime)
+.ruff_cache/
+.mypy_cache/
+
+# IDE and OS files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI
+.github/
+
+# Project local rules
+.trae/
+
+# Documentation
+docs/
+*.md
+!README.md
+# Temp files
+*.log
+tmp/
