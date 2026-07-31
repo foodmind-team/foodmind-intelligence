@@ -10,14 +10,12 @@ from langgraph.runtime import Runtime
 
 from cooking_plan_agent.domain.models import (
     Assumption,
-    ConfirmationPlanResponse,
     ExtractedRecipeCandidate,
-    FailedPlanResponse,
     FeasibilityReport,
-    InfeasiblePlanResponse,
-    ReadyPlanResponse,
+    IngredientDemand,
     RecipeGap,
     RecipeIR,
+    SafetyContext,
     SafetyReport,
     WorkflowError,
 )
@@ -335,17 +333,38 @@ async def validate_safety_node(
 ) -> dict:
     """Evaluate all safety rules against the recipe set.
 
-    STUB: returns a safe report.
+    Builds a SafetyContext from request + parsed_recipes, then delegates
+    to the SafetyRuleEngine from WorkflowContext. When no engine is
+    configured (backwards-compat), returns a pass-through safe report.
+
+    Handbook 5.7: safety_validator node — first hard gate after parsing.
     """
-    return {
-        "safety_report": SafetyReport(
-            report_id="stub-safety",
-            findings=(),
-            is_safe=True,
-            has_unrepairable=False,
-            required_safety_task_ids=(),
-        )
-    }
+    safety_engine = runtime.context.safety_engine
+    if safety_engine is None:
+        # No engine wired — pass-through safe (MVP backwards-compat)
+        return {
+            "safety_report": SafetyReport(
+                report_id="stub-safety",
+                findings=(),
+                is_safe=True,
+                has_unrepairable=False,
+                required_safety_task_ids=(),
+            )
+        }
+
+    parsed_recipes = state.get("parsed_recipes", ())
+    request = state["request"]
+
+    context = SafetyContext(
+        recipes=parsed_recipes,
+        dietary_restrictions=request.dietary_restrictions,
+        user_allergens=request.user_allergens,
+        inventory_lots=request.inventory_lots,
+        cooking_date=None,  # MVP: no cooking date from request yet
+    )
+
+    report = safety_engine.evaluate(context)
+    return {"safety_report": report}
 
 
 async def check_feasibility_node(
@@ -354,15 +373,82 @@ async def check_feasibility_node(
 ) -> dict:
     """Check inventory sufficiency and resource compatibility.
 
-    STUB: returns feasible.
+    Ingredient check: aggregates all RecipeIR.ingredients then runs FEFO
+    allocation against request.inventory_lots.
+
+    Resource pre-check: inspects RecipeStep.resources_hint for required
+    resource types and verifies at least one compatible resource exists.
+    Full resource-capacity checking (per CookingTask) is deferred to
+    merge_preparation + build_task_graph stages.
     """
+    from cooking_plan_agent.inventory.feasibility import check_all_inventory
+
+    request = state["request"]
+    parsed_recipes = state.get("parsed_recipes", ())
+
+    # --- Ingredient feasibility ---
+    all_ingredients: list[IngredientDemand] = []
+    for recipe in parsed_recipes:
+        all_ingredients.extend(recipe.ingredients)
+
+    ingredient_report = check_all_inventory(
+        requirements=tuple(all_ingredients),
+        lots=request.inventory_lots,
+        cooking_date=None,  # MVP: no cooking_date from request yet
+    )
+
+    # --- Resource pre-check (from step hints, pre-decomposition) ---
+    missing_resources: list[str] = []
+    if request.kitchen_resources:
+        available_types = {
+            r.resource_type.lower()
+            for r in request.kitchen_resources
+            if r.available
+        }
+        for recipe in parsed_recipes:
+            for step in recipe.steps:
+                for hint in step.resources_hint:
+                    if hint.lower() not in available_types:
+                        if hint not in missing_resources:
+                            missing_resources.append(hint)
+
+    is_feasible = ingredient_report.is_feasible and len(missing_resources) == 0
+
+    # --- Generate repair options when infeasible ---
+    repair_options: tuple = ()
+    if not is_feasible:
+        from cooking_plan_agent.repair.options import (
+            propose_dish_replacements,
+            propose_equipment_alternatives,
+            propose_ingredient_substitutions,
+            propose_portion_adjustments,
+            rank_repair_options,
+        )
+
+        recipe_names = tuple(r.dish_name for r in parsed_recipes)
+
+        opts = list(
+            propose_ingredient_substitutions(ingredient_report.ingredient_shortages)
+        )
+        opts.extend(
+            propose_portion_adjustments(ingredient_report.ingredient_shortages)
+        )
+        opts.extend(
+            propose_equipment_alternatives(tuple(missing_resources))
+        )
+        opts.extend(
+            propose_dish_replacements(ingredient_report.ingredient_shortages, recipe_names)
+        )
+        repair_options = rank_repair_options(tuple(opts))
+
     return {
         "feasibility_report": FeasibilityReport(
-            report_id="stub-feasibility",
-            ingredient_shortages=(),
-            missing_resources=(),
-            is_feasible=True,
-        )
+            report_id=ingredient_report.report_id,
+            ingredient_shortages=ingredient_report.ingredient_shortages,
+            missing_resources=tuple(sorted(missing_resources)),
+            is_feasible=is_feasible,
+        ),
+        "repair_options": repair_options,
     }
 
 
@@ -370,17 +456,13 @@ async def build_confirmation_response_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
 ) -> dict:
-    """Render NEEDS_CONFIRMATION response with assumptions/repair options.
+    """Render NEEDS_CONFIRMATION response with assumptions and repair options.
 
-    STUB: returns minimal confirmation response.
+    Delegates to rendering.responses.render_confirmation_response.
     """
-    response = ConfirmationPlanResponse(
-        plan_id=state["request"].request_id,
-        status="NEEDS_CONFIRMATION",
-        assumptions=(),
-        repair_options=state.get("repair_options", ()),
-        questions=("Would you like to proceed with these options?",),
-    )
+    from cooking_plan_agent.rendering.responses import render_confirmation_response
+
+    response = render_confirmation_response(state)
     return {"response": response}
 
 
@@ -563,21 +645,13 @@ async def render_ready_response_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
 ) -> dict:
-    """Render READY response with verified schedule and completion checklist.
+    """Render READY response with verified schedule, mise en place, and checklist.
 
-    STUB: returns minimal ready response.
+    Delegates to rendering.responses.render_ready_response.
     """
-    result = state.get("schedule_result")
-    response = ReadyPlanResponse(
-        plan_id=state["request"].request_id,
-        status="READY",
-        solver_status=result.solver_status if result else "UNKNOWN",
-        makespan_minutes=result.makespan_minutes if result else 0,
-        timeline=(),
-        completion_checklist=(),
-        mise_en_place=(),
-        dish_completions=(),
-    )
+    from cooking_plan_agent.rendering.responses import render_ready_response
+
+    response = render_ready_response(state)
     return {"response": response}
 
 
@@ -585,31 +659,13 @@ async def render_infeasible_response_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
 ) -> dict:
-    """Render INFEASIBLE response with hard reasons.
+    """Render INFEASIBLE response with ordered reasons from all sources.
 
-    Merges reasons from safety findings, feasibility shortages, and
-    workflow errors into a single response. Order matters: safety
-    reasons come first as they are the strongest blockers.
+    Delegates to rendering.responses.render_infeasible_response.
     """
-    error = state.get("error")
-    safety = state.get("safety_report")
-    feasibility = state.get("feasibility_report")
+    from cooking_plan_agent.rendering.responses import render_infeasible_response
 
-    reasons: list[str] = []
-    if safety is not None and not safety.is_safe:
-        reasons.extend(f.description for f in safety.findings)
-    if feasibility is not None and not feasibility.is_feasible:
-        for shortage in feasibility.ingredient_shortages:
-            reasons.append(f"Shortage: {shortage.ingredient_name} needs {shortage.shortage} {shortage.unit}")
-    if error is not None:
-        reasons.append(error.message)
-
-    response = InfeasiblePlanResponse(
-        plan_id=state["request"].request_id,
-        status="INFEASIBLE",
-        reasons=tuple(reasons) if reasons else ("The plan cannot be fulfilled with current constraints.",),
-        safe_alternatives=(),
-    )
+    response = render_infeasible_response(state)
     return {"response": response}
 
 
@@ -619,15 +675,9 @@ async def render_failed_response_node(
 ) -> dict:
     """Render FAILED response with stable error code and correlation ID.
 
-    Graceful fallback: if no error is in state, returns INTERNAL_ERROR
-    with the request ID. This prevents the graph from producing a
-    response with missing fields.
+    Delegates to rendering.responses.render_failed_response.
     """
-    error = state.get("error")
-    response = FailedPlanResponse(
-        status="FAILED",
-        error_code=error.error_code if error else "INTERNAL_ERROR",
-        correlation_id=error.correlation_id if error else state["request"].request_id,
-        message=error.message if error else "An unexpected error occurred",
-    )
+    from cooking_plan_agent.rendering.responses import render_failed_response
+
+    response = render_failed_response(state)
     return {"response": response}

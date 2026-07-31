@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from cooking_plan_agent.api import register_exception_handlers
 from cooking_plan_agent.api import router as agent_router
 from cooking_plan_agent.application import GenerateCookingPlanService
+from cooking_plan_agent.safety.engine import SafetyEngine
 from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.graph import build_cooking_plan_graph
 
@@ -150,6 +151,7 @@ async def lifespan(app: FastAPI):
     workflow_context = WorkflowContext(
         recipe_extractor=None,  # type: ignore[arg-type] — wired when LLM integration lands
         recipe_researcher=recipe_researcher,
+        safety_engine=SafetyEngine(),
     )
 
     # Build and compile the LangGraph workflow graph once at startup.
