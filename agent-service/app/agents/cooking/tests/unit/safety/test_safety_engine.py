@@ -13,11 +13,13 @@ Tests are organised by rule:
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from cooking_plan_agent.domain.enums import HeatLevel
 from cooking_plan_agent.domain.models import (
     IngredientDemand,
+    InventoryLotSnapshot,
     RecipeIR,
     RecipeStep,
     SafetyContext,
@@ -28,6 +30,8 @@ from cooking_plan_agent.safety.rules import (
     AllergenDetectionRule,
     CrossContaminationRule,
     DietaryCompatibilityRule,
+    ExpiredIngredientRule,
+    HoldingTimeRule,
     ProteinSafetyTemperatureRule,
 )
 
@@ -60,6 +64,7 @@ def _make_step(
     category: str = "heating",
     heat_level: HeatLevel = HeatLevel.MEDIUM,
     target_temperature_c: Decimal | None = None,
+    passive_duration_minutes: int | None = None,
 ) -> RecipeStep:
     """Factory for a RecipeStep with minimal required fields."""
     return RecipeStep(
@@ -68,6 +73,7 @@ def _make_step(
         category=category,
         heat_level=heat_level,
         target_temperature_c=target_temperature_c,
+        passive_duration_minutes=passive_duration_minutes,
     )
 
 
@@ -564,3 +570,205 @@ class TestSafetyEngine:
         report = engine.evaluate(ctx)
         assert len(report.findings) == 1
         assert report.findings[0].rule_id == "SAFETY_CROSS_CONTAMINATION"
+
+
+# =============================================================================
+# 6. ExpiredIngredientRule
+# =============================================================================
+
+
+def _make_lot(
+    lot_id: str,
+    canonical_name: str,
+    on_hand: Decimal = Decimal(500),
+    reserved: Decimal = Decimal(0),
+    unit: str = "g",
+    expiry_date: date | None = None,
+) -> InventoryLotSnapshot:
+    """Factory for an InventoryLotSnapshot."""
+    return InventoryLotSnapshot(
+        lot_id=lot_id,
+        item_id=f"item_{lot_id}",
+        canonical_name=canonical_name,
+        on_hand=on_hand,
+        reserved=reserved,
+        unit=unit,
+        expiry_date=expiry_date,
+    )
+
+
+class TestExpiredIngredientRule:
+    """Expired ingredient detection in inventory lots."""
+
+    def test_no_cooking_date_returns_none(self):
+        """Without a cooking_date, expiry cannot be checked → None."""
+        rule = ExpiredIngredientRule()
+        ctx = _make_context(recipes=(_make_recipe("r1", "Chicken Soup"),))
+        assert rule.evaluate(ctx) is None
+
+    def test_no_inventory_lots_returns_none(self):
+        """Without inventory lots, no expiry to check → None."""
+        rule = ExpiredIngredientRule()
+        recipe = _make_recipe(
+            "r1", "Chicken Soup",
+            ingredients=(_make_ingredient("chicken breast", input_state="raw"),),
+        )
+        ctx = SafetyContext(recipes=(recipe,), cooking_date=date(2026, 8, 15))
+        assert rule.evaluate(ctx) is None
+
+    def test_fresh_lot_returns_none(self):
+        """Lot with expiry_date after cooking_date → no finding."""
+        rule = ExpiredIngredientRule()
+        recipe = _make_recipe(
+            "r1", "Chicken Soup",
+            ingredients=(_make_ingredient("chicken breast"),),
+        )
+        lot = _make_lot("L1", "chicken breast", expiry_date=date(2026, 8, 20))
+        ctx = SafetyContext(
+            recipes=(recipe,),
+            cooking_date=date(2026, 8, 15),
+            inventory_lots=(lot,),
+        )
+        assert rule.evaluate(ctx) is None
+
+    def test_slightly_expired_perishable_returns_repairable(self):
+        """Lot 1 day past expiry → hard_repairable (can inspect)."""
+        rule = ExpiredIngredientRule()
+        recipe = _make_recipe(
+            "r1", "Chicken Soup",
+            ingredients=(_make_ingredient("chicken breast"),),
+        )
+        lot = _make_lot("L1", "chicken breast", expiry_date=date(2026, 8, 14))
+        ctx = SafetyContext(
+            recipes=(recipe,),
+            cooking_date=date(2026, 8, 15),
+            inventory_lots=(lot,),
+        )
+        result = rule.evaluate(ctx)
+        assert result is not None
+        assert result.severity == "hard_repairable"
+        assert "chicken breast" in result.affected_ingredient_names
+
+    def test_deeply_expired_perishable_returns_unrepairable(self):
+        """Lot 5 days past expiry → hard_unrepairable (likely spoiled)."""
+        rule = ExpiredIngredientRule()
+        recipe = _make_recipe(
+            "r1", "Beef Stew",
+            ingredients=(_make_ingredient("beef chuck"),),
+        )
+        lot = _make_lot("L1", "beef chuck", expiry_date=date(2026, 8, 10))
+        ctx = SafetyContext(
+            recipes=(recipe,),
+            cooking_date=date(2026, 8, 15),
+            inventory_lots=(lot,),
+        )
+        result = rule.evaluate(ctx)
+        assert result is not None
+        assert result.severity == "hard_unrepairable"
+
+    def test_expired_non_perishable_returns_none(self):
+        """Expired rice (non-perishable) → no finding."""
+        rule = ExpiredIngredientRule()
+        recipe = _make_recipe(
+            "r1", "Fried Rice",
+            ingredients=(_make_ingredient("rice"),),
+        )
+        lot = _make_lot("L1", "rice", expiry_date=date(2025, 1, 1))
+        ctx = SafetyContext(
+            recipes=(recipe,),
+            cooking_date=date(2026, 8, 15),
+            inventory_lots=(lot,),
+        )
+        assert rule.evaluate(ctx) is None
+
+    def test_lot_not_used_in_recipes_returns_none(self):
+        """Lot for unused ingredient → skipped, no false positive."""
+        rule = ExpiredIngredientRule()
+        recipe = _make_recipe(
+            "r1", "Vegetable Soup",
+            ingredients=(_make_ingredient("carrot"),),
+        )
+        lot = _make_lot("L1", "chicken breast", expiry_date=date(2026, 8, 10))
+        ctx = SafetyContext(
+            recipes=(recipe,),
+            cooking_date=date(2026, 8, 15),
+            inventory_lots=(lot,),
+        )
+        assert rule.evaluate(ctx) is None
+
+
+# =============================================================================
+# 7. HoldingTimeRule
+# =============================================================================
+
+
+class TestHoldingTimeRule:
+    """Holding-time risk for dishes with long passive phases."""
+
+    def test_no_perishable_protein_returns_none(self):
+        """Vegetarian dish → no holding-time risk."""
+        rule = HoldingTimeRule()
+        recipe = _make_recipe(
+            "r1", "Vegetable Soup",
+            ingredients=(_make_ingredient("carrot"), _make_ingredient("broccoli")),
+            steps=(_make_step(1, "Boil vegetables", passive_duration_minutes=180),),
+        )
+        ctx = _make_context(recipes=(recipe,))
+        assert rule.evaluate(ctx) is None
+
+    def test_short_passive_returns_none(self):
+        """Perishable protein but passive time ≤ 120 min → no finding."""
+        rule = HoldingTimeRule()
+        recipe = _make_recipe(
+            "r1", "Quick Chicken",
+            ingredients=(_make_ingredient("chicken breast"),),
+            steps=(_make_step(1, "Boil chicken", passive_duration_minutes=60),),
+        )
+        ctx = _make_context(recipes=(recipe,))
+        assert rule.evaluate(ctx) is None
+
+    def test_long_passive_with_perishable_returns_finding(self):
+        """Perishable protein + passive > 120 min → holding-time risk."""
+        rule = HoldingTimeRule()
+        recipe = _make_recipe(
+            "r1", "Slow-Cooked Beef",
+            ingredients=(_make_ingredient("beef chuck"),),
+            steps=(
+                _make_step(1, "Simmer beef", passive_duration_minutes=180),
+            ),
+        )
+        ctx = _make_context(recipes=(recipe,))
+        result = rule.evaluate(ctx)
+        assert result is not None
+        assert result.severity == "hard_repairable"
+        assert result.rule_id == "SAFETY_HOLDING_TIME"
+        assert "beef" in result.description.lower() or "Slow-Cooked" in result.description
+
+    def test_multiple_recipes_one_risky(self):
+        """One risky dish among several → finding includes only the risky one."""
+        rule = HoldingTimeRule()
+        risky = _make_recipe(
+            "r1", "Brisket",
+            ingredients=(_make_ingredient("beef brisket"),),
+            steps=(_make_step(1, "Simmer brisket", passive_duration_minutes=240),),
+        )
+        safe = _make_recipe(
+            "r2", "Salad",
+            ingredients=(_make_ingredient("lettuce"), _make_ingredient("tomato")),
+            steps=(_make_step(1, "Toss salad", passive_duration_minutes=0),),
+        )
+        ctx = _make_context(recipes=(risky, safe))
+        result = rule.evaluate(ctx)
+        assert result is not None
+        assert "Brisket" in result.description
+
+    def test_edge_case_exactly_120_returns_none(self):
+        """Passive == 120 min (boundary) → no finding (strict > check)."""
+        rule = HoldingTimeRule()
+        recipe = _make_recipe(
+            "r1", "Roast Chicken",
+            ingredients=(_make_ingredient("chicken"),),
+            steps=(_make_step(1, "Roast chicken", passive_duration_minutes=120),),
+        )
+        ctx = _make_context(recipes=(recipe,))
+        assert rule.evaluate(ctx) is None

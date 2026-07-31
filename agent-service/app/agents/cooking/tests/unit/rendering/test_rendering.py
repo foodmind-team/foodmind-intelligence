@@ -1,13 +1,11 @@
 """Unit tests for rendering builders and responses — handbook 11.1–11.10."""
 
-from datetime import date
 from decimal import Decimal
 
 import pytest
 
-from cooking_plan_agent.domain.enums import HeatLevel, SolverStatus, WorkMode
+from cooking_plan_agent.domain.enums import SolverStatus, WorkMode
 from cooking_plan_agent.domain.models import (
-    Assumption,
     CompletionItem,
     ConfirmationPlanResponse,
     CookingTask,
@@ -17,7 +15,6 @@ from cooking_plan_agent.domain.models import (
     InfeasiblePlanResponse,
     IngredientFeasibility,
     InventoryConsumptionProposal,
-    InventoryLotSnapshot,
     LotAllocation,
     ReadyPlanResponse,
     RepairOption,
@@ -42,10 +39,8 @@ from cooking_plan_agent.rendering.responses import (
 from cooking_plan_agent.scheduling.models import (
     ScheduledInterval,
     ScheduleResult,
-    VerificationIssue,
 )
 from cooking_plan_agent.workflow.state import PlanState
-
 
 # ======================================================================
 # Fixtures

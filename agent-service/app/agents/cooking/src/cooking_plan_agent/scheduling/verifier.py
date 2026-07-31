@@ -87,6 +87,9 @@ class ScheduleVerifier:
         # --- Check 8: reported makespan matches latest finish ---
         issues.extend(self._check_makespan_consistency(interval_map, result))
 
+        # --- Check 9: safety-tagged tasks are present in the schedule ---
+        issues.extend(self._check_safety_tasks(task_map, interval_map))
+
         return VerificationReport(
             passed=len(issues) == 0,
             issues=tuple(issues),
@@ -127,6 +130,45 @@ class ScheduleVerifier:
                     task_ids=tuple(sorted(extra)),
                 )
             )
+
+        return issues
+
+
+    # ------------------------------------------------------------------
+    # Check 9: safety-tagged tasks
+    # ------------------------------------------------------------------
+
+    def _check_safety_tasks(
+        self,
+        task_map: dict[str, object],
+        interval_map: dict[str, ScheduledInterval],
+    ) -> list[VerificationIssue]:
+        """Verify that every safety-tagged task has a scheduled interval.
+
+        Safety tasks (e.g., sanitise cutting board after raw protein handling)
+        are injected by merge_preparation_node.  Every such task MUST appear
+        in the final schedule — if one is missing, the safety constraint is
+        not enforced.
+
+        Handbook 7.13: the verifier catches optimiser bugs before they reach
+        the user.  A missing safety task is a hard failure.
+        """
+        issues: list[VerificationIssue] = []
+
+        for task_id, task in task_map.items():
+            if not hasattr(task, "safety_tags") or not task.safety_tags:  # type: ignore[union-attr]
+                continue
+            if task_id not in interval_map:
+                issues.append(
+                    VerificationIssue(
+                        code="SAFETY_TASK_MISSING",
+                        message=(
+                            f"Safety-tagged task '{task_id}' "
+                            f"(tags: {task.safety_tags}) is missing from schedule"
+                        ),
+                        task_ids=(task_id,),
+                    )
+                )
 
         return issues
 

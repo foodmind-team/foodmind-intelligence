@@ -118,12 +118,81 @@ def build_task_graph(
 # ============================================================================
 
 
+class CycleReport(StrictModel):
+    """Structured report when a cycle is detected in the task graph.
+
+    Handbook 6.9: Do not send cyclic graphs to OR-Tools. This report
+    provides actionable detail for debugging.
+    """
+
+    task_ids: tuple[str, ...]
+    """Tasks involved in the cycle (all tasks with remaining indegree > 0)."""
+
+    task_count: int
+    """How many tasks are in the cycle."""
+
+    edges: tuple[TaskEdge, ...] = ()
+    """Edges that form or contribute to the cycle, if identifiable."""
+
+
 class CyclicGraphError(ValueError):
     """Raised when a cycle is detected in the task graph."""
 
-    def __init__(self, task_ids: frozenset[str]) -> None:
-        self.task_ids = task_ids
-        super().__init__(f"Cyclic dependency detected among tasks: {sorted(task_ids)}")
+    def __init__(self, report: CycleReport) -> None:
+        self.report = report
+        super().__init__(f"Cyclic dependency detected among {report.task_count} tasks: {sorted(report.task_ids)}")
+
+
+def detect_cycle(graph: TaskGraph) -> CycleReport | None:
+    """Detect a cycle in the task graph via Kahn's algorithm side-effect.
+
+    Unlike topological_sort_kahn which raises on cycle, this function
+    returns a structured CycleReport or None.  Use this when you need
+    diagnostic information rather than an exception.
+
+    Args:
+        graph: The task graph to check.
+
+    Returns:
+        CycleReport if a cycle is detected, None if acyclic.
+    """
+    indegree: dict[str, int] = {t.task_id: 0 for t in graph.tasks}
+    successors: dict[str, list[str]] = {t.task_id: [] for t in graph.tasks}
+
+    for edge in graph.edges:
+        if edge.predecessor_id in indegree and edge.successor_id in indegree:
+            indegree[edge.successor_id] += 1
+            successors[edge.predecessor_id].append(edge.successor_id)
+
+    from collections import deque
+    queue: deque[str] = deque(sorted(tid for tid, deg in indegree.items() if deg == 0))
+
+    processed = 0
+    while queue:
+        tid = queue.popleft()
+        processed += 1
+        for succ in successors.get(tid, []):
+            indegree[succ] -= 1
+            if indegree[succ] == 0:
+                queue.append(succ)
+                sorted_queue = sorted(queue)
+                queue = deque(sorted_queue)
+
+    if processed >= len(graph.tasks):
+        return None  # No cycle
+
+    # Find which edges participate in the cycle
+    unfinished = frozenset(tid for tid, deg in indegree.items() if deg > 0)
+    cycle_edges: list[TaskEdge] = []
+    for edge in graph.edges:
+        if edge.predecessor_id in unfinished and edge.successor_id in unfinished:
+            cycle_edges.append(edge)
+
+    return CycleReport(
+        task_ids=tuple(sorted(unfinished)),
+        task_count=len(unfinished),
+        edges=tuple(cycle_edges),
+    )
 
 
 def topological_sort_kahn(graph: TaskGraph) -> tuple[CookingTask, ...]:
@@ -179,7 +248,16 @@ def topological_sort_kahn(graph: TaskGraph) -> tuple[CookingTask, ...]:
     # 5. Cycle detection.
     if len(result) < len(graph.tasks):
         unfinished = frozenset(tid for tid, deg in indegree.items() if deg > 0)
-        raise CyclicGraphError(unfinished)
+        cycle_edges: list[TaskEdge] = []
+        for edge in graph.edges:
+            if edge.predecessor_id in unfinished and edge.successor_id in unfinished:
+                cycle_edges.append(edge)
+        report = CycleReport(
+            task_ids=tuple(sorted(unfinished)),
+            task_count=len(unfinished),
+            edges=tuple(cycle_edges),
+        )
+        raise CyclicGraphError(report)
 
     return tuple(result)
 
