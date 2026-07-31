@@ -42,3 +42,47 @@ pythonpath = ["src"]
 
 entrypoint = "cooking_plan_agent.main:app"
 pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "BLE", # flake8-blind-except
+    "FURB", # refurb
+    "PIE", # flake8-pie
+]
+ignore = [
+    "N818",  # pre-existing: WorkflowException naming convention
+    "E501",  # line-too-long: handled by formatter, pre-existing verbose comments
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+packages = ["src/cooking_plan_agent"]
+exclude = ["tests/"]
+
+[tool.coverage.run]
+source = ["src/cooking_plan_agent"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_also = [
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]

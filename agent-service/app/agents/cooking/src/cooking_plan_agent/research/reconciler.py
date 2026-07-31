@@ -46,9 +46,9 @@ def _majority_heat(
     counts = Counter(levels)
     # Tie-breaking: prefer HIGH > MEDIUM > LOW > NONE
     max_count = max(counts.values())
-    candidates = [l for l, c in counts.items() if c == max_count]
+    candidates = [level for level, c in counts.items() if c == max_count]
     priority = {HeatLevel.HIGH: 4, HeatLevel.MEDIUM: 3, HeatLevel.LOW: 2, HeatLevel.NONE: 1}
-    return max(candidates, key=lambda l: priority.get(l, 0))
+    return max(candidates, key=lambda level: priority.get(level, 0))
 
 
 def reconcile(

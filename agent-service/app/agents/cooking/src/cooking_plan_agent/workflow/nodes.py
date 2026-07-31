@@ -109,12 +109,12 @@ async def research_missing_node(
 
     # Only research critical gaps that are heat/duration/temperature related
     # (handbook 10.1: "only for missing cooking heat or duration")
-    _RESEARCHABLE_FIELDS = {"heat_level", "duration", "temperature", "target_temperature_c"}
+    _researchable_fields = {"heat_level", "duration", "temperature", "target_temperature_c"}
 
     researchable_gaps = [
         g for g in gaps
         if g.gap_class in ("critical", "safety_critical")
-        and any(f in g.field_path.lower() for f in _RESEARCHABLE_FIELDS)
+        and any(f in g.field_path.lower() for f in _researchable_fields)
     ]
 
     if not researchable_gaps:

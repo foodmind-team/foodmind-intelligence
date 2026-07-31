@@ -1,0 +1,218 @@
+name: CI
+
+# ---------------------------------------------------------------------------
+# Trigger: push & PR to main, plus manual dispatch.
+# Handbook 11.12: CI must be deterministic and offline — no real API keys.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  UV_SYSTEM_PYTHON: "0"
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+
+jobs:
+  # ------------------------------------------------------------------
+  # Job 1: Lint & Format (handbook 11.12 gate 1)
+  # ------------------------------------------------------------------
+  lint:
+    name: "Lint & Format"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+  # ------------------------------------------------------------------
+  # Job 2: Type Check (handbook 11.12 gate 2)
+  # ------------------------------------------------------------------
+  typecheck:
+    name: "Type Check (mypy)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Type check
+        run: uv run mypy src
+
+  # ------------------------------------------------------------------
+  # Job 3: Unit & Property Tests (handbook 11.12 gate 3)
+  # ------------------------------------------------------------------
+  test:
+    name: "Tests (pytest)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run tests with coverage
+        run: uv run pytest --cov=cooking_plan_agent --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage to Codecov (optional)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ------------------------------------------------------------------
+  # Job 4: Contract & OpenAPI (handbook 9.12)
+  # ------------------------------------------------------------------
+  contract:
+    name: "Contract Tests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run contract tests
+        run: uv run pytest tests/test_api_contract.py tests/test_dependencies.py -v
+
+  # ------------------------------------------------------------------
+  # Job 5: Export OpenAPI schema and verify it (handbook 9.12)
+  # ------------------------------------------------------------------
+  openapi:
+    name: "OpenAPI Schema Check"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Export OpenAPI schema
+        run: |
+          uv run python -c "
+          from cooking_plan_agent.main import create_app
+          import json
+          app = create_app()
+          schema = app.openapi()
+          with open('openapi.json', 'w') as f:
+              json.dump(schema, f, indent=2)
+          print(f'OpenAPI version: {schema[\"openapi\"]}')
+          print(f'Paths: {list(schema[\"paths\"].keys())}')
+          "
+
+      - name: Verify schema is valid JSON
+        run: python -m json.tool openapi.json > /dev/null
+
+      - name: Upload OpenAPI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-schema
+          path: openapi.json
+          retention-days: 7
+
+  # ------------------------------------------------------------------
+  # Job 6: Architecture import-boundary check (handbook 2.6)
+  # ------------------------------------------------------------------
+  architecture:
+    name: "Architecture Boundaries"
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify domain package has no framework imports
+        run: |
+          # Handbook 2.6: domain must not import fastapi, langgraph, etc.
+          FORBIDDEN="fastapi|langgraph|langchain|httpx|ortools|sqlalchemy"
+          if grep -rq "$FORBIDDEN" src/cooking_plan_agent/domain/; then
+            echo "ERROR: domain package imports forbidden frameworks"
+            grep -rn "$FORBIDDEN" src/cooking_plan_agent/domain/
+            exit 1
+          fi
+          echo "PASS: domain package has no framework imports"
+
+  # ------------------------------------------------------------------
+  # Job 7: Merge gate — all must pass
+  # ------------------------------------------------------------------
+  merge-gate:
+    name: "Merge Gate"
+    needs: [lint, typecheck, test, contract, openapi, architecture]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: always()
+    steps:
+      - name: Check all required jobs
+        run: |
+          echo "Job results:"
+          echo "  lint:          ${{ needs.lint.result }}"
+          echo "  typecheck:     ${{ needs.typecheck.result }}"
+          echo "  test:          ${{ needs.test.result }}"
+          echo "  contract:      ${{ needs.contract.result }}"
+          echo "  openapi:       ${{ needs.openapi.result }}"
+          echo "  architecture:  ${{ needs.architecture.result }}"
+
+          if [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.typecheck.result }}" != "success" ] || \
+             [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.contract.result }}" != "success" ] || \
+             [ "${{ needs.openapi.result }}" != "success" ] || \
+             [ "${{ needs.architecture.result }}" != "success" ]; then
+            echo "FAIL: one or more required jobs failed"
+            exit 1
+          fi
+          echo "PASS: all required jobs succeeded"
