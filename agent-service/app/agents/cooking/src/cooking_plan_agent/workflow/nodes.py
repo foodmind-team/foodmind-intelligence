@@ -9,11 +9,15 @@ No broad exception catching that masks errors as partial success.
 from langgraph.runtime import Runtime
 
 from cooking_plan_agent.domain.models import (
+    Assumption,
     ConfirmationPlanResponse,
+    ExtractedRecipeCandidate,
     FailedPlanResponse,
     FeasibilityReport,
     InfeasiblePlanResponse,
     ReadyPlanResponse,
+    RecipeGap,
+    RecipeIR,
     SafetyReport,
     WorkflowError,
 )
@@ -57,10 +61,44 @@ async def parse_recipes_node(
 ) -> dict:
     """Extract structured candidates from each recipe's raw text.
 
-    STUB: passes through. Calls runtime.context.recipe_extractor
-    when RecipeExtractor is fully implemented.
+    Uses the RecipeExtractor from WorkflowContext (rule-based or LLM-backed).
+    Each recipe in the request is individually extracted, then aggregated.
+    Falls back to rule-based extraction if no extractor is configured.
     """
-    return {"extracted_candidates": ()}
+    request = state["request"]
+    extractor = runtime.context.recipe_extractor
+
+    candidates: list[ExtractedRecipeCandidate] = []
+
+    if extractor is not None:
+        # Use configured extractor (LLM or rule-based from WorkflowContext)
+        for recipe in request.recipes:
+            try:
+                text = recipe.get("text", "")
+                if text:
+                    candidate = await extractor.extract(text)
+                    candidates.append(candidate)
+            except Exception as exc:  # noqa: BLE001 — per-node error → error state
+                return {
+                    "error": WorkflowError(
+                        error_code="EXTERNAL_PROVIDER_UNAVAILABLE",
+                        message=f"Recipe extraction failed: {exc}",
+                        correlation_id=request.request_id,
+                        node_name="parse_recipes",
+                    )
+                }
+    else:
+        # No extractor configured — use built-in rule-based extractor
+        from cooking_plan_agent.parsing.extractor import RecipeExtractor as RuleExtractor
+
+        rule_extractor = RuleExtractor()
+        for recipe in request.recipes:
+            text = recipe.get("text", "")
+            if text:
+                candidate = await rule_extractor.extract(text)
+                candidates.append(candidate)
+
+    return {"extracted_candidates": tuple(candidates)}
 
 
 async def detect_gaps_node(
@@ -69,9 +107,21 @@ async def detect_gaps_node(
 ) -> dict:
     """Identify missing/inferred fields in extracted candidates.
 
-    STUB: returns empty gaps.
+    Runs gap detection (find_recipe_gaps + classify_recipe_gap) on every
+    extracted candidate. Aggregates all gaps across recipes.
     """
-    return {"gaps": ()}
+    from cooking_plan_agent.parsing.gaps import find_recipe_gaps
+
+    candidates = state.get("extracted_candidates", ())
+    if not candidates:
+        return {"gaps": ()}
+
+    all_gaps: list[RecipeGap] = []
+    for candidate in candidates:
+        gaps = find_recipe_gaps(candidate)
+        all_gaps.extend(gaps)
+
+    return {"gaps": tuple(all_gaps)}
 
 
 async def infer_local_node(
@@ -80,9 +130,44 @@ async def infer_local_node(
 ) -> dict:
     """Apply local cooking rules to fill detected gaps.
 
-    STUB: passes through.
+    Runs infer_local on each candidate with its gaps, then merges inference
+    results back into updated candidates. Unresolved critical gaps are left
+    in state for routing decisions.
     """
-    return {}
+    from cooking_plan_agent.parsing.inference import infer_local as local_infer
+    from cooking_plan_agent.parsing.inference import merge_inference
+
+    candidates = state.get("extracted_candidates", ())
+    gaps = state.get("gaps", ())
+
+    if not candidates or not gaps:
+        return {}
+
+    # Partition gaps by recipe_id for per-candidate inference
+    gaps_by_recipe: dict[str, list[RecipeGap]] = {}
+    for gap in gaps:
+        gaps_by_recipe.setdefault(gap.recipe_id, []).append(gap)
+
+    updated_candidates: list[ExtractedRecipeCandidate] = []
+    all_unresolved: list[RecipeGap] = []
+    all_assumptions: list[Assumption] = []
+
+    for candidate in candidates:
+        recipe_gaps = tuple(gaps_by_recipe.get(candidate.recipe_id, ()))
+        if not recipe_gaps:
+            updated_candidates.append(candidate)
+            continue
+
+        result = local_infer(candidate, recipe_gaps)
+        updated = merge_inference(candidate, result)
+        updated_candidates.append(updated)
+        all_unresolved.extend(result.unresolved_gaps)
+        all_assumptions.extend(result.assumptions)
+
+    return {
+        "extracted_candidates": tuple(updated_candidates),
+        "gaps": tuple(all_unresolved),  # Only keep unresolved gaps for routing
+    }
 
 
 async def research_missing_node(
@@ -184,9 +269,59 @@ async def validate_recipe_ir_node(
 ) -> dict:
     """Build validated RecipeIR objects from candidates.
 
-    STUB: passes through.
+    Converts each ExtractedRecipeCandidate → RecipeIR via build_recipe_ir,
+    then runs semantic validation (validate_recipe_ir_semantics). Produces
+    parsed_recipes in state for downstream scheduling nodes.
+
+    If semantic validation fails with errors, returns a workflow error
+    that will be routed to FAILED terminal.
     """
-    return {}
+    from cooking_plan_agent.parsing.ir_builder import (
+        build_recipe_ir,
+        validate_recipe_ir_semantics,
+    )
+
+    candidates = state.get("extracted_candidates", ())
+    if not candidates:
+        return {
+            "error": WorkflowError(
+                error_code="INVALID_RECIPE_TEXT",
+                message="No extracted recipe candidates to validate",
+                correlation_id=state["request"].request_id,
+                node_name="validate_recipe_ir",
+            )
+        }
+
+    # Build RecipeIR from each candidate
+    recipes: list[RecipeIR] = []
+    for candidate in candidates:
+        try:
+            recipe_ir = build_recipe_ir(candidate)
+            recipes.append(recipe_ir)
+        except (ValueError, TypeError) as exc:
+            return {
+                "error": WorkflowError(
+                    error_code="INVALID_RECIPE_TEXT",
+                    message=f"Failed to build RecipeIR: {exc}",
+                    correlation_id=state["request"].request_id,
+                    node_name="validate_recipe_ir",
+                )
+            }
+
+    # Semantic validation
+    report = validate_recipe_ir_semantics(tuple(recipes))
+    if not report.passed:
+        error_details = "; ".join(i.message for i in report.issues if i.severity == "error")
+        return {
+            "error": WorkflowError(
+                error_code="INVALID_RECIPE_TEXT",
+                message=f"Recipe semantic validation failed: {error_details}",
+                correlation_id=state["request"].request_id,
+                node_name="validate_recipe_ir",
+            )
+        }
+
+    return {"parsed_recipes": tuple(recipes)}
 
 
 # ============================================================================

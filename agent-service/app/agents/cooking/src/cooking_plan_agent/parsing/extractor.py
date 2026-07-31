@@ -1,0 +1,661 @@
+"""Rule-based recipe extractor — parses preprocessed text into structured candidates.
+
+Handbook 4.3–4.8: this module implements the RecipeExtractor Protocol
+defined in workflow/context.py. In MVP, extraction is rule-based (regex +
+keyword matching). When an LLM adapter is wired later, this module is
+replaced while keeping the Protocol contract unchanged.
+
+Architecture (Ports & Adapters):
+  - Port:  RecipeExtractor Protocol (workflow/context.py)
+  - Adapter (this file): rule-based implementation
+  - Future adapter: LLM-based with structured output
+
+Supported patterns:
+  - Chinese recipes: "食材/原料" section, "步骤/做法" section
+  - English recipes: "Ingredients" section, "Steps/Directions" section
+  - Mixed-language recipes detected by preprocess pipeline
+"""
+
+from __future__ import annotations
+
+import re
+from decimal import Decimal
+
+from cooking_plan_agent.domain.enums import HeatLevel
+from cooking_plan_agent.domain.models import (
+    ExtractedIngredient,
+    ExtractedRecipeCandidate,
+    ExtractedStep,
+)
+
+# =============================================================================
+# Ingredient line patterns
+# =============================================================================
+
+# Western: "200g chicken breast, diced" or "1 tbsp soy sauce"
+# Group 1: quantity  Group 2: unit  Group 3: name  Group 4: preparation
+_RE_INGREDIENT_WESTERN = re.compile(
+    r"^[-*•\s]*"  # Leading list marker
+    r"(\d+(?:\.\d+)?)\s*"  # Quantity
+    r"(g|kg|mg|ml|l|cl|dl|tbsp|tsp|cups?|cup|oz|lb|lbs?|piece|pcs?|pc)?\s+"  # Optional unit
+    r"(.+?)$",  # Name + optional prep
+    re.IGNORECASE,
+)
+
+# Chinese: "鸡胸肉 200g，切丁" or "番茄 2个"
+# Group 1: name  Group 2: quantity  Group 3: unit  Group 4 (optional): preparation
+_RE_INGREDIENT_CHINESE = re.compile(
+    r"^[-*•、\s]*"
+    r"([\u4e00-\u9fff\w]+?)\s*"  # Name (Chinese characters or word chars)
+    r"(\d+(?:\.\d+)?)\s*"  # Quantity
+    r"(克|g|kg|mg|毫升|ml|l|升|个|根|颗|只|条|块|片|把|勺|汤匙|茶匙|杯|碗|两|斤)?\s*"  # Optional unit (Chinese or Latin)
+    r"[，,]?\s*(.+)?$",  # Optional preparation note
+)
+
+# Chinese unit → standard unit mapping
+_CHINESE_UNIT_MAP: dict[str, str] = {
+    "克": "g",
+    "毫升": "ml",
+    "升": "l",
+    "个": "piece",
+    "根": "piece",
+    "颗": "piece",
+    "只": "piece",
+    "条": "piece",
+    "块": "piece",
+    "片": "piece",
+    "把": "piece",
+    "勺": "tbsp",
+    "汤匙": "tbsp",
+    "茶匙": "tsp",
+    "杯": "cup",
+    "碗": "cup",
+    "两": "liang",
+    "斤": "jin",
+}
+
+# Ingredients with no quantity — "to taste", "适量", "少许"
+_RE_NO_QUANTITY = re.compile(
+    r"^(适量|少许|若干|to\s+taste|a\s+pinch|a\s+dash|salt\s+and\s+pepper)",
+    re.IGNORECASE,
+)
+
+# Ingredient name + preparation note splitter
+# "chicken breast, diced" → name="chicken breast", prep="diced"
+# "鸡蛋，打散" → name="鸡蛋", prep="打散"
+_RE_NAME_PREP_SPLIT = re.compile(r"\s*[，,]\s*(.+)$")
+
+# Preparation keywords for detection
+_PREP_KEYWORDS = frozenset({
+    "diced", "dice", "minced", "mince", "chopped", "chop",
+    "sliced", "slice", "julienned", "julienne", "grated", "grate",
+    "crushed", "crush", "peeled", "peel", "washed", "wash",
+    "切丁", "切块", "切片", "切丝", "剁碎", "切末", "打散",
+    "去皮", "洗净", "泡发", "切段", "切圈",
+})
+
+
+# =============================================================================
+# Step section detection
+# =============================================================================
+
+# Section headers that indicate ingredient/step boundaries
+_STEP_HEADER_PATTERNS = [
+    re.compile(r"^(?:steps?|directions?|instructions?|method|做法|步骤|制作方法|制作步骤|烹饪步骤)\s*[：:]*\s*$", re.IGNORECASE),
+]
+_INGREDIENT_HEADER_PATTERNS = [
+    re.compile(r"^(?:ingredients?|what\s+you(?:'ll)?\s+need|食材|食材准备|原料|配料|用料|材料|主料|辅料|调料)\s*[：:]*\s*$", re.IGNORECASE),
+]
+
+# Step number patterns
+_RE_STEP_NUMBER = re.compile(
+    r"^(?:\d+[.\)、]\s*)"  # "1.", "2)", "3、"
+    r"|^(?:step\s*\d+|步骤\s*\d+)\s*[：:.]?\s*",  # "Step 1", "步骤1"
+    re.IGNORECASE,
+)
+
+# =============================================================================
+# Cooking technique detection (step analysis)
+# =============================================================================
+
+# Technique → pattern mapping. Ordered: check longer/compound names first.
+_TECHNIQUE_PATTERNS: list[tuple[str, str, str]] = [
+    # (technique, english_pattern, chinese_pattern)
+    # Ordered: check longer/compound names first, then general patterns
+    ("stir_fry", r"\bstir[-\s]?fr(?:y|ied|ying)\b", r"炒|爆炒|翻炒"),
+    ("deep_fry", r"\bdeep[-\s]?fr(?:y|ied|ying)\b", r"炸|油炸"),
+    ("boil", r"\bboil(?:ing|ed)?\b", r"煮|烧开|煮沸|焯"),
+    ("simmer", r"\bsimmer(?:ing|ed)?\b", r"焖|炖|煲|慢炖|小火炖"),
+    ("steam", r"\bsteam(?:ing|ed)?\b", r"蒸"),
+    ("bake", r"\bbak(?:e|ing|ed)\b", r"烤|烘烤"),
+    ("roast", r"\broast(?:ing|ed)?\b", r"烤|烘"),
+    ("grill", r"\bgrill(?:ing|ed)?\b", r"煎|烧烤"),
+    ("marinate", r"\bmarinat(?:e|ing|ed)\b", r"腌|腌制"),
+    ("sauté", r"\bsauté(?:ing|ed)?\b", r"煎|煸"),
+    ("sear", r"\bsear(?:ing|ed)?\b", r"煎|封"),
+    ("braise", r"\bbrais(?:e|ing|ed)\b", r"红烧|卤"),
+    ("poach", r"\bpoach(?:ing|ed)?\b", r"水煮|清煮"),
+    # General heating — match "heat" in cooking context (not weather)
+    ("heat", r"\bheat(?:ing|ed)?\s+(?:oil|pan|wok|pot|oven)\b", r"热锅|烧热|加热"),
+]
+
+# Heat level detection
+_HEAT_LEVELS: list[tuple[str, HeatLevel]] = [
+    (r"high\s+(?:heat|flame|temperature)", HeatLevel.HIGH),
+    (r"大火|猛火|旺火|高火", HeatLevel.HIGH),
+    (r"medium[-\s]high\s+(?:heat|flame)", HeatLevel.HIGH),
+    (r"中大火|中高火", HeatLevel.HIGH),
+    (r"medium(?![\s-](?:high|low))\s+(?:heat|flame)", HeatLevel.MEDIUM),
+    (r"中火(?!\s*[大旺猛])", HeatLevel.MEDIUM),
+    (r"medium[-\s]low\s+(?:heat|flame)", HeatLevel.LOW),
+    (r"low\s+(?:heat|flame|temperature)", HeatLevel.LOW),
+    (r"小火|文火|微火|慢火", HeatLevel.LOW),
+]
+
+# Duration patterns
+_RE_DURATION_RANGE = re.compile(
+    r"(\d+)\s*[-–—~to]+\s*(\d+)\s*(?:分钟|min(?:ute)?s?)",
+    re.IGNORECASE,
+)
+_RE_DURATION_SINGLE = re.compile(
+    r"(?:about|approximately|around|大约|约|大概|腌制)?\s*(\d+)\s*(?:分钟|min(?:ute)?s?)\b",
+    re.IGNORECASE,
+)
+
+# Resource hints
+_RESOURCE_KEYWORDS: dict[str, str] = {
+    "oven": r"\boven\b|烤箱|烤炉",
+    "stove": r"\bstove\b|炉灶|灶台|炉子",
+    "wok": r"\bwok\b|炒锅|铁锅",
+    "pan": r"\b(?:frying\s+)?pan\b|平底锅",
+    "pot": r"\bpot\b|锅|汤锅",
+    "steamer": r"\bsteamer\b|蒸锅|蒸笼",
+    "sink": r"\bsink\b|水槽|水池",
+    "cutting_board": r"\bcutting\s+board\b|砧板|菜板|案板",
+    "knife": r"\bknife\b|刀",
+    "mixing_bowl": r"\bmixing\s+bowl\b|搅拌碗|大碗",
+}
+
+
+# =============================================================================
+# RecipeExtractor — rule-based implementation
+# =============================================================================
+
+
+class RecipeExtractor:
+    """Rule-based recipe text extractor implementing the RecipeExtractor Protocol.
+
+    Extracts structured ExtractedRecipeCandidate from preprocessed recipe text.
+    No LLM dependency — uses regex and keyword matching for MVP.
+
+    Protocol contract (from workflow/context.py):
+        async def extract(self, source_text: str) -> ExtractedRecipeCandidate
+    """
+
+    async def extract(self, source_text: str) -> ExtractedRecipeCandidate:
+        """Parse preprocessed recipe text into a structured candidate.
+
+        Args:
+            source_text: Preprocessed recipe text (decoded, normalized, cleaned).
+
+        Returns:
+            ExtractedRecipeCandidate with ingredients and steps.
+        """
+        lines = source_text.strip().split("\n")
+
+        # Separate ingredient and step sections
+        ingredient_lines, step_lines = self._split_sections(lines)
+
+        # Parse each section
+        ingredients = tuple(self._parse_ingredient(line) for line in ingredient_lines)
+        ingredients = tuple(i for i in ingredients if i is not None)
+
+        steps = tuple(self._parse_step(i + 1, line) for i, line in enumerate(step_lines))
+
+        # Generate a stable recipe_id from the first line (dish name)
+        dish_name = self._extract_dish_name(lines)
+        recipe_id = self._make_recipe_id(dish_name)
+
+        # Detect language from the text content
+        source_language = self._detect_language(source_text)
+
+        # Default to 2 servings when not specified
+        original_servings = self._extract_servings(source_text)
+
+        return ExtractedRecipeCandidate(
+            recipe_id=recipe_id,
+            dish_name=dish_name,
+            original_servings=original_servings,
+            source_language=source_language,
+            ingredients=ingredients,
+            steps=steps,
+            extraction_source="RULE_BASED",
+        )
+
+    # ------------------------------------------------------------------
+    # Section splitting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _split_sections(lines: list[str]) -> tuple[list[str], list[str]]:
+        """Split recipe lines into ingredient and step sections.
+
+        Detects section headers ("Ingredients:", "Steps:", "食材:", "步骤:") to
+        determine boundaries. Falls back to heuristics if no headers found.
+        """
+        ingredient_start: int | None = None
+        step_start: int | None = None
+
+        for i, line in enumerate(lines):
+            stripped = line.strip().lower()
+            # Check ingredient headers
+            if ingredient_start is None:
+                for pat in _INGREDIENT_HEADER_PATTERNS:
+                    if pat.match(stripped):
+                        ingredient_start = i
+                        break
+            # Check step headers
+            if step_start is None:
+                for pat in _STEP_HEADER_PATTERNS:
+                    if pat.match(stripped):
+                        step_start = i
+                        break
+
+        if ingredient_start is not None and step_start is not None:
+            # Both sections found
+            ing_lines = lines[ingredient_start + 1 : step_start]
+            step_lines = lines[step_start + 1 :]
+        elif step_start is not None:
+            # Only step section found — everything before is ingredients
+            ing_lines = lines[:step_start]
+            step_lines = lines[step_start + 1 :]
+        else:
+            # No explicit sections — use heuristics
+            ing_lines, step_lines = RecipeExtractor._heuristic_split(lines)
+
+        # Filter empty lines and strip
+        ing_lines = [line.strip() for line in ing_lines if line.strip()]
+        step_lines = [line.strip() for line in step_lines if line.strip()]
+
+        return ing_lines, step_lines
+
+    @staticmethod
+    def _heuristic_split(lines: list[str]) -> tuple[list[str], list[str]]:
+        """Heuristic split: numbered lines are steps, everything else is ingredients."""
+        ing_lines: list[str] = []
+        step_lines: list[str] = []
+
+        found_first_step = False
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            if _RE_STEP_NUMBER.match(stripped):
+                found_first_step = True
+                step_lines.append(stripped)
+            elif found_first_step:
+                step_lines.append(stripped)
+            else:
+                ing_lines.append(stripped)
+
+        # If no numbered steps found, treat all as a single block
+        if not step_lines:
+            step_lines = ing_lines
+            ing_lines = []
+
+        return ing_lines, step_lines
+
+    # ------------------------------------------------------------------
+    # Ingredient parsing
+    # ------------------------------------------------------------------
+
+    def _parse_ingredient(self, line: str) -> ExtractedIngredient | None:
+        """Parse a single ingredient line into ExtractedIngredient.
+
+        Returns None if the line cannot be parsed as an ingredient.
+        """
+        if not line.strip():
+            return None
+
+        # Skip section headers
+        stripped_lower = line.strip().lower()
+        for pat in _INGREDIENT_HEADER_PATTERNS:
+            if pat.match(stripped_lower):
+                return None
+        for pat in _STEP_HEADER_PATTERNS:
+            if pat.match(stripped_lower):
+                return None
+
+        # Try Western pattern first, then Chinese
+        result = self._try_western(line) or self._try_chinese(line) or self._try_no_quantity(line)
+        return result
+
+    def _try_western(self, line: str) -> ExtractedIngredient | None:
+        """Try Western-style ingredient pattern: '200g chicken breast, diced'."""
+        match = _RE_INGREDIENT_WESTERN.match(line.strip())
+        if not match:
+            return None
+
+        quantity_str = match.group(1)
+        unit = (match.group(2) or "").lower()
+        rest = match.group(3).strip()
+
+        # Split name and preparation
+        name, prep = self._split_name_prep(rest)
+
+        # Validate: name should be non-empty and look like a food item
+        if not name or len(name) < 2:
+            return None
+
+        # Map unit to canonical form
+        unit = _normalise_unit(unit) if unit else "piece"
+
+        return ExtractedIngredient(
+            raw_text=line.strip(),
+            name=name.strip(),
+            quantity=Decimal(quantity_str),
+            unit=unit,
+            preparation=prep.strip() if prep else None,
+            extraction_source="EXPLICIT",
+            confidence=Decimal("0.9"),
+        )
+
+    def _try_chinese(self, line: str) -> ExtractedIngredient | None:
+        """Try Chinese-style ingredient pattern: '鸡胸肉 200g，切丁'."""
+        match = _RE_INGREDIENT_CHINESE.match(line.strip())
+        if not match:
+            return None
+
+        name = match.group(1).strip()
+        quantity_str = match.group(2)
+        unit_raw = match.group(3)
+        prep_raw = match.group(4)
+
+        # Validate name
+        if not name or len(name) < 1:
+            return None
+
+        # Map Chinese units
+        unit = _normalise_unit(unit_raw.strip()) if unit_raw else "piece"
+
+        # Clean preparation
+        prep = prep_raw.strip() if prep_raw else None
+        if prep:
+            prep = _RE_STEP_NUMBER.sub("", prep).strip()  # Remove stray step numbers
+
+        return ExtractedIngredient(
+            raw_text=line.strip(),
+            name=name,
+            quantity=Decimal(quantity_str),
+            unit=unit,
+            preparation=prep or None,
+            extraction_source="EXPLICIT",
+            confidence=Decimal("0.9"),
+        )
+
+    def _try_no_quantity(self, line: str) -> ExtractedIngredient | None:
+        """Handle ingredients with no quantity: 'salt to taste', '适量盐'."""
+        stripped = line.strip()
+
+        # Check if it looks like a no-quantity ingredient
+        if _RE_NO_QUANTITY.search(stripped):
+            return ExtractedIngredient(
+                raw_text=stripped,
+                name=stripped,
+                extraction_source="EXPLICIT",
+                confidence=Decimal("0.7"),
+            )
+
+        # If it's a short text (likely an ingredient name without quantity),
+        # treat it as a free-text ingredient
+        # But skip things that look like step instructions
+        if len(stripped) < 60 and not _RE_STEP_NUMBER.match(stripped):
+            # Skip lines with step-like language
+            step_indicators = (
+                "heat", "add", "mix", "stir", "cook", "bake", "boil", "fry",
+                "热", "加", "放", "炒", "煮", "烤", "蒸", "拌",
+            )
+            lower = stripped.lower()
+            if any(ind in lower for ind in step_indicators):
+                return None
+
+            return ExtractedIngredient(
+                raw_text=stripped,
+                name=stripped,
+                extraction_source="EXPLICIT",
+                confidence=Decimal("0.6"),
+            )
+
+        return None
+
+    @staticmethod
+    def _split_name_prep(text: str) -> tuple[str, str | None]:
+        """Split 'chicken breast, diced' into (name, prep)."""
+        match = _RE_NAME_PREP_SPLIT.search(text)
+        if not match:
+            return text.strip(), None
+
+        name_part = text[:match.start()].strip()
+        prep_part = match.group(1).strip()
+
+        # Only treat as preparation if it contains a known prep keyword
+        prep_lower = prep_part.lower()
+        if any(kw in prep_lower for kw in _PREP_KEYWORDS):
+            return name_part, prep_part
+
+        # If the "prep" part is very short and doesn't look like prep,
+        # it might be part of the name
+        return text.strip(), None
+
+    # ------------------------------------------------------------------
+    # Step parsing
+    # ------------------------------------------------------------------
+
+    def _parse_step(self, index: int, line: str) -> ExtractedStep:
+        """Parse a step line into ExtractedStep."""
+        # Remove step number prefix for cleaner instruction text
+        instruction = _RE_STEP_NUMBER.sub("", line).strip()
+
+        # Detect cooking technique
+        technique = self._detect_technique(line)
+
+        # Map technique to category
+        category = self._infer_category(technique)
+
+        # Detect heat level
+        heat = self._detect_heat(line)
+
+        # Detect durations (active and passive)
+        active_dur, passive_dur = self._detect_durations(line, technique)
+
+        # Detect temperature
+        temp = self._detect_temperature(line)
+
+        # Detect resource hints
+        resources = self._detect_resources(line)
+
+        return ExtractedStep(
+            step_number=index,
+            instruction=instruction,
+            category=category,
+            active_duration_minutes=active_dur,
+            passive_duration_minutes=passive_dur,
+            heat_level=heat,
+            target_temperature_c=temp,
+            resources_hint=tuple(resources),
+            extraction_source="EXPLICIT",
+            confidence=Decimal("0.85"),
+        )
+
+    @staticmethod
+    def _detect_technique(text: str) -> str:
+        """Detect primary cooking technique from step text."""
+        text_lower = text.lower()
+        for technique, en_pat, zh_pat in _TECHNIQUE_PATTERNS:
+            if re.search(en_pat, text_lower) or re.search(zh_pat, text):
+                return technique
+        return "general"
+
+    @staticmethod
+    def _infer_category(technique: str) -> str:
+        """Map technique to step category."""
+        heating_techniques = {"stir_fry", "deep_fry", "boil", "simmer", "steam",
+                              "bake", "roast", "grill", "sauté", "sear", "braise", "poach",
+                              "heat"}
+        prep_techniques = {"marinate"}
+
+        if technique in heating_techniques:
+            return "heating"
+        if technique in prep_techniques:
+            return "preparation"
+        return "general"
+
+    @staticmethod
+    def _detect_heat(text: str) -> HeatLevel:
+        """Detect heat level from step text."""
+        text_lower = text.lower()
+        for pat, level in _HEAT_LEVELS:
+            if re.search(pat, text_lower):
+                return level
+        return HeatLevel.NONE
+
+    @staticmethod
+    def _detect_durations(text: str, technique: str) -> tuple[int | None, int | None]:
+        """Extract active and passive durations from step text."""
+        # Try range: "10-15 minutes", "3~5分钟"
+        match = _RE_DURATION_RANGE.search(text)
+        if match:
+            _lo, hi = int(match.group(1)), int(match.group(2))
+            # For passive techniques (boil, simmer, bake, roast), duration is passive
+            passive_techniques = {"boil", "simmer", "bake", "roast", "marinate", "steam", "braise"}
+            if technique in passive_techniques:
+                return None, hi  # Range max is passive, no explicit active
+            return hi, None  # Active technique: treat as active duration
+
+        # Try single: "10 minutes", "5分钟"
+        match = _RE_DURATION_SINGLE.search(text)
+        if match:
+            minutes = int(match.group(1))
+            passive_techniques = {"boil", "simmer", "bake", "roast", "marinate", "steam", "braise"}
+            if technique in passive_techniques:
+                return None, minutes
+            return minutes, None
+
+        return None, None
+
+    @staticmethod
+    def _detect_temperature(text: str) -> Decimal | None:
+        """Detect target temperature from step text."""
+        # Celsius: "180°C", "180 C", "200度"
+        match = re.search(r"(\d{2,3})\s*(?:°\s*)?[cC](?:elsius)?\b", text)
+        if match:
+            return Decimal(match.group(1))
+
+        match = re.search(r"(\d{2,3})\s*度\b", text)
+        if match:
+            return Decimal(match.group(1))
+
+        # Fahrenheit: "350°F" → Celsius
+        match = re.search(r"(\d{2,4})\s*(?:°\s*)?[fF](?:ahrenheit)?\b", text)
+        if match:
+            f = Decimal(match.group(1))
+            return ((f - 32) * 5 / 9).quantize(Decimal("0.1"))
+
+        return None
+
+    @staticmethod
+    def _detect_resources(text: str) -> list[str]:
+        """Detect required kitchen resources from step text."""
+        text_lower = text.lower()
+        found: list[str] = []
+        for resource, pattern in _RESOURCE_KEYWORDS.items():
+            if re.search(pattern, text_lower):
+                found.append(resource)
+        return found
+
+    # ------------------------------------------------------------------
+    # Dish name extraction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_dish_name(lines: list[str]) -> str:
+        """Extract dish name from the first non-empty, non-section-header line."""
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Skip section headers
+            lower = stripped.lower()
+            is_header = False
+            for pat in _INGREDIENT_HEADER_PATTERNS:
+                if pat.match(lower):
+                    is_header = True
+                    break
+            for pat in _STEP_HEADER_PATTERNS:
+                if pat.match(lower):
+                    is_header = True
+                    break
+            if not is_header and not _RE_STEP_NUMBER.match(stripped):
+                return stripped[:80]  # Truncate long names
+        return "Untitled Recipe"
+
+    @staticmethod
+    def _make_recipe_id(dish_name: str) -> str:
+        """Generate a stable recipe_id from dish name."""
+        # Lowercase, replace spaces/special chars with underscores
+        slug = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "_", dish_name.lower())
+        return f"recipe_{slug[:40]}"
+
+    @staticmethod
+    def _detect_language(text: str) -> str:
+        """Quick language detection for the candidate."""
+        cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+        latin = sum(1 for ch in text if ch.isascii() and ch.isalpha())
+        if cjk == 0 and latin == 0:
+            return "und"
+        if cjk > latin:
+            return "zho"
+        return "eng"
+
+    @staticmethod
+    def _extract_servings(text: str) -> int:
+        """Extract serving count from recipe text. Defaults to 2."""
+        # "Serves 4", "4 servings", "2人份", "4人"
+        match = re.search(r"(?:serves?|servings?|yields?|makes?)\s+(\d+)", text, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+        match = re.search(r"(\d+)\s*(?:人份|人份量| servings?)", text)
+        if match:
+            return int(match.group(1))
+        # "2-4 servings" — take the middle
+        match = re.search(r"(\d+)\s*[-–—]\s*(\d+)\s*(?:servings?|人份?)", text, re.IGNORECASE)
+        if match:
+            lo, hi = int(match.group(1)), int(match.group(2))
+            return (lo + hi) // 2
+        return 2
+
+
+# =============================================================================
+# Helper: unit normalisation
+# =============================================================================
+
+
+def _normalise_unit(unit: str) -> str:
+    """Normalise a unit string to its canonical form."""
+    unit_lower = unit.lower().strip()
+    if unit_lower in _CHINESE_UNIT_MAP:
+        return _CHINESE_UNIT_MAP[unit_lower]
+    # Common English abbreviations
+    unit_map = {
+        "tablespoon": "tbsp", "tablespoons": "tbsp",
+        "teaspoon": "tsp", "teaspoons": "tsp",
+        "cup": "cup", "cups": "cup",
+        "ounce": "oz", "ounces": "oz",
+        "pound": "lb", "pounds": "lb",
+        "gram": "g", "grams": "g",
+        "kilogram": "kg", "kilograms": "kg",
+        "milliliter": "ml", "milliliters": "ml",
+        "litre": "l", "liter": "l", "litres": "l", "liters": "l",
+    }
+    return unit_map.get(unit_lower, unit_lower)
