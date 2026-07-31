@@ -1,10 +1,10 @@
 """Task graph construction, cycle detection, and critical-path analysis
 
 This module handles:
-- TaskEdge / TaskGraph: provider-independent DAG representation 
-- build_task_graph: merge recipe + prep + safety tasks into one graph 
-- topological_sort_kahn: Kahn's algorithm with cycle detection 
-- calculate_dependency_lower_bound: dependency-only makespan lower bound 
+- TaskEdge / TaskGraph: provider-independent DAG representation
+- build_task_graph: merge recipe + prep + safety tasks into one graph
+- topological_sort_kahn: Kahn's algorithm with cycle detection
+- calculate_dependency_lower_bound: dependency-only makespan lower bound
 """
 
 from collections import deque
@@ -123,10 +123,7 @@ class CyclicGraphError(ValueError):
 
     def __init__(self, task_ids: frozenset[str]) -> None:
         self.task_ids = task_ids
-        super().__init__(
-            f"Cyclic dependency detected among tasks: "
-            f"{sorted(task_ids)}"
-        )
+        super().__init__(f"Cyclic dependency detected among tasks: {sorted(task_ids)}")
 
 
 def topological_sort_kahn(graph: TaskGraph) -> tuple[CookingTask, ...]:
@@ -161,9 +158,7 @@ def topological_sort_kahn(graph: TaskGraph) -> tuple[CookingTask, ...]:
             successors[edge.predecessor_id].append(edge.successor_id)
 
     # 2. Queue all zero-indegree tasks (sorted for determinism).
-    queue: deque[str] = deque(
-        sorted(tid for tid, deg in indegree.items() if deg == 0)
-    )
+    queue: deque[str] = deque(sorted(tid for tid, deg in indegree.items() if deg == 0))
 
     # 3-4. Process queue.
     result: list[CookingTask] = []
@@ -183,9 +178,7 @@ def topological_sort_kahn(graph: TaskGraph) -> tuple[CookingTask, ...]:
 
     # 5. Cycle detection.
     if len(result) < len(graph.tasks):
-        unfinished = frozenset(
-            tid for tid, deg in indegree.items() if deg > 0
-        )
+        unfinished = frozenset(tid for tid, deg in indegree.items() if deg > 0)
         raise CyclicGraphError(unfinished)
 
     return tuple(result)
@@ -227,9 +220,7 @@ def calculate_dependency_lower_bound(graph: TaskGraph) -> int:
             if edge.successor_id == task.task_id:
                 pred_ids.add(edge.predecessor_id)
 
-        pred_end_times = [
-            earliest_end.get(pid, 0) for pid in pred_ids
-        ]
+        pred_end_times = [earliest_end.get(pid, 0) for pid in pred_ids]
         start = max(pred_end_times) if pred_end_times else 0
         end = start + task.duration_minutes
         earliest_end[task.task_id] = end

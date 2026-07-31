@@ -238,10 +238,7 @@ class UnitClassifier:
         try:
             return _UNIT_TO_DIMENSION[normalised]
         except KeyError:
-            raise UnknownUnitError(
-                f"Unknown unit {stripped!r}. Known units: "
-                f"{sorted(_UNIT_TO_DIMENSION)}"
-            ) from None
+            raise UnknownUnitError(f"Unknown unit {stripped!r}. Known units: {sorted(_UNIT_TO_DIMENSION)}") from None
 
     @classmethod
     def are_compatible(cls, unit_a: str, unit_b: str) -> bool:
@@ -344,8 +341,7 @@ class UnitConverter:
         if from_dim is to_dim:
             if product_conversion is not None:
                 raise UnitConversionError(
-                    "ProductConversion must not be supplied for "
-                    f"intra-dimension conversion ({from_unit} → {to_unit})"
+                    f"ProductConversion must not be supplied for intra-dimension conversion ({from_unit} → {to_unit})"
                 )
             return self._convert_intra(quantity, from_unit, to_unit, from_dim)
 
@@ -369,8 +365,7 @@ class UnitConverter:
             )
         if product_conversion.to_unit != to_unit:
             raise UnitConversionError(
-                f"ProductConversion to_unit {product_conversion.to_unit!r} "
-                f"does not match requested to_unit {to_unit!r}"
+                f"ProductConversion to_unit {product_conversion.to_unit!r} does not match requested to_unit {to_unit!r}"
             )
 
         # Cross-dimension conversion is a simple linear multiplication:
@@ -397,13 +392,9 @@ class UnitConverter:
                 ``Decimal``, or if it is ``<= 0``.
         """
         if not isinstance(quantity, Decimal):
-            raise InvalidQuantityError(
-                f"Quantity must be a Decimal, got {type(quantity).__name__}"
-            )
+            raise InvalidQuantityError(f"Quantity must be a Decimal, got {type(quantity).__name__}")
         if quantity <= 0:
-            raise InvalidQuantityError(
-                f"Quantity must be > 0, got {quantity}"
-            )
+            raise InvalidQuantityError(f"Quantity must be > 0, got {quantity}")
 
     @staticmethod
     def _convert_intra(
@@ -442,8 +433,8 @@ class UnitConverter:
         normalised_from = UnitClassifier._UNIT_ALIASES.get(from_unit, from_unit)
         normalised_to = UnitClassifier._UNIT_ALIASES.get(to_unit, to_unit)
         # Look up conversion factors relative to the dimension's base unit.
-        to_base = table[normalised_from]      # factor: from_unit → base
-        from_base = table[normalised_to]      # factor: to_unit → base
+        to_base = table[normalised_from]  # factor: from_unit → base
+        from_base = table[normalised_to]  # factor: to_unit → base
         # quantity_in_base = quantity × to_base
         # result = quantity_in_base / from_base
         return quantity * to_base / from_base
@@ -494,13 +485,9 @@ def scale_ingredient(
             is ``<= 0``.
     """
     if original_servings <= 0:
-        raise InvalidQuantityError(
-            f"original_servings must be > 0, got {original_servings}"
-        )
+        raise InvalidQuantityError(f"original_servings must be > 0, got {original_servings}")
     if target_servings <= 0:
-        raise InvalidQuantityError(
-            f"target_servings must be > 0, got {target_servings}"
-        )
+        raise InvalidQuantityError(f"target_servings must be > 0, got {target_servings}")
 
     lam = target_servings / original_servings
     new_quantity = demand.quantity * lam

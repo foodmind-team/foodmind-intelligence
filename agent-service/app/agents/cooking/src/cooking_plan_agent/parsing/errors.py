@@ -1,4 +1,3 @@
-
 # Top-level blank line — separates module docstring (none here) from first class.
 
 
@@ -19,6 +18,7 @@ class OversizedInputError(PreprocessError):  # Raised when input exceeds byte or
 
 class EmptyContentError(PreprocessError):  # Raised when decoded text contains only whitespace.
     """Decoded text contains no usable content after noise removal."""
+
 
 # Blank line — separates EmptyContentError from NULBytesError for readability.
 

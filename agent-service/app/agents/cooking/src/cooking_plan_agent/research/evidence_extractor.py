@@ -31,21 +31,15 @@ _HEAT_MAP: dict[str, HeatLevel] = {
 }
 
 # Duration patterns: "X minutes", "X-Y minutes", "about X min", etc.
-_DURATION_RANGE_RE = re.compile(
-    r"(\d+)\s*[-–—to]+\s*(\d+)\s*(minutes?|mins?)\b", re.IGNORECASE
-)
+_DURATION_RANGE_RE = re.compile(r"(\d+)\s*[-–—to]+\s*(\d+)\s*(minutes?|mins?)\b", re.IGNORECASE)
 _DURATION_SINGLE_RE = re.compile(
     r"(?:about\s+|approximately\s+|around\s+)?(\d+)\s*(minutes?|mins?)\b",
     re.IGNORECASE,
 )
 
 # Temperature patterns: "200°C", "200 C", "200 Celsius", "400°F"
-_TEMP_C_RE = re.compile(
-    r"(\d{2,3})\s*(?:°\s*)?[cC](?:elsius)?\b"
-)
-_TEMP_F_RE = re.compile(
-    r"(\d{2,4})\s*(?:°\s*)?[fF](?:ahrenheit)?\b"
-)
+_TEMP_C_RE = re.compile(r"(\d{2,3})\s*(?:°\s*)?[cC](?:elsius)?\b")
+_TEMP_F_RE = re.compile(r"(\d{2,4})\s*(?:°\s*)?[fF](?:ahrenheit)?\b")
 
 # Operation keyword detection from snippet
 _OPERATION_KEYWORDS: tuple[tuple[str, str], ...] = (

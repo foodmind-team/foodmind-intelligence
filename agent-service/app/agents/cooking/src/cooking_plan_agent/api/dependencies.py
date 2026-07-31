@@ -20,9 +20,7 @@ from cooking_plan_agent.config.settings import Settings, get_settings
 # Safe characters for correlation IDs: alphanumeric, hyphens, underscores.
 # Reject anything outside this set to prevent log injection.
 # ---------------------------------------------------------------------------
-_CORRELATION_ID_SAFE_CHARS = set(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
-)
+_CORRELATION_ID_SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
 
 # Maximum length of a trusted correlation ID from a caller.
 _MAX_CORRELATION_ID_LENGTH = 128

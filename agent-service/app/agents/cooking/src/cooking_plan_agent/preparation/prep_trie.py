@@ -1,6 +1,6 @@
-"""Preparation trie — shared ingredient-prep merging 
+"""Preparation trie — shared ingredient-prep merging
 This module handles:
-- PreparationOperation: a single atomic step in an ingredient's prep chain 
+- PreparationOperation: a single atomic step in an ingredient's prep chain
 - PrepTrieNode: prefix-tree node for merging identical prep operations across dishes
 - Trie conversion: turn the merged trie back into schedulable CookingTasks
 - Quantity-conservation verification
@@ -264,10 +264,7 @@ def convert_trie_to_tasks(
         task = _build_task(
             task_id=task_id,
             dish_id=",".join(dish_ids) if dish_ids else "shared",
-            instruction=(
-                f"[Prep] {node.operation_key} "
-                f"{node.total_quantity} of {ingredient_name}"
-            ),
+            instruction=(f"[Prep] {node.operation_key} {node.total_quantity} of {ingredient_name}"),
             duration_minutes=duration,
             work_mode=WorkMode.ACTIVE,
             category="preparation",
@@ -316,9 +313,7 @@ def _verify_node(node: PrepTrieNode) -> None:
     if not node.child_nodes:
         return
 
-    children_sum = sum(
-        child.total_quantity for child in node.child_nodes.values()
-    )
+    children_sum = sum(child.total_quantity for child in node.child_nodes.values())
     # Root node is exempt — it accumulates totals from all chains.
     if node.operation_key != "root" and children_sum != node.total_quantity:
         raise InvalidQuantityError(

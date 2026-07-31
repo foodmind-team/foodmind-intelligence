@@ -43,6 +43,7 @@ def _majority_heat(
         return None
     # Count occurrences, return the most frequent
     from collections import Counter
+
     counts = Counter(levels)
     # Tie-breaking: prefer HIGH > MEDIUM > LOW > NONE
     max_count = max(counts.values())
@@ -105,17 +106,11 @@ def reconcile(
         reconciled_max = med_max
 
     # --- Heat level reconciliation (majority vote) ---
-    heat_levels: list[HeatLevel] = [
-        e.heat_level for e in evidence_items if e.heat_level is not None
-    ]
+    heat_levels: list[HeatLevel] = [e.heat_level for e in evidence_items if e.heat_level is not None]
     reconciled_heat = _majority_heat(heat_levels)
 
     # --- Temperature: take the average if multiple sources agree ---
-    temps: list[Decimal] = [
-        e.explicit_temperature_c
-        for e in evidence_items
-        if e.explicit_temperature_c is not None
-    ]
+    temps: list[Decimal] = [e.explicit_temperature_c for e in evidence_items if e.explicit_temperature_c is not None]
     reconciled_temp: Decimal | None = None
     if temps:
         reconciled_temp = sum(temps) / len(temps)

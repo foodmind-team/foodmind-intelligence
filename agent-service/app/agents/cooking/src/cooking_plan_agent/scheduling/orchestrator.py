@@ -59,9 +59,7 @@ def schedule(problem: SchedulingProblem) -> tuple[ScheduleResult, VerificationRe
     # Extract intervals only for feasible solutions
     if result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
         intervals = extractor.extract(solver_run)
-        result = result.model_copy(
-            update={"intervals": intervals}
-        )
+        result = result.model_copy(update={"intervals": intervals})
 
     report = verifier.verify(problem, result)
     return result, report
@@ -167,9 +165,7 @@ class ScheduleOrchestrator:
 
         # Compute horizon and build constraints (Stages A–D) on the new model.
         horizon = self._builder.compute_horizon(problem.tasks)
-        starts, ends, intervals = self._builder.build_constraints(
-            model, problem, horizon
-        )
+        starts, ends, intervals = self._builder.build_constraints(model, problem, horizon)
 
         # Fix makespan to Phase 1's optimal value
         final_task_ids = self._final_task_ids(problem)
@@ -241,9 +237,7 @@ class ScheduleOrchestrator:
                 makespan_minutes=makespan,
                 intervals=intervals,
                 wall_time_seconds=elapsed,
-                best_objective_bound=int(solver.best_objective_bound)
-                if status == SolverStatus.OPTIMAL
-                else None,
+                best_objective_bound=int(solver.best_objective_bound) if status == SolverStatus.OPTIMAL else None,
             )
 
         # Fall back to Phase 1 result.

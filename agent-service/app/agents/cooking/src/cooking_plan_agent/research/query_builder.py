@@ -11,11 +11,25 @@ from cooking_plan_agent.domain.models import RecipeGap
 # Blocked private fields — these must NEVER appear in a search query
 # ---------------------------------------------------------------------------
 
-_BLOCKED_TERMS: frozenset[str] = frozenset({
-    "user", "user_id", "inventory", "allergen", "allergy",
-    "dietary", "budget", "location", "address", "group",
-    "family", "profile", "comment", "password", "token",
-})
+_BLOCKED_TERMS: frozenset[str] = frozenset(
+    {
+        "user",
+        "user_id",
+        "inventory",
+        "allergen",
+        "allergy",
+        "dietary",
+        "budget",
+        "location",
+        "address",
+        "group",
+        "family",
+        "profile",
+        "comment",
+        "password",
+        "token",
+    }
+)
 
 
 def _sanitised(gap: RecipeGap) -> str:
@@ -27,9 +41,7 @@ def _sanitised(gap: RecipeGap) -> str:
     desc = gap.description.lower()
     for term in _BLOCKED_TERMS:
         if term in desc:
-            raise ValueError(
-                f"Query blocked: gap description contains private term '{term}'"
-            )
+            raise ValueError(f"Query blocked: gap description contains private term '{term}'")
     return gap.description
 
 

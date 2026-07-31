@@ -58,10 +58,7 @@ def route_after_local_inference(
 
     # Only route to research for heat/duration/temperature gaps (handbook 10.1)
     _researchable_fields = {"heat_level", "duration", "temperature", "target_temperature_c"}
-    researchable = [
-        g for g in critical_gaps
-        if any(f in g.field_path.lower() for f in _researchable_fields)
-    ]
+    researchable = [g for g in critical_gaps if any(f in g.field_path.lower() for f in _researchable_fields)]
 
     if researchable:
         return "research_missing"
