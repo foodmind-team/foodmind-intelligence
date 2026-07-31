@@ -35,8 +35,8 @@ def route_after_local_inference(
     state: PlanState,
 ) -> Literal["research_missing", "build_confirmation_response", "validate_recipe_ir"]:
     """After local inference, remaining critical gaps route to:
-    - web research (if enabled and gap is researchable)
-    - confirmation (if evidence insufficient)
+    - web research (if enabled and gap is heat/duration related)
+    - confirmation (if evidence insufficient or research disabled)
     - IR validation (if gaps resolved).
 
     Only "critical" and "safety_critical" gaps block progress — minor gaps
@@ -48,8 +48,25 @@ def route_after_local_inference(
     if not critical_gaps:
         return "validate_recipe_ir"
 
-    # STUB: In MVP, all remaining critical gaps -> confirmation.
-    # When research is implemented, add route to "research_missing".
+    # Check if web research is enabled via Settings (handbook 10.1)
+    from cooking_plan_agent.config.settings import get_settings
+
+    settings = get_settings()
+    if not settings.web_research_enabled:
+        # Research disabled — all critical gaps → confirmation
+        return "build_confirmation_response"
+
+    # Only route to research for heat/duration/temperature gaps (handbook 10.1)
+    _RESEARCHABLE_FIELDS = {"heat_level", "duration", "temperature", "target_temperature_c"}
+    researchable = [
+        g for g in critical_gaps
+        if any(f in g.field_path.lower() for f in _RESEARCHABLE_FIELDS)
+    ]
+
+    if researchable:
+        return "research_missing"
+
+    # Non-researchable critical gaps → confirmation
     return "build_confirmation_response"
 
 
