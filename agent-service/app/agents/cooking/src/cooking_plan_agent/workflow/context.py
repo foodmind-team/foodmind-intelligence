@@ -12,6 +12,8 @@ if TYPE_CHECKING:
         EvidenceQuery,
         EvidenceResult,
         ExtractedRecipeCandidate,
+        SafetyContext,
+        SafetyReport,
     )
 
 
@@ -45,6 +47,17 @@ class RecipeResearcher(Protocol):
     async def research(self, query: "EvidenceQuery") -> list["EvidenceResult"]: ...
 
 
+@runtime_checkable
+class SafetyRuleEngine(Protocol):
+    """Evaluate food safety constraints against parsed recipes.
+
+    Returns a SafetyReport aggregating all rule findings. The report
+    drives routing decisions (is_safe → proceed; has_unrepairable → INFEASIBLE).
+    """
+
+    def evaluate(self, context: "SafetyContext") -> "SafetyReport": ...
+
+
 # ---------------------------------------------------------------------------
 # Context dataclass
 # ---------------------------------------------------------------------------
@@ -65,6 +78,8 @@ class WorkflowContext:
     # recipe_researcher is None in MVP; when wired, it enables the
     # research_missing node to fill low-confidence critical gaps
     recipe_researcher: RecipeResearcher | None = None
-    # Future services (all optional until implemented):
-    # safety_engine: SafetyRuleEngine | None = None
+    # safety_engine evaluates food safety constraints before scheduling.
+    # When None (backwards-compat), validate_safety_node returns a safe stub.
+    safety_engine: SafetyRuleEngine | None = None
+    # Future services (all optional until fully implemented):
     # optimiser: ScheduleOptimiser | None = None
