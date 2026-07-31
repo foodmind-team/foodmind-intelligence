@@ -16,9 +16,9 @@ from typing import ClassVar
 class SourceClass(StrEnum):
     """Source trust tier — higher ordinal = stronger precedence."""
 
-    SAFETY = "safety"        # Government / food-safety authorities
+    SAFETY = "safety"  # Government / food-safety authorities
     TECHNIQUE = "technique"  # Established recipe / culinary sources
-    SEED = "seed"            # Controlled seed catalogue (internal)
+    SEED = "seed"  # Controlled seed catalogue (internal)
 
 
 # ---------------------------------------------------------------------------
@@ -38,11 +38,11 @@ class DomainAllowList:
 
     # Hard-safety domains (handbook 10.4 class 1)
     SAFETY_DEFAULTS: ClassVar[tuple[str, ...]] = (
-        "fsai.ie",          # Food Safety Authority of Ireland
-        "fda.gov",          # US Food and Drug Administration
-        "food.gov.uk",      # UK Food Standards Agency
-        "who.int",          # World Health Organization
-        "cdc.gov",          # US Centers for Disease Control
+        "fsai.ie",  # Food Safety Authority of Ireland
+        "fda.gov",  # US Food and Drug Administration
+        "food.gov.uk",  # UK Food Standards Agency
+        "who.int",  # World Health Organization
+        "cdc.gov",  # US Centers for Disease Control
     )
 
     # Established recipe/culinary domains (handbook 10.4 class 2)

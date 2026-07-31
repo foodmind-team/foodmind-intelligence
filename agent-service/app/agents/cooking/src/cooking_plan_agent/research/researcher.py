@@ -235,14 +235,16 @@ def _reconciled_to_results(reconciled: ReconciledEvidence) -> list[EvidenceResul
         fact_str = ", ".join(fact_parts) if fact_parts else "no cooking data"
         fact_type = "heat_level" if ev.heat_level and ev.heat_level != HeatLevel.NONE else "duration"
 
-        results.append(EvidenceResult(
-            source_title=ev.source_title,
-            source_url=ev.source_url,
-            snippet=ev.source_excerpt,
-            confidence=Decimal("0.7"),  # Rule-based extraction: moderate confidence
-            extracted_fact=fact_str,
-            fact_type=fact_type,
-            fact_value=fact_str,
-        ))
+        results.append(
+            EvidenceResult(
+                source_title=ev.source_title,
+                source_url=ev.source_url,
+                snippet=ev.source_excerpt,
+                confidence=Decimal("0.7"),  # Rule-based extraction: moderate confidence
+                extracted_fact=fact_str,
+                fact_type=fact_type,
+                fact_value=fact_str,
+            )
+        )
 
     return results

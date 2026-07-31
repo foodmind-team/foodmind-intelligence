@@ -79,9 +79,7 @@ class ScheduleVerifier:
         issues.extend(self._check_resource_compatibility(task_map, problem))
 
         # --- Check 6: resource capacity never exceeded (sweep-line) ---
-        issues.extend(
-            self._check_resource_capacity(task_map, interval_map, problem)
-        )
+        issues.extend(self._check_resource_capacity(task_map, interval_map, problem))
 
         # --- Check 7: all values are non-negative and within makespan ---
         issues.extend(self._check_value_ranges(interval_map, result))
@@ -153,10 +151,7 @@ class ScheduleVerifier:
                 issues.append(
                     VerificationIssue(
                         code="DURATION_MISMATCH",
-                        message=(
-                            f"Task '{task_id}': expected duration "
-                            f"{expected_duration}, got {actual_duration}"
-                        ),
+                        message=(f"Task '{task_id}': expected duration {expected_duration}, got {actual_duration}"),
                         task_ids=(task_id,),
                     )
                 )
@@ -237,9 +232,7 @@ class ScheduleVerifier:
             if task is None:
                 continue
             if task.work_mode == WorkMode.ACTIVE:  # type: ignore[union-attr]
-                active_intervals.append(
-                    (interval.start_minute, interval.end_minute, task_id)
-                )
+                active_intervals.append((interval.start_minute, interval.end_minute, task_id))
 
         # Sort by start time, then by end time.
         active_intervals.sort()
@@ -253,10 +246,7 @@ class ScheduleVerifier:
                     issues.append(
                         VerificationIssue(
                             code="ACTIVE_OVERLAP",
-                            message=(
-                                f"Active tasks '{t1}' [{s1}, {e1}) and "
-                                f"'{t2}' [{s2}, {e2}) overlap"
-                            ),
+                            message=(f"Active tasks '{t1}' [{s1}, {e1}) and '{t2}' [{s2}, {e2}) overlap"),
                             task_ids=(t1, t2),
                         )
                     )
@@ -277,11 +267,7 @@ class ScheduleVerifier:
     ) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
 
-        available_types = {
-            r.resource_type
-            for r in problem.resources
-            if r.available
-        }
+        available_types = {r.resource_type for r in problem.resources if r.available}
 
         for task in problem.tasks:
             for need in task.resources:
@@ -289,10 +275,7 @@ class ScheduleVerifier:
                     issues.append(
                         VerificationIssue(
                             code="RESOURCE_UNAVAILABLE",
-                            message=(
-                                f"Task '{task.task_id}' requires "
-                                f"'{need.resource_type}' but it is not available"
-                            ),
+                            message=(f"Task '{task.task_id}' requires '{need.resource_type}' but it is not available"),
                             task_ids=(task.task_id,),
                         )
                     )
@@ -321,9 +304,7 @@ class ScheduleVerifier:
         for r in problem.resources:
             if r.available:
                 cap = int(r.capacity) if r.capacity else 1
-                res_capacity[r.resource_type] = (
-                    res_capacity.get(r.resource_type, 0) + cap
-                )
+                res_capacity[r.resource_type] = res_capacity.get(r.resource_type, 0) + cap
 
         for res_type, capacity in res_capacity.items():
             # Collect events: (time, is_start, task_id, demand).
@@ -334,12 +315,8 @@ class ScheduleVerifier:
                     continue
                 for need in task.resources:  # type: ignore[union-attr]
                     if need.resource_type == res_type:
-                        events.append(
-                            (interval.start_minute, True, task_id, need.quantity)
-                        )
-                        events.append(
-                            (interval.end_minute, False, task_id, need.quantity)
-                        )
+                        events.append((interval.start_minute, True, task_id, need.quantity))
+                        events.append((interval.end_minute, False, task_id, need.quantity))
                         break  # Each task counts once per resource type
 
             # Sort: by time ascending; END (False) before START (True) at equal times.
@@ -402,8 +379,7 @@ class ScheduleVerifier:
                     VerificationIssue(
                         code="EXCEEDS_MAKESPAN",
                         message=(
-                            f"Task '{task_id}' ends at {interval.end_minute}, "
-                            f"but makespan is {result.makespan_minutes}"
+                            f"Task '{task_id}' ends at {interval.end_minute}, but makespan is {result.makespan_minutes}"
                         ),
                         task_ids=(task_id,),
                     )
@@ -412,10 +388,7 @@ class ScheduleVerifier:
                 issues.append(
                     VerificationIssue(
                         code="INVALID_INTERVAL",
-                        message=(
-                            f"Task '{task_id}': start ({interval.start_minute}) "
-                            f">= end ({interval.end_minute})"
-                        ),
+                        message=(f"Task '{task_id}': start ({interval.start_minute}) >= end ({interval.end_minute})"),
                         task_ids=(task_id,),
                     )
                 )
@@ -442,8 +415,7 @@ class ScheduleVerifier:
                 VerificationIssue(
                     code="MAKESPAN_MISMATCH",
                     message=(
-                        f"Reported makespan {result.makespan_minutes} "
-                        f"does not match actual max end time {actual_max}"
+                        f"Reported makespan {result.makespan_minutes} does not match actual max end time {actual_max}"
                     ),
                 )
             )

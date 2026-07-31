@@ -7,7 +7,7 @@ sub-tasks linked by TaskDependency.
 
 See also
 --------
-prep_trie.py : Ingredient preparation merging via prefix tree 
+prep_trie.py : Ingredient preparation merging via prefix tree
 task_graph.py : Task DAG construction, cycle detection, critical path
 """
 
@@ -30,9 +30,9 @@ from cooking_plan_agent.domain.models import (
 # Default durations (minutes) for sub-tasks when the source step does not
 # specify exact per-phase times.  These are conservative estimates suitable
 # for an MVP — production systems should source them from a vetted catalogue.
-_DEFAULT_ACTIVE_SETUP = 2   # Opening containers, filling water, turning on heat
-_DEFAULT_ACTIVE_CHECK = 1   # Verifying boil, checking doneness
-_DEFAULT_ACTIVE_LOAD = 3    # Loading oven, arranging tray
+_DEFAULT_ACTIVE_SETUP = 2  # Opening containers, filling water, turning on heat
+_DEFAULT_ACTIVE_CHECK = 1  # Verifying boil, checking doneness
+_DEFAULT_ACTIVE_LOAD = 3  # Loading oven, arranging tray
 _DEFAULT_ACTIVE_UNLOAD = 3  # Unloading oven, plating
 _DEFAULT_ACTIVE_MARINATE = 5  # Mixing, rubbing, applying marinade
 
@@ -141,9 +141,7 @@ def _chain_deps(tasks: tuple[CookingTask, ...]) -> tuple[CookingTask, ...]:
             prev_id = tasks[i - 1].task_id
             dep = TaskDependency(predecessor_id=prev_id)
             # Rebuild with updated dependencies — CookingTask is frozen.
-            result.append(
-                t.model_copy(update={"dependencies": t.dependencies + (dep,)})
-            )
+            result.append(t.model_copy(update={"dependencies": t.dependencies + (dep,)}))
     return tuple(result)
 
 
@@ -193,9 +191,7 @@ def decompose_step(
 # ---------------------------------------------------------------------------
 
 
-def _decompose_simple(
-    recipe_id: str, step: RecipeStep, policy: DecompositionPolicy
-) -> tuple[CookingTask, ...]:
+def _decompose_simple(recipe_id: str, step: RecipeStep, policy: DecompositionPolicy) -> tuple[CookingTask, ...]:
     """Pass-through: one active task from a simple step."""
     duration = step.active_duration_minutes or 5
     task = _build_task(
@@ -211,9 +207,7 @@ def _decompose_simple(
     return (task,)
 
 
-def _decompose_boil(
-    recipe_id: str, step: RecipeStep, policy: DecompositionPolicy
-) -> tuple[CookingTask, ...]:
+def _decompose_boil(recipe_id: str, step: RecipeStep, policy: DecompositionPolicy) -> tuple[CookingTask, ...]:
     """Boil pattern: fill (active) → heat to boil (passive) → check (active)."""
     passive_dur = step.passive_duration_minutes or 10
     sn = step.step_number
@@ -248,9 +242,7 @@ def _decompose_boil(
     return _chain_deps((fill, heat, check))
 
 
-def _decompose_marinate(
-    recipe_id: str, step: RecipeStep, policy: DecompositionPolicy
-) -> tuple[CookingTask, ...]:
+def _decompose_marinate(recipe_id: str, step: RecipeStep, policy: DecompositionPolicy) -> tuple[CookingTask, ...]:
     """Marinate pattern: apply (active) → wait (passive)."""
     passive_dur = step.passive_duration_minutes or 20
     sn = step.step_number
@@ -275,9 +267,7 @@ def _decompose_marinate(
     return _chain_deps((apply_task, wait_task))
 
 
-def _decompose_bake(
-    recipe_id: str, step: RecipeStep, policy: DecompositionPolicy
-) -> tuple[CookingTask, ...]:
+def _decompose_bake(recipe_id: str, step: RecipeStep, policy: DecompositionPolicy) -> tuple[CookingTask, ...]:
     """Bake pattern: load (active) → bake (passive) → unload (active)."""
     passive_dur = step.passive_duration_minutes or 25
     sn = step.step_number
@@ -316,9 +306,7 @@ def _decompose_bake(
     return _chain_deps((load, bake, unload))
 
 
-def _decompose_stir_fry(
-    recipe_id: str, step: RecipeStep, policy: DecompositionPolicy
-) -> tuple[CookingTask, ...]:
+def _decompose_stir_fry(recipe_id: str, step: RecipeStep, policy: DecompositionPolicy) -> tuple[CookingTask, ...]:
     """Stir-fry pattern: one active task occupying stove + pan + utensil."""
     duration = step.active_duration_minutes or 5
     task = _build_task(
@@ -338,9 +326,7 @@ def _decompose_stir_fry(
     return (task,)
 
 
-def _decompose_simmer(
-    recipe_id: str, step: RecipeStep, policy: DecompositionPolicy
-) -> tuple[CookingTask, ...]:
+def _decompose_simmer(recipe_id: str, step: RecipeStep, policy: DecompositionPolicy) -> tuple[CookingTask, ...]:
     """Simmer pattern: passive intervals separated by periodic check/stir tasks.
 
     Example: 'Simmer and stir every 5 minutes' → passive intervals

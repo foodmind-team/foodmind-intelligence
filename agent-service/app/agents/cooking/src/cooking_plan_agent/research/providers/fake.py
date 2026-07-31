@@ -33,9 +33,7 @@ _STIR_FRY_COMPLETE = SearchDocument(
 _STIR_FRY_DURATION_ONLY = SearchDocument(
     title="Quick Chicken Stir-Fry Recipe",
     url="https://www.bbcgoodfood.com/chicken-stir-fry",
-    snippet=(
-        "This quick chicken stir-fry takes just 4 to 6 minutes of cooking time."
-    ),
+    snippet=("This quick chicken stir-fry takes just 4 to 6 minutes of cooking time."),
     raw_content="",
     domain="bbcgoodfood.com",
 )
@@ -43,10 +41,7 @@ _STIR_FRY_DURATION_ONLY = SearchDocument(
 _STIR_FRY_CONFLICTING = SearchDocument(
     title="Traditional Gong Bao Chicken",
     url="https://www.bonappetit.com/gong-bao-chicken",
-    snippet=(
-        "Gong bao chicken stir-fry: cook over medium heat for 10 minutes, "
-        "stirring frequently."
-    ),
+    snippet=("Gong bao chicken stir-fry: cook over medium heat for 10 minutes, stirring frequently."),
     raw_content="",
     domain="bonappetit.com",
 )
@@ -77,10 +72,7 @@ _BLOCKED_DOMAIN_DOC = SearchDocument(
 _SAFETY_DOC = SearchDocument(
     title="FDA: Safe Minimum Internal Temperature for Chicken",
     url="https://www.fda.gov/food/chicken-safety",
-    snippet=(
-        "Chicken must reach an internal temperature of 74°C (165°F) "
-        "to be safe for consumption."
-    ),
+    snippet=("Chicken must reach an internal temperature of 74°C (165°F) to be safe for consumption."),
     raw_content=(
         "The FDA recommends cooking chicken to a minimum internal "
         "temperature of 165°F (74°C). Use a food thermometer to verify."

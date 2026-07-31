@@ -63,9 +63,7 @@ class ScheduleModelBuilder:
         self._horizon = self.compute_horizon(problem.tasks)
 
         # Stages A–D: variables and constraints (reusable)
-        self._starts, self._ends, self._intervals = self.build_constraints(
-            self._model, problem, self._horizon
-        )
+        self._starts, self._ends, self._intervals = self.build_constraints(self._model, problem, self._horizon)
 
         # Stage E: makespan objective
         self._build_objective(problem)
@@ -104,11 +102,7 @@ class ScheduleModelBuilder:
         # Each dependency could add lag to the critical path.
         # A simple but safe bound: base + max_lag * number of dependencies.
         # Even safer: sum all lags across all edges.
-        total_lag = sum(
-            dep.minimum_lag_minutes
-            for task in tasks
-            for dep in task.dependencies
-        )
+        total_lag = sum(dep.minimum_lag_minutes for task in tasks for dep in task.dependencies)
         return base + total_lag
 
     def build_constraints(
@@ -155,25 +149,15 @@ class ScheduleModelBuilder:
                     continue  # Skip dependencies on tasks not in this problem
 
                 # Minimum lag: successor.start >= predecessor.end + min_lag
-                model.add(
-                    starts[succ_id]
-                    >= ends[pred_id] + dep.minimum_lag_minutes
-                )
+                model.add(starts[succ_id] >= ends[pred_id] + dep.minimum_lag_minutes)
 
                 # Maximum lag: successor.start <= predecessor.end + max_lag
                 if dep.maximum_lag_minutes is not None:
-                    model.add(
-                        starts[succ_id]
-                        <= ends[pred_id] + dep.maximum_lag_minutes
-                    )
+                    model.add(starts[succ_id] <= ends[pred_id] + dep.maximum_lag_minutes)
 
         # Stage C: single active cook — no_overlap for ACTIVE tasks
         # Passive tasks are NOT included (they don't occupy the cook).
-        active_ivs = [
-            intervals[t.task_id]
-            for t in problem.tasks
-            if t.work_mode == WorkMode.ACTIVE
-        ]
+        active_ivs = [intervals[t.task_id] for t in problem.tasks if t.work_mode == WorkMode.ACTIVE]
         if active_ivs:
             model.add_no_overlap(active_ivs)
 

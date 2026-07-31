@@ -112,7 +112,8 @@ async def research_missing_node(
     _researchable_fields = {"heat_level", "duration", "temperature", "target_temperature_c"}
 
     researchable_gaps = [
-        g for g in gaps
+        g
+        for g in gaps
         if g.gap_class in ("critical", "safety_critical")
         and any(f in g.field_path.lower() for f in _researchable_fields)
     ]
@@ -464,9 +465,7 @@ async def render_infeasible_response_node(
         reasons.extend(f.description for f in safety.findings)
     if feasibility is not None and not feasibility.is_feasible:
         for shortage in feasibility.ingredient_shortages:
-            reasons.append(
-                f"Shortage: {shortage.ingredient_name} needs {shortage.shortage} {shortage.unit}"
-            )
+            reasons.append(f"Shortage: {shortage.ingredient_name} needs {shortage.shortage} {shortage.unit}")
     if error is not None:
         reasons.append(error.message)
 
