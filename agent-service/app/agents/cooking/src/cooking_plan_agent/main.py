@@ -135,21 +135,60 @@ async def lifespan(app: FastAPI):
     # Used by /health/ready to report readiness.
     app.state.settings_validated = True
 
+    # ---- LLM wiring (local Ollama via OpenAI-compatible API) ----
+    # Provider-neutral: any OpenAI-compatible endpoint can be swapped via
+    # COOKING_PLAN_LLM_* settings. When llm_enabled=False (default), the
+    # rule-based pipeline is preserved — CI stays offline-deterministic.
+    from cooking_plan_agent.llm import (
+        LLMClient,
+        LLMKnowledgeResearcher,
+        LLMPlanExplainer,
+        LLMRecipeExtractor,
+    )
+
+    llm_client: LLMClient | None = None
+    if settings.llm_enabled:
+        llm_client = LLMClient(
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            timeout_seconds=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+            temperature=settings.llm_temperature,
+        )
+        app.state.llm_explainer = LLMPlanExplainer(llm_client)
+        logger.info(
+            "LLM integration enabled",
+            extra={"llm_model": settings.llm_model, "llm_base_url": settings.llm_base_url},
+        )
+    else:
+        app.state.llm_explainer = None
+
+    # RecipeExtractor: LLM-backed when enabled, otherwise rule-based fallback.
+    recipe_extractor = (
+        LLMRecipeExtractor(llm_client) if llm_client is not None else None
+    )  # type: ignore[assignment]
+
     # Wire RecipeResearcher when web research is enabled (handbook 10.1).
-    recipe_researcher: Researcher | None = None
+    recipe_researcher: Researcher | LLMKnowledgeResearcher | None = None
     if settings.web_research_enabled:
-        allow_list = DomainAllowList.from_settings(
-            custom_domains=settings.allowed_research_domains,
-        )
-        provider = FakeSearchProvider()
-        recipe_researcher = Researcher(
-            provider=provider,
-            allow_list=allow_list,
-            settings=settings,
-        )
+        if llm_client is not None:
+            # LLM knowledge research — fills gaps from model culinary knowledge
+            # without web search (deterministic domain filtering still applies).
+            recipe_researcher = LLMKnowledgeResearcher(llm_client)
+        else:
+            allow_list = DomainAllowList.from_settings(
+                custom_domains=settings.allowed_research_domains,
+            )
+            provider = FakeSearchProvider()
+            recipe_researcher = Researcher(
+                provider=provider,
+                allow_list=allow_list,
+                settings=settings,
+            )
 
     workflow_context = WorkflowContext(
-        recipe_extractor=None,  # type: ignore[arg-type] — wired when LLM integration lands
+        recipe_extractor=recipe_extractor,  # type: ignore[arg-type]
         recipe_researcher=recipe_researcher,
         safety_engine=SafetyEngine(),
     )

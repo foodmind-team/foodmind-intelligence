@@ -15,6 +15,17 @@ class Settings(BaseSettings):
     max_task_count: int = 100  # the maximum number of tasks to process
     web_research_enabled: bool = False  # whether to enable web research
 
+    # --- LLM integration (local Ollama via OpenAI-compatible API) ---
+    # Provider-neutral: base_url + model are configurable so any OpenAI-
+    # compatible endpoint (Ollama, localhost proxy, cloud) can be swapped in.
+    llm_enabled: bool = False  # master switch; False keeps rule-based pipeline
+    llm_base_url: str = "https://api.deepseek.com"  # OpenAI-compatible base URL
+    llm_model: str = "deepseek-chat"  # model name
+    llm_api_key: str | None = None  # bearer token for cloud providers (Ollama: None)
+    llm_timeout_seconds: float = 30.0  # per-call timeout
+    llm_max_retries: int = 2  # retries before falling back to rule-based
+    llm_temperature: float = 0.1  # low temp for deterministic structured output
+
     # --- Bounded web research controls (handbook 10.1, 10.9) ---
     # Per-query timeout in seconds — search fails to confirmation on timeout
     research_timeout_seconds: float = 10.0
