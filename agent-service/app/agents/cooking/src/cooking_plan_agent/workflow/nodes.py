@@ -477,17 +477,67 @@ async def merge_preparation_node(
 ) -> dict:
     """Decompose recipe steps + merge shared preparation into CookingTasks.
 
-    Uses existing preparation/decompose.py and preparation/prep_trie.py.
-    STUB: returns empty task sets. Full wiring requires ingredient demand
-    to operation chain extraction bridge.
+    Iterates over validated RecipeIR steps, calls decompose_step for each,
+    and collects the resulting CookingTasks. Preparation merging via prep_trie
+    is deferred to MVP+1 (requires ingredient-demand-to-operation-chain bridge).
 
-    Returns three task tuples — downstream nodes concatenate them before
-    building the DAG.
+    Safety tasks are generated from the safety report when present.
     """
+    from cooking_plan_agent.domain.enums import WorkMode
+    from cooking_plan_agent.domain.models import CookingTask, TaskDependency
+    from cooking_plan_agent.preparation.decompose import decompose_step
+
+    parsed_recipes = state.get("parsed_recipes", ())
+    if not parsed_recipes:
+        return {"recipe_tasks": (), "prep_tasks": (), "safety_tasks": ()}
+
+    all_recipe_tasks: list[CookingTask] = []
+    # Track the last task of each recipe to chain subsequent steps
+    recipe_last_task: dict[str, str] = {}
+
+    for recipe in parsed_recipes:
+        last_task_id: str | None = None
+        for step in recipe.steps:
+            tasks = decompose_step(recipe.recipe_id, step)
+            if not tasks:
+                continue
+
+            # If this is not the first step in the recipe, add a dependency
+            # from the previous step's last task to this step's first task
+            if last_task_id is not None and tasks:
+                first = tasks[0]
+                dep = TaskDependency(predecessor_id=last_task_id)
+                tasks = (
+                    first.model_copy(
+                        update={"dependencies": first.dependencies + (dep,)}
+                    ),
+                ) + tasks[1:]
+
+            all_recipe_tasks.extend(tasks)
+            last_task_id = tasks[-1].task_id
+
+        if last_task_id is not None:
+            recipe_last_task[recipe.recipe_id] = last_task_id
+
+    # --- Safety tasks (inject from safety report if present) ---
+    safety_task_list: list[CookingTask] = []
+    safety_report = state.get("safety_report")
+    if safety_report is not None and safety_report.required_safety_task_ids:
+        for task_id in safety_report.required_safety_task_ids:
+            task = CookingTask(
+                task_id=task_id,
+                dish_id="_safety",
+                instruction=f"Safety task: {task_id}",
+                duration_minutes=1,
+                work_mode=WorkMode.ACTIVE,
+                category="safety",
+            )
+            safety_task_list.append(task)
+
     return {
-        "recipe_tasks": (),
+        "recipe_tasks": tuple(all_recipe_tasks),
         "prep_tasks": (),
-        "safety_tasks": (),
+        "safety_tasks": tuple(safety_task_list),
     }
 
 
