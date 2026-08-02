@@ -389,6 +389,31 @@ class TestRenderReadyResponse:
         assert response.makespan_minutes == 0
         assert response.timeline == ()
 
+    def test_explanation_pass_through(self, sample_schedule, sample_tasks, prep_tasks):
+        """P4-01: state explanation flows into the READY response unchanged."""
+        all_tasks = sample_tasks + prep_tasks
+        from cooking_plan_agent.preparation.task_graph import TaskGraph
+
+        state = _make_state(
+            schedule_result=sample_schedule,
+            recipe_tasks=sample_tasks,
+            prep_tasks=prep_tasks,
+            explanation="Parallel cooking finishes faster.",
+            explanation_source="llm",
+        )
+        state["task_graph"] = TaskGraph(tasks=all_tasks, edges=())
+
+        response = render_ready_response(state)
+        assert response.explanation == "Parallel cooking finishes faster."
+        assert response.explanation_source == "llm"
+
+    def test_explanation_defaults_to_none(self):
+        """P4-01 regression: disabled explain node leaves the fields None."""
+        state = _make_state()
+        response = render_ready_response(state)
+        assert response.explanation is None
+        assert response.explanation_source is None
+
     def test_includes_feasibility_checklist(self):
         feasibility = FeasibilityReport(
             report_id="r1",

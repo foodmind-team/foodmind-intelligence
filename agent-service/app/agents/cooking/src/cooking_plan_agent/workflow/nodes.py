@@ -1224,6 +1224,137 @@ async def verify_schedule_node(
 
 
 # ============================================================================
+# P4-01: schedule explanation (between verify and READY render)
+# ============================================================================
+
+
+def _build_schedule_summary(state: PlanState) -> dict[str, object]:
+    """Build the compact, non-sensitive summary the explainer consumes (D3/D4).
+
+    Only facts already present in the verified schedule are included:
+    makespan minutes, per-dish completion minutes, and the maximum number of
+    concurrently ACTIVE tasks (parallel groups). No recipe text, inventory,
+    or user identity is ever included.
+    """
+    from cooking_plan_agent.rendering.builder import build_dish_completion_summary
+
+    schedule = state.get("schedule_result")
+    makespan: int = (schedule.makespan_minutes or 0) if schedule is not None else 0
+
+    dish_completions: list[dict[str, object]] = []
+    if schedule is not None:
+        task_graph = state.get("task_graph")
+        tasks = task_graph.tasks if task_graph is not None else ()
+        for entry in build_dish_completion_summary(schedule, tasks):
+            # builder emits "dish_id"; the explainer consumes "dish".
+            raw_completion = entry.get("completion_minute")
+            dish_completions.append(
+                {
+                    "dish": str(entry.get("dish_id") or "?"),
+                    "completion_minute": int(raw_completion) if isinstance(raw_completion, int) else 0,
+                }
+            )
+
+    return {
+        "makespan_minutes": makespan,
+        "dish_completions": dish_completions,
+        "parallel_groups": _max_parallel_active(state),
+    }
+
+
+def _max_parallel_active(state: PlanState) -> int:
+    """Maximum number of concurrently ACTIVE tasks across the timeline (D3).
+
+    A simple sweep over (start, end) events of ACTIVE tasks gives the peak
+    concurrency. Falls back to 0 when no schedule/timeline is available.
+    """
+    from cooking_plan_agent.domain.enums import WorkMode
+    from cooking_plan_agent.rendering.builder import build_timeline
+
+    schedule = state.get("schedule_result")
+    if schedule is None:
+        return 0
+
+    task_graph = state.get("task_graph")
+    tasks = task_graph.tasks if task_graph is not None else ()
+    events: list[tuple[int, int]] = []  # (minute, +1 start / -1 end)
+    for entry in build_timeline(schedule, tasks):
+        if entry.get("work_mode") != WorkMode.ACTIVE.value:
+            continue
+        raw_start = entry.get("start_minute")
+        raw_end = entry.get("end_minute")
+        start = int(raw_start) if isinstance(raw_start, int) else 0
+        end = int(raw_end) if isinstance(raw_end, int) else start
+        events.append((start, 1))
+        events.append((end, -1))
+    # Half-open intervals [start, end): at a shared boundary the ending task
+    # is already done before the starting task begins, so -1 sorts before +1.
+    events.sort(key=lambda event: (event[0], event[1]))
+    current = 0
+    peak = 0
+    for _minute, delta in events:
+        current += delta
+        peak = max(peak, current)
+    return peak
+
+
+def _deterministic_explanation(summary: dict[str, object]) -> str:
+    """Deterministic fallback: re-states only verified schedule facts (D3).
+
+    Used when the LLM explainer is absent or fails. The content is always
+    derived from the summary — no new claims are introduced.
+    """
+    makespan = summary.get("makespan_minutes")
+    parts = [f"Plan completes in approximately {makespan} minutes."]
+    raw_completions = summary.get("dish_completions")
+    completions = raw_completions if isinstance(raw_completions, list) else []
+    if completions:
+        parts.append(
+            "Dishes finish at: "
+            + ", ".join(
+                f"{entry.get('dish', '?')} at {entry.get('completion_minute', '?')} min" for entry in completions
+            )
+        )
+    return " ".join(parts)
+
+
+async def explain_schedule_node(
+    state: PlanState,
+    runtime: Runtime[WorkflowContext],
+) -> dict[str, object]:
+    """Attach a short, additive explanation to a verified schedule (P4-01).
+
+    Placed between verify_schedule and render_ready_response. The node NEVER
+    writes a WorkflowError: an absent explainer, LLM timeout, malformed output
+    or any exception degrades to a deterministic summary, so the verified
+    READY response is never blocked (P2-02 fault matrix).
+
+    Returns state fields:
+      - explanation: prose or None (feature disabled).
+      - explanation_source: "llm" | "deterministic" | "disabled".
+    """
+    from cooking_plan_agent.config.settings import get_settings
+
+    if not get_settings().explanation_enabled:
+        return {"explanation": None, "explanation_source": "disabled"}
+
+    summary = _build_schedule_summary(state)
+    explainer = runtime.context.explainer
+    if explainer is not None:
+        try:
+            text = await explainer.explain(summary)
+            if isinstance(text, str) and text.strip():
+                return {"explanation": text, "explanation_source": "llm"}
+        except Exception:  # noqa: BLE001 — additive capability must never fail READY
+            logger.warning("Schedule explanation failed — using deterministic fallback")
+
+    return {
+        "explanation": _deterministic_explanation(summary),
+        "explanation_source": "deterministic",
+    }
+
+
+# ============================================================================
 # Terminal response nodes
 # ============================================================================
 

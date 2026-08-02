@@ -113,6 +113,9 @@ def render_ready_response(state: PlanState) -> ReadyPlanResponse:
         dish_completions=dish_completions,
         # P3-04: regional safety-policy provenance (region/version/sources).
         safety_policy=state.get("safety_policy"),
+        # P4-01: additive schedule explanation (llm | deterministic | disabled).
+        explanation=state.get("explanation"),
+        explanation_source=state.get("explanation_source"),
     )
 
 

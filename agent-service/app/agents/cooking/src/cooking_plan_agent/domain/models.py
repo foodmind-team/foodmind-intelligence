@@ -627,6 +627,11 @@ class ReadyPlanResponse(StrictModel):
     dish_completions: tuple[dict[str, object], ...]
     # P3-04: policy provenance (region/version/sources) that produced the plan.
     safety_policy: "SafetyPolicyRecord | None" = None
+    # P4-01: optional additive schedule explanation ("why this timing/order").
+    # explanation_source ∈ {"llm", "deterministic", "disabled"}. The
+    # explanation never alters the verified schedule — it is display-only.
+    explanation: str | None = None
+    explanation_source: str | None = None
 
 
 class ConfirmationPlanResponse(StrictModel):

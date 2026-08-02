@@ -74,6 +74,11 @@ class PlanState(TypedDict, total=False):
     schedule_result: ScheduleResult
     # Independent verification report (separate from solver's internal check)
     verification_report: VerificationReport
+    # P4-01: additive schedule explanation set by explain_schedule_node
+    # between verify and render READY. Display-only — never affects the
+    # schedule. explanation_source ∈ {"llm", "deterministic", "disabled"}.
+    explanation: str | None
+    explanation_source: str | None
 
     # --- Terminal output ---
     # Exactly ONE terminal field is populated by the terminal node that fires

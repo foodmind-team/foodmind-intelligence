@@ -104,6 +104,14 @@ class Settings(BaseSettings):
     # Per-call timeout is llm_timeout_seconds; this bounds the gather.
     llm_overall_timeout_seconds: float = 120.0
 
+    # --- Schedule explanation (P2-02 / P4-01) ---
+    # READY responses may carry a short "why this schedule" explanation
+    # produced by the LLM explainer, with a deterministic fallback. Disabled
+    # by default so CI stays offline-deterministic; this is also the
+    # feature-flag rollback for the capability. The explanation is additive
+    # and never alters the verified schedule.
+    explanation_enabled: bool = False
+
     # --- Bounded web research controls (handbook 10.1, 10.9) ---
     # Per-query timeout in seconds — search fails to confirmation on timeout
     research_timeout_seconds: float = 10.0
