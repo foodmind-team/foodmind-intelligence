@@ -127,6 +127,10 @@ def validate_openapi_spec(spec: dict) -> list[str]:
     task_get = "/internal/v2/cooking-plan/tasks/{task_id}"
     if task_get not in paths:
         issues.append(f"Missing {task_get} endpoint (P3-01 task query)")
+    # P4-04: task SSE progress stream
+    task_events = "/internal/v2/cooking-plan/tasks/{task_id}/events"
+    if task_events not in paths:
+        issues.append(f"Missing {task_events} endpoint (P4-04 task SSE)")
 
     # v1 compat endpoint
     compat_path = "/internal/v1/cooking-plans/generate"
