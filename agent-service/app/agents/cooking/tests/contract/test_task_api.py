@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 
-from cooking_plan_agent.main import create_app
+# main 的模块级 import 会触发 get_settings()（internal_service_token 必填）。
+# 与 tests/security/test_log_redaction.py 一致：在导入 main 前先注入测试 token。
+os.environ.setdefault("COOKING_PLAN_INTERNAL_SERVICE_TOKEN", "test-internal-token-abc123")
+
+from cooking_plan_agent.main import create_app  # noqa: E402
 
 _TEST_TOKEN = "test-internal-token-abc123"
 
@@ -159,6 +164,26 @@ class TestQuery:
                 break
             time.sleep(0.2)
         assert status in ("READY", "NEEDS_CONFIRMATION", "INFEASIBLE", "FAILED"), f"Worker never finished: {status}"
+
+    def test_polling_summary_shape_unchanged_with_sse_enabled(self, client: TestClient) -> None:
+        """SSE adds an events endpoint without changing the polling shape (P4-04)."""
+        created = client.post("/internal/v2/cooking-plan/tasks", json=_payload(), headers=_auth_headers()).json()
+        task_id = created["task_id"]
+        body = client.get(f"/internal/v2/cooking-plan/tasks/{task_id}", headers=_auth_headers()).json()
+        # The monotonic event counter is stream-only: it must not leak into the
+        # polling API's TaskSummary (which the Spring v1 contract validates).
+        assert "event_id" not in body
+        assert set(body) == {
+            "task_id",
+            "status",
+            "request_id",
+            "location",
+            "progress",
+            "result",
+            "error",
+            "created_at",
+            "updated_at",
+        }
 
 
 class TestCancel:
