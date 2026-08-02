@@ -16,7 +16,6 @@ from cooking_plan_agent.domain.models import (
     IngredientDemand,
     ResourceNeed,
     StrictModel,
-    TaskDependency,
 )
 from cooking_plan_agent.normalisation.errors import InvalidQuantityError
 
@@ -255,11 +254,12 @@ def convert_trie_to_tasks(
         duration = int(setup_minutes + minutes_per_base_unit * node.total_quantity)
         duration = max(duration, 1)  # Minimum 1 minute
 
-        deps: tuple[TaskDependency, ...] = ()
-        consumes: tuple[str, ...] = ()
-        if parent_state:
-            deps = (TaskDependency(predecessor_id=parent_state),)
-            consumes = (parent_state,)
+        # P2-01: parent-child ordering is expressed ONLY through food-state
+        # consume/produce pairs — the graph builder (build_task_graph) turns
+        # produces_states → consumes_states into real edges. Writing the
+        # parent food-state as a TaskDependency.predecessor_id would create a
+        # dangling edge (food states are not task IDs).
+        consumes: tuple[str, ...] = (parent_state,) if parent_state else ()
 
         task = _build_task(
             task_id=task_id,
@@ -268,7 +268,7 @@ def convert_trie_to_tasks(
             duration_minutes=duration,
             work_mode=WorkMode.ACTIVE,
             category="preparation",
-            dependencies=deps,
+            dependencies=(),
             consumes_states=consumes,
             produces_states=(state,),
             batch_key=f"prep_{ingredient_name}",
@@ -387,3 +387,199 @@ def _infer_prep_chain(demand: IngredientDemand) -> tuple[PreparationOperation, .
                 break
 
     return tuple(ops)
+
+
+# ============================================================================
+# P2-01  Shared-preparation merging for the main workflow
+# ============================================================================
+
+# Raw proteins must NEVER share preparation operations with ready-to-eat
+# items, even when the operation word is identical (P2-01 D2). Matching is
+# keyword-based on the canonical ingredient name; production systems should
+# source this from a vetted ingredient catalogue.
+_RAW_PROTEIN_KEYWORDS = (
+    "chicken",
+    "beef",
+    "pork",
+    "fish",
+    "shrimp",
+    "prawn",
+    "lamb",
+    "turkey",
+    "duck",
+    "salmon",
+    "tuna",
+    "ham",
+    "sausage",
+    "bacon",
+    "mince",
+    "meat",
+    "poultry",
+    "seafood",
+)
+
+
+def safety_class_for_ingredient(canonical_name: str, input_state: str) -> str:
+    """Categorise an ingredient for prep-sharing safety isolation (P2-01 D2).
+
+    Returns ``"raw_protein"`` when the ingredient is an uncooked animal
+    protein, otherwise ``"rte"`` (ready-to-eat / general). Raw-protein and
+    RTE demands of the same ingredient build into separate tries so their
+    operations never merge.
+    """
+    name = canonical_name.lower()
+    if input_state == "raw" and any(kw in name for kw in _RAW_PROTEIN_KEYWORDS):
+        return "raw_protein"
+    return "rte"
+
+
+def demand_final_states_for_ingredient(
+    root: PrepTrieNode,
+    ingredient_name: str,
+) -> dict[str, str]:
+    """Map each demand_id to the food state its terminal prep node produces.
+
+    A demand's final state is the state of the deepest (leaf) node it passes
+    through. Leaf nodes carry the demand_ids of the chains that end there.
+    The state label follows ``convert_trie_to_tasks`` exactly (``:`` in the
+    operation key is replaced with ``_``).
+
+    Args:
+        root: The populated trie for one ingredient (and safety class).
+        ingredient_name: Canonical ingredient name used in state labels.
+
+    Returns:
+        ``{demand_id: final_food_state}``.
+    """
+    final: dict[str, str] = {}
+
+    def _dfs(node: PrepTrieNode) -> None:
+        if not node.operation_key or node.operation_key == "root":
+            for child in node.child_nodes.values():
+                _dfs(child)
+            return
+        if node.child_nodes:
+            for child in node.child_nodes.values():
+                _dfs(child)
+            return
+        state = format_food_state(ingredient_name, node.operation_key.replace(":", "_"))
+        for demand_id in node.demand_ids:
+            final[demand_id] = state
+
+    _dfs(root)
+    return final
+
+
+@dataclass(frozen=True)
+class SharedPrepResult:
+    """Output of shared-preparation merging (P2-01).
+
+    Attributes
+    ----------
+    tasks
+        Merged preparation tasks across all ingredient demands.
+    demand_final_states
+        ``demand_id -> final food state`` so the workflow can wire the
+        consuming recipe task (``recipe_id:index`` keys).
+    observations
+        Human-readable summaries of merge/branch/isolate decisions for
+        observability (logged and stored in workflow state).
+    """
+
+    tasks: tuple[CookingTask, ...]
+    demand_final_states: dict[str, str]
+    observations: tuple[str, ...]
+
+
+def build_shared_prep_tasks(
+    demands: tuple[tuple[str, IngredientDemand], ...],
+) -> SharedPrepResult:
+    """Merge identical preparation chains across recipes via prefix tries.
+
+    Workflow step (P2-01):
+    1. Group demands by (canonical ingredient, safety class) — raw proteins
+       never merge with RTE items (D2), and different ingredients never merge.
+    2. Build one trie per group; identical operation prefixes aggregate
+       quantities; divergent cuts branch.
+    3. Verify quantity conservation (D1) — a violation raises
+       ``InvalidQuantityError`` and the workflow must NOT build a task graph.
+    4. Convert each trie to prep tasks; produce per-demand final food states.
+
+    Args:
+        demands: ``(recipe_id, demand)`` pairs. Demand IDs are derived as
+            ``"{recipe_id}:{index}"`` where index is the demand's ordinal
+            within its recipe.
+
+    Returns:
+        SharedPrepResult with merged tasks, final-state mapping, and
+        observations.
+
+    Raises:
+        InvalidQuantityError: If merged quantity does not equal the sum of
+            the input demand quantities.
+    """
+    # 1. Group by (canonical_name, safety_class).
+    groups: dict[tuple[str, str], list[tuple[str, str, IngredientDemand]]] = {}
+    recipe_counts: dict[str, int] = {}
+    for recipe_id, demand in demands:
+        idx = recipe_counts.get(recipe_id, 0)
+        recipe_counts[recipe_id] = idx + 1
+        demand_id = f"{recipe_id}:{idx}"
+        key = (
+            demand.canonical_name,
+            safety_class_for_ingredient(demand.canonical_name, demand.input_state),
+        )
+        groups.setdefault(key, []).append((demand_id, recipe_id, demand))
+
+    tasks: list[CookingTask] = []
+    demand_final_states: dict[str, str] = {}
+    observations: list[str] = []
+
+    # Track raw/RTE co-occurrence for the same ingredient (isolation report).
+    class_by_ingredient: dict[str, set[str]] = {}
+    for (name, sclass), _group in groups.items():
+        class_by_ingredient.setdefault(name, set()).add(sclass)
+
+    for (name, sclass), group in groups.items():
+        root = PrepTrieNode(operation_key="root")
+        group_total = Decimal(0)
+        dish_ids: list[str] = []
+        for demand_id, recipe_id, demand in group:
+            chain = _infer_prep_chain(demand)
+            if not chain:
+                continue
+            group_total += demand.quantity
+            if recipe_id not in dish_ids:
+                dish_ids.append(recipe_id)
+            insert_operation_chain(root, chain, demand_id)
+
+        if not root.child_nodes:
+            continue  # No preparable operations for this demand group.
+
+        # 3. Quantity conservation (D1): aggregated == sum of demands.
+        verify_quantity_conservation(root)
+        # The root node only tracks demand_ids (insert_operation_chain never
+        # aggregates on it); the first-level nodes carry the per-ingredient
+        # totals, which must equal the sum of every demand quantity.
+        trie_total = sum(child.total_quantity for child in root.child_nodes.values())
+        if trie_total != group_total:
+            raise InvalidQuantityError(
+                f"Quantity conservation violated for {name!r}: trie total={trie_total}, demand sum={group_total}"
+            )
+
+        # 4. Convert trie → tasks and record final states + observations.
+        tasks.extend(convert_trie_to_tasks(root, name, tuple(dish_ids)))
+        demand_final_states.update(demand_final_states_for_ingredient(root, name))
+
+        if len(group) > 1:
+            observations.append(f"merged {len(group)} demand(s) for {name} [{sclass}]")
+        if any("cut:" in k for k in root.child_nodes):
+            observations.append(f"branching prep for {name} [{sclass}]")
+        if len(class_by_ingredient.get(name, set())) > 1:
+            observations.append(f"isolated raw/RTE prep for {name}")
+
+    return SharedPrepResult(
+        tasks=tuple(tasks),
+        demand_final_states=demand_final_states,
+        observations=tuple(observations),
+    )
