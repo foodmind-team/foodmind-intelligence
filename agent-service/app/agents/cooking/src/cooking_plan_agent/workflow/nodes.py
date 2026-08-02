@@ -227,6 +227,13 @@ async def parse_recipes_node(
     Falls back to rule-based extraction if no extractor is configured.
     """
     request = state["request"]
+
+    # Compat layer injects pre-parsed structured candidates (snapshots).
+    # Use them directly — never re-invoke the LLM for compat requests
+    # (P0-02 rule 4).
+    if request.preparsed_candidates:
+        return {"extracted_candidates": request.preparsed_candidates}
+
     extractor = runtime.context.recipe_extractor
 
     candidates: list[ExtractedRecipeCandidate] = []

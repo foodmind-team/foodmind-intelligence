@@ -556,6 +556,11 @@ class GeneratePlanRequest(StrictModel):
     # Revision of the confirmation response these decisions answer (P0-06).
     # Used to reject stale confirmations when the plan has changed.
     plan_revision: str | None = None
+    # Structured candidates injected by the compat layer. When non-empty,
+    # parse_recipes_node uses them directly and never calls the LLM
+    # extractor (P0-02 rule 4). Kept optional so native requests are
+    # unaffected.
+    preparsed_candidates: tuple["ExtractedRecipeCandidate", ...] = ()
 
 
 class ReadyPlanResponse(StrictModel):
