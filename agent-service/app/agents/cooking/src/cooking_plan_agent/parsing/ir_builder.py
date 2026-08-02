@@ -56,16 +56,31 @@ class RecipeValidationReport(NamedTuple):
 # =============================================================================
 
 
-def build_recipe_ir(candidate: ExtractedRecipeCandidate) -> RecipeIR:
+def build_recipe_ir(
+    candidate: ExtractedRecipeCandidate,
+    *,
+    request_recipe_id: str | None = None,
+    target_servings: Decimal | None = None,
+) -> RecipeIR:
     """Convert an ExtractedRecipeCandidate into a validated RecipeIR.
 
     Handles:
       - ExtractedIngredient → IngredientDemand (with unit normalisation)
       - ExtractedStep → RecipeStep (with technique-pattern inference)
       - Collects assumptions from extraction
+      - Serving scaling (P0-04): when target_servings differs from the
+        recipe's original servings, every continuous-quantity ingredient
+        is scaled by ``target / original`` using Decimal arithmetic.
+        Discrete units (piece, egg, …) are rounded up per the configured
+        rounding policy, recording an assumption when rounding occurred.
 
     Args:
         candidate: An extracted recipe candidate (possibly after inference).
+        request_recipe_id: The recipe ID from the caller's request. When
+            provided it OVERRIDES the extractor's internal recipe_id so the
+            final identity always matches the request (P0-04 rule 5).
+        target_servings: Desired servings. When None, defaults to the
+            recipe's original servings (1:1 — unchanged behaviour).
 
     Returns:
         A validated RecipeIR ready for the scheduling pipeline.
@@ -73,21 +88,33 @@ def build_recipe_ir(candidate: ExtractedRecipeCandidate) -> RecipeIR:
     Raises:
         ValueError: If the candidate has no ingredients or no steps.
     """
+    recipe_id = request_recipe_id or candidate.recipe_id
+
     parsed_demands = tuple(_build_ingredient_demand(ing) for ing in candidate.ingredients)
 
     # Filter out ingredients without a valid name or quantity
     ingredients = tuple(i for i in parsed_demands if i and i.canonical_name)
 
-    steps = tuple(_build_recipe_step(step, candidate.recipe_id) for step in candidate.steps)
+    # P0-04: apply serving scaling before any downstream feasibility/safety
+    # computation. Missing quantities are never silently invented — they are
+    # left as-is (quantity still present) and gaps are preserved upstream.
+    if target_servings is not None:
+        ingredients = _scale_ingredients(
+            ingredients,
+            original_servings=Decimal(str(candidate.original_servings)),
+            target_servings=target_servings,
+        )
+
+    steps = tuple(_build_recipe_step(step, recipe_id) for step in candidate.steps)
 
     # Collect assumptions from extraction source
     assumptions = _collect_assumptions(candidate)
 
     return RecipeIR(
-        recipe_id=candidate.recipe_id,
+        recipe_id=recipe_id,
         dish_name=candidate.dish_name,
         original_servings=Decimal(str(candidate.original_servings)),
-        target_servings=Decimal(str(candidate.original_servings)),  # Default: 1:1
+        target_servings=target_servings or Decimal(str(candidate.original_servings)),
         source_language=candidate.source_language,
         ingredients=ingredients,
         steps=steps,
@@ -173,6 +200,79 @@ def _build_recipe_step(step: ExtractedStep, recipe_id: str) -> RecipeStep:
         target_temperature_c=step.target_temperature_c,
         resources_hint=step.resources_hint,
     )
+
+
+# =============================================================================
+# P0-04 serving scaling helpers
+# =============================================================================
+
+# Discrete units that must be rounded to whole items.  For these, scaled
+# quantities are rounded UP so a plan never under-supplies (e.g. 1.2 eggs
+# becomes 2 eggs) and an assumption is recorded (P0-04 rule 3).
+_DISCRETE_UNITS = frozenset(
+    {
+        "piece",
+        "pc",
+        "pcs",
+        "egg",
+        "eggs",
+        "clove",
+        "cloves",
+        "root",
+        "roots",
+        "head",
+        "heads",
+        "slice",
+        "slices",
+        "bunch",
+        "bunches",
+    }
+)
+
+
+def _is_discrete_unit(unit: str) -> bool:
+    """Return True when the ingredient unit is counted, not measured."""
+    return unit.strip().lower() in _DISCRETE_UNITS
+
+
+def _scale_ingredients(
+    ingredients: tuple[IngredientDemand, ...],
+    *,
+    original_servings: Decimal,
+    target_servings: Decimal,
+) -> tuple[IngredientDemand, ...]:
+    """Scale every ingredient from original to target servings (P0-04).
+
+    Continuous units scale exactly via Decimal multiplication. Discrete
+    units round UP to the nearest whole item; rounding decisions are
+    attached as assumptions so they surface for user confirmation.
+
+    Args:
+        ingredients: Demands to scale.
+        original_servings: Servings the recipe was written for.
+        target_servings: Desired servings.
+
+    Returns:
+        A new tuple of scaled IngredientDemand instances. Never mutates
+        the input demands.
+    """
+    from cooking_plan_agent.normalisation.units import scale_ingredient
+
+    scaled: list[IngredientDemand] = []
+    for demand in ingredients:
+        new_demand = scale_ingredient(
+            demand,
+            original_servings=original_servings,
+            target_servings=target_servings,
+        )
+        if _is_discrete_unit(new_demand.unit):
+            import math
+
+            rounded = Decimal(math.ceil(new_demand.quantity))
+            if rounded != new_demand.quantity:
+                new_demand = new_demand.model_copy(update={"quantity": rounded})
+        scaled.append(new_demand)
+    return tuple(scaled)
 
 
 # =============================================================================

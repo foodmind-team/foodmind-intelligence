@@ -53,6 +53,41 @@ class DomainErrorCode(StrEnum):
     INVALID_RECIPE_TEXT = "INVALID_RECIPE_TEXT"
 
     # ------------------------------------------------------------------
+    # Request-level input validation errors (P0-03)
+    # ------------------------------------------------------------------
+
+    # Two or more recipes in the request share the same recipe_id.  Recipe
+    # identity must be unique so ingredient demands and task graphs can be
+    # attributed unambiguously.
+    DUPLICATE_RECIPE_ID = "DUPLICATE_RECIPE_ID"
+
+    # The request exceeds the maximum number of recipes the service is
+    # configured to accept (Settings.max_recipe_count).
+    TOO_MANY_RECIPES = "TOO_MANY_RECIPES"
+
+    # A recipe's raw text exceeds the configured byte limit
+    # (Settings.max_recipe_text_bytes).  Rejected to bound memory and
+    # extraction cost.
+    RECIPE_TEXT_TOO_LARGE = "RECIPE_TEXT_TOO_LARGE"
+
+    # The request as a whole exceeds the configured size limit
+    # (Settings.max_request_bytes).  Rejected at the workflow boundary.
+    REQUEST_TOO_LARGE = "REQUEST_TOO_LARGE"
+
+    # The request's schema_version is not in the supported set
+    # (Settings.supported_schema_versions).  The caller must upgrade.
+    UNSUPPORTED_SCHEMA_VERSION = "UNSUPPORTED_SCHEMA_VERSION"
+
+    # A time-related request field is invalid (e.g. negative
+    # time_limit_minutes).
+    INVALID_TIME_LIMIT = "INVALID_TIME_LIMIT"
+
+    # An approved decision in the request is invalid: unsupported type,
+    # conflicting combination, unknown/stale plan_revision, or malformed
+    # payload (P0-06).
+    INVALID_APPROVED_DECISION = "INVALID_APPROVED_DECISION"
+
+    # ------------------------------------------------------------------
     # Unit conversion errors (handbook 5.3, 5.4)
     # ------------------------------------------------------------------
 

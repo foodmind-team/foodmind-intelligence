@@ -9,6 +9,24 @@ from typing import Literal
 from cooking_plan_agent.workflow.state import PlanState
 
 # ---------------------------------------------------------------------------
+# 8.6 P0-03 error short-circuit — shared by every error-capable node
+# ---------------------------------------------------------------------------
+
+
+def route_on_workflow_error(
+    state: PlanState,
+) -> Literal["render_failed_response", "__continue__"]:
+    """Short-circuit to FAILED the moment any WorkflowError is set.
+
+    Pure read-only routing: never mutates state, never clears or rewrites
+    the original error, and never calls a service. Downstream nodes are
+    skipped entirely once an error is present (P0-03).
+    """
+    if state.get("error") is not None:
+        return "render_failed_response"
+    return "__continue__"
+
+# ---------------------------------------------------------------------------
 # 8.6 Routing after gap detection
 # ---------------------------------------------------------------------------
 
@@ -126,7 +144,12 @@ def route_after_solve(
     OPTIMAL/FEASIBLE proceed to independent verification.
     INFEASIBLE means the solver proved no solution exists.
     MODEL_INVALID/UNKNOWN -> FAILED (likely a model construction bug).
+
+    Any workflow error takes precedence and short-circuits to FAILED (P0-03).
     """
+    if state.get("error") is not None:
+        return "render_failed_response"
+
     result = state.get("schedule_result")
     if result is None:
         return "render_failed_response"
@@ -152,7 +175,12 @@ def route_after_verification(
 
     The verifier checks constraint satisfaction independently from the solver,
     catching optimiser bugs before they reach the user.
+
+    Any workflow error takes precedence and short-circuits to FAILED (P0-03).
     """
+    if state.get("error") is not None:
+        return "render_failed_response"
+
     report = state.get("verification_report")
     if report is not None and report.passed:
         return "render_ready_response"
