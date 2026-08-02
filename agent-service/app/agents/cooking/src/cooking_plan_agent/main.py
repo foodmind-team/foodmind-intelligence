@@ -337,24 +337,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.task_service = None
     task_service: object | None = None
     if settings.task_api_enabled:
+        from cooking_plan_agent.tasks.queue import create_task_queue
         from cooking_plan_agent.tasks.repository import SQLiteTaskRepository
         from cooking_plan_agent.tasks.service import AsyncTaskService
 
         task_repo = SQLiteTaskRepository(settings.task_db_path)
         try:
             await task_repo.astart()
+            # P4-05: worker consumes a TaskQueue port selected by settings.
+            # Only "inprocess" is supported until Stage B infrastructure
+            # (Redis queue + shared quota storage) is approved.
+            task_queue = create_task_queue(settings.task_queue_backend, task_repo)
             task_service = AsyncTaskService(
                 repository=task_repo,
                 generation_service=app.state.generate_plan_service,
                 default_ttl_seconds=settings.task_default_ttl_seconds,
                 worker_concurrency=settings.task_worker_concurrency,
+                queue=task_queue,
             )
             await task_service.astart()
             app.state.task_service = task_service
             logger.info(
-                "Async task API enabled | db=%s | worker_concurrency=%d",
+                "Async task API enabled | db=%s | worker_concurrency=%d | queue_backend=%s",
                 settings.task_db_path,
                 settings.task_worker_concurrency,
+                settings.task_queue_backend,
             )
         except Exception as exc:  # noqa: BLE001 — startup must not hang on storage failure
             logger.error(
