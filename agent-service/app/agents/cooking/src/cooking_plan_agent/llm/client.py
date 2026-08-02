@@ -26,6 +26,11 @@ class LLMClient:
 
     Supports optional JSON-mode (response_format={"type": "json_object"})
     for deterministic structured output, and a fixed retry policy.
+
+    P1-02: the client owns ONE lifecycle-level ``httpx.AsyncClient`` (created
+    once, closed once via ``aclose()``) so connection pools are reused across
+    calls instead of being rebuilt per request. The app lifespan registers
+    this client for clean shutdown.
     """
 
     def __init__(
@@ -37,6 +42,7 @@ class LLMClient:
         timeout_seconds: float = 30.0,
         max_retries: int = 2,
         temperature: float = 0.1,
+        connection_pool_size: int = 10,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
@@ -44,6 +50,21 @@ class LLMClient:
         self._timeout = timeout_seconds
         self._max_retries = max_retries
         self._temperature = temperature
+        # Lifecycle-level transport: bounded pool, reused across every call.
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_seconds),
+            limits=httpx.Limits(
+                max_connections=connection_pool_size,
+                max_keepalive_connections=connection_pool_size,
+            ),
+        )
+
+    async def aclose(self) -> None:
+        """Close the shared httpx client (idempotent-safe)."""
+        try:
+            await self._client.aclose()
+        except httpx.TransportError:  # already closed / transport gone
+            return
 
     # ------------------------------------------------------------------
     # Public API
@@ -85,10 +106,9 @@ class LLMClient:
 
         for attempt in range(self._max_retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    response = await client.post(url, json=payload, headers=headers)
-                    response.raise_for_status()
-                    data = response.json()
+                response = await self._client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
                 content = data["choices"][0]["message"]["content"]
                 if not content or not content.strip():
                     raise LLMError("LLM returned empty content")

@@ -18,6 +18,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 
+from cooking_plan_agent.api.backpressure import request_lease
 from cooking_plan_agent.api.compat_models import (
     CompatCookingRequest,
     CompatCookingResponse,
@@ -57,6 +58,7 @@ async def generate_plan_compat(
     body: CompatCookingRequest,
     service: Annotated[GenerateCookingPlanService, Depends(get_generate_service)],
     _correlation_id: Annotated[str, Depends(extract_correlation_id)],
+    _lease: Annotated[None, Depends(request_lease)] = None,
 ) -> CompatCookingResponse:
     """Generate a cooking plan for the Spring Boot v1 contract.
 

@@ -2,7 +2,7 @@
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, SecretStr
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -54,6 +54,16 @@ class Settings(BaseSettings):
     max_request_bytes: int = 1_000_000  # total serialised request byte cap
     supported_schema_versions: tuple[str, ...] = ("1.0",)  # accepted schema_version values
 
+    # --- Request-level backpressure (P1-03) ---
+    # Two-layer limiter: at most `max_active_requests` requests run
+    # concurrently; excess requests queue for `queue_timeout_seconds`. When
+    # the queue is full or a waiter times out, the request is rejected with
+    # 503 + Retry-After instead of unboundedly piling up. Health endpoints
+    # bypass this limiter so orchestrators can always probe the process.
+    max_active_requests: int = 20
+    max_queued_requests: int = 100
+    queue_timeout_seconds: float = 5.0
+
     # --- LLM integration (local Ollama via OpenAI-compatible API) ---
     # Provider-neutral: base_url + model are configurable so any OpenAI-
     # compatible endpoint (Ollama, localhost proxy, cloud) can be swapped in.
@@ -64,6 +74,19 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 30.0  # per-call timeout
     llm_max_retries: int = 2  # retries before falling back to rule-based
     llm_temperature: float = 0.1  # low temp for deterministic structured output
+
+    # --- LLM concurrency & connection budget (P1-02) ---
+    # Max in-flight LLM calls per request (recipe extraction fan-out). The
+    # multi-recipe gather is capped by this semaphore so a single request
+    # cannot exhaust the provider quota.
+    llm_max_concurrency: int = 4
+    # httpx connection pool size: total connections the lifecycle-level
+    # AsyncClient may hold. One shared client is reused across all requests
+    # instead of creating a fresh pool per call.
+    llm_connection_pool_size: int = 10
+    # Overall envelope timeout for the whole multi-recipe extraction batch.
+    # Per-call timeout is llm_timeout_seconds; this bounds the gather.
+    llm_overall_timeout_seconds: float = 120.0
 
     # --- Bounded web research controls (handbook 10.1, 10.9) ---
     # Per-query timeout in seconds — search fails to confirmation on timeout
@@ -80,6 +103,29 @@ class Settings(BaseSettings):
     # (handbook 10.7). If MAD exceeds this fraction of the median,
     # the result is flagged as needs_confirmation.
     research_disagreement_threshold: float = 0.5
+
+    # --- Tavily search provider (P1-05) ---
+    # A real, controlled search implementation behind the SearchProvider port.
+    # When tavily_api_key is set, the Researcher uses Tavily instead of the
+    # Fake provider. The key is a SecretStr: it must never appear in repr,
+    # logs, or error responses.
+    tavily_base_url: str = "https://api.tavily.com"
+    tavily_api_key: SecretStr | None = None
+    # Controlled search depth: "basic" (fast) or "advanced" (deeper crawl).
+    # Kept explicit so behaviour is deterministic and auditable.
+    tavily_search_depth: str = "basic"
+    # Connection pool size for the provider's lifecycle-level httpx client.
+    tavily_connection_pool_size: int = 10
+
+    # --- Intermediate artifact cache (P1-06) ---
+    # Caches stable parse/research artifacts (never final READY responses).
+    # Disabling only affects performance, never results. In-memory and
+    # instance-level; distributed cache is a P3-02 concern.
+    cache_enabled: bool = False
+    cache_ttl_seconds: float = 3600.0
+    cache_max_entries: int = 1000
+    # Oversized artifacts are skipped rather than cached (memory bound).
+    cache_max_item_bytes: int = 100_000
 
     # define the model config
     model_config = SettingsConfigDict(

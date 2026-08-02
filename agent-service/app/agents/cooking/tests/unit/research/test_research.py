@@ -243,7 +243,7 @@ async def test_timeout_returns_controlled_result(
     class SlowProvider:
         """Provider that introduces a deliberate delay to trigger timeout."""
 
-        async def search(self, query: str, max_results: int) -> tuple:
+        async def search(self, query: str, max_results: int, **_: object) -> tuple:
             await asyncio.sleep(0.1)  # Deliberate delay
             return ()
 

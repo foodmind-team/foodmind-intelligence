@@ -10,6 +10,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.nodes import (
+    apply_research_evidence_node,
     build_confirmation_response_node,
     build_task_graph_node,
     check_feasibility_node,
@@ -31,6 +32,7 @@ from cooking_plan_agent.workflow.routing import (
     route_after_feasibility,
     route_after_gap_detection,
     route_after_local_inference,
+    route_after_research,
     route_after_safety,
     route_after_solve,
     route_after_verification,
@@ -54,8 +56,10 @@ def build_cooking_plan_graph() -> CompiledStateGraph[PlanState, WorkflowContext]
     builder.add_node("parse_recipes", parse_recipes_node)
     builder.add_node("detect_gaps", detect_gaps_node)
     builder.add_node("infer_local", infer_local_node)
-    # research_missing is a future node — currently unreachable in MVP
+    # research_missing runs only when web research is enabled (P1-01)
     builder.add_node("research_missing", research_missing_node)
+    # P1-01: consumes research_evidence and applies it back to candidates
+    builder.add_node("apply_research_evidence", apply_research_evidence_node)
     builder.add_node("validate_recipe_ir", validate_recipe_ir_node)
     builder.add_node("validate_safety", validate_safety_node)
     builder.add_node("check_feasibility", check_feasibility_node)
@@ -122,8 +126,17 @@ def build_cooking_plan_graph() -> CompiledStateGraph[PlanState, WorkflowContext]
         },
     )
 
-    # research_missing always converges back into the main validation pipeline
-    builder.add_edge("research_missing", "validate_recipe_ir")
+    # research_missing -> apply_research_evidence (P1-01): evidence is
+    # written back into candidates, then routed to IR or confirmation.
+    builder.add_edge("research_missing", "apply_research_evidence")
+    builder.add_conditional_edges(
+        "apply_research_evidence",
+        route_after_research,
+        {
+            "build_confirmation_response": "build_confirmation_response",
+            "validate_recipe_ir": "validate_recipe_ir",
+        },
+    )
     builder.add_conditional_edges(
         "validate_recipe_ir",
         route_on_workflow_error,

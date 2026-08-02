@@ -31,3 +31,19 @@ def test_readiness() -> None:
         assert body["checks"]["settings_validated"] is True
         assert body["checks"]["graph_compiled"] is True
         assert body["checks"]["shutting_down"] is False
+
+
+def test_load_snapshot_reports_limiter_metrics() -> None:
+    """P1-03: /health/load exposes active/queued/rejected metrics.
+
+    The route must answer even while the business limiter is saturated —
+    health probes bypass the lease dependency.
+    """
+    with TestClient(create_app()) as client:
+        response = client.get("/health/load")
+        assert response.status_code == 200
+        body = response.json()
+        assert "active" in body
+        assert "queued" in body
+        assert "rejected_total" in body
+        assert "queue_wait_ms" in body

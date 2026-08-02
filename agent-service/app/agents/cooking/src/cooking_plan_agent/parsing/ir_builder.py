@@ -153,6 +153,33 @@ def validate_recipe_ir_semantics(recipes: tuple[RecipeIR, ...]) -> RecipeValidat
     )
 
 
+def attach_research_assumptions(
+    recipes: tuple[RecipeIR, ...],
+    research_assumptions: tuple[Assumption, ...],
+) -> tuple[RecipeIR, ...]:
+    """Merge evidence-backed research assumptions into each RecipeIR (P1-01).
+
+    Research provenance must be traceable in the final assumption/response:
+    each applied evidence value produces an Assumption carrying EvidenceRef
+    entries (source title + URL). This helper attaches them to every recipe
+    so rendering surfaces them verbatim.
+
+    Args:
+        recipes: RecipeIR objects to enrich.
+        research_assumptions: Assumptions produced by the research evidence
+            application node. Empty tuple is a no-op.
+
+    Returns:
+        New RecipeIR tuple with the research assumptions appended (never
+        mutates the input recipes).
+    """
+    if not research_assumptions:
+        return recipes
+    return tuple(
+        recipe.model_copy(update={"assumptions": recipe.assumptions + research_assumptions}) for recipe in recipes
+    )
+
+
 # =============================================================================
 # Internal builders
 # =============================================================================

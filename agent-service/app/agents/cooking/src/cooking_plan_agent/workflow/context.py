@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         SafetyContext,
         SafetyReport,
     )
+    from cooking_plan_agent.infrastructure.cache import Cache
 
 
 # ---------------------------------------------------------------------------
@@ -81,5 +82,8 @@ class WorkflowContext:
     # safety_engine evaluates food safety constraints before scheduling.
     # When None (backwards-compat), validate_safety_node returns a safe stub.
     safety_engine: SafetyRuleEngine | None = None
+    # P1-06: intermediate-artifact cache (parse/research results). None keeps
+    # the pipeline fully uncached — results are identical either way.
+    cache: "Cache | None" = None
     # Future services (all optional until fully implemented):
     # optimiser: ScheduleOptimiser | None = None

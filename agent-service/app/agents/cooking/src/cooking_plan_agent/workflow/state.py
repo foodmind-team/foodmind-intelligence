@@ -7,6 +7,7 @@ for values at boundaries. Provider clients and secrets are NOT stored here.
 from typing import TypedDict
 
 from cooking_plan_agent.domain.models import (
+    Assumption,
     ConfirmationPlanResponse,
     CookingTask,
     ExtractedRecipeCandidate,
@@ -45,6 +46,9 @@ class PlanState(TypedDict, total=False):
     evidence: tuple[dict[str, object], ...]
     # Per-gap reconciled research results (keyed by gap_id for traceability)
     research_evidence: dict[str, ReconciledEvidence]
+    # Evidence-backed assumptions produced by apply_research_evidence_node
+    # (P1-01). Merged into RecipeIR.assumptions so provenance is traceable.
+    research_assumptions: tuple[Assumption, ...]
 
     # --- Validation ---
     parsed_recipes: tuple[RecipeIR, ...]

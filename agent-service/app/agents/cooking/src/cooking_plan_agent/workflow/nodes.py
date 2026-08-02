@@ -91,8 +91,7 @@ async def validate_input_node(
             "error": WorkflowError(
                 error_code=DomainErrorCode.TOO_MANY_RECIPES.value,
                 message=(
-                    f"Request contains {len(request.recipes)} recipes, "
-                    f"max allowed is {settings.max_recipe_count}"
+                    f"Request contains {len(request.recipes)} recipes, max allowed is {settings.max_recipe_count}"
                 ),
                 correlation_id=request.request_id,
                 node_name="validate_input",
@@ -224,8 +223,17 @@ async def parse_recipes_node(
 
     Uses the RecipeExtractor from WorkflowContext (rule-based or LLM-backed).
     Each recipe in the request is individually extracted, then aggregated.
+
+    P1-02: multi-recipe extraction runs via ``asyncio.gather`` capped by a
+    configurable Semaphore (llm_max_concurrency) and bounded by an overall
+    envelope timeout (llm_overall_timeout_seconds) so a single request
+    cannot exhaust provider quota or hang the event loop.
     Falls back to rule-based extraction if no extractor is configured.
     """
+    import asyncio
+
+    from cooking_plan_agent.config.settings import get_settings
+
     request = state["request"]
 
     # Compat layer injects pre-parsed structured candidates (snapshots).
@@ -235,25 +243,59 @@ async def parse_recipes_node(
         return {"extracted_candidates": request.preparsed_candidates}
 
     extractor = runtime.context.recipe_extractor
+    settings = get_settings()
 
     candidates: list[ExtractedRecipeCandidate] = []
 
     if extractor is not None:
         # Use configured extractor (LLM or rule-based from WorkflowContext)
-        for recipe in request.recipes:
-            try:
-                if recipe.text:
-                    candidate = await extractor.extract(recipe.text)
-                    candidates.append(candidate)
-            except Exception as exc:  # noqa: BLE001 — per-node error → error state
-                return {
-                    "error": WorkflowError(
-                        error_code=DomainErrorCode.EXTERNAL_PROVIDER_UNAVAILABLE.value,
-                        message=f"Recipe extraction failed: {exc}",
-                        correlation_id=request.request_id,
-                        node_name="parse_recipes",
-                    )
-                }
+        semaphore = asyncio.Semaphore(max(1, settings.llm_max_concurrency))
+        # P1-06 cache is optional — getattr keeps duck-typed contexts working.
+        cache = getattr(runtime.context, "cache", None)
+
+        async def _extract_one(text: str) -> ExtractedRecipeCandidate:
+            async with semaphore:
+                if cache is None:
+                    return await extractor.extract(text)
+                # P1-06: reuse stable parse artifacts. Key includes text hash,
+                # parser type, model, prompt version, language, schema version
+                # so model/prompt upgrades invalidate old entries.
+                from typing import cast
+
+                from cooking_plan_agent.infrastructure.cache import build_parse_cache_key
+                from cooking_plan_agent.llm.extractor import PARSE_PROMPT_VERSION
+
+                key = build_parse_cache_key(
+                    text,
+                    parser_type=type(extractor).__name__,
+                    model=settings.llm_model,
+                    prompt_version=PARSE_PROMPT_VERSION,
+                    schema_version=request.schema_version,
+                )
+                value = await cache.get_or_compute(
+                    key,
+                    settings.cache_ttl_seconds,
+                    lambda: extractor.extract(text),
+                )
+                return cast(ExtractedRecipeCandidate, value)
+
+        try:
+            # Bound the whole batch: a slow provider must not hold the request
+            # open beyond llm_overall_timeout_seconds.
+            extracted = await asyncio.wait_for(
+                asyncio.gather(*(_extract_one(r.text) for r in request.recipes if r.text)),
+                timeout=settings.llm_overall_timeout_seconds,
+            )
+            candidates = list(extracted)
+        except Exception as exc:  # noqa: BLE001 — per-node error → error state
+            return {
+                "error": WorkflowError(
+                    error_code=DomainErrorCode.EXTERNAL_PROVIDER_UNAVAILABLE.value,
+                    message=f"Recipe extraction failed: {exc}",
+                    correlation_id=request.request_id,
+                    node_name="parse_recipes",
+                )
+            }
     else:
         # No extractor configured — use built-in rule-based extractor
         from cooking_plan_agent.parsing.extractor import RecipeExtractor as RuleExtractor
@@ -379,54 +421,149 @@ async def research_missing_node(
     # Resolve each gap (handbook 10.9: at most 2 queries per dish)
     # For MVP, we use the Researcher directly rather than the Protocol
     # since the Protocol's research() signature returns list[EvidenceResult]
+    from cooking_plan_agent.config.settings import get_settings
     from cooking_plan_agent.domain.models import ReconciledEvidence
+    from cooking_plan_agent.infrastructure.cache import (
+        RESEARCH_SAFETY_POLICY_VERSION,
+        _stable_digest,
+        build_research_cache_key,
+    )
+    from cooking_plan_agent.research.query_builder import build_minimal_query
     from cooking_plan_agent.research.researcher import Researcher
 
-    research_evidence: dict[str, ReconciledEvidence] = {}
+    settings = get_settings()
+    # P1-06 cache is optional — getattr keeps duck-typed contexts working.
+    cache = getattr(runtime.context, "cache", None)
 
-    if isinstance(researcher, Researcher):
-        for gap in researchable_gaps[:2]:  # At most 2 queries (handbook 10.9)
-            try:
-                reconciled = await researcher.resolve_gap(gap, dish_name)
-                research_evidence[gap.gap_id] = reconciled
-            except Exception:  # noqa: BLE001 — any failure → confirmation, not unsafe guess
-                # Search failure routes to confirmation (handbook 10.9)
-                research_evidence[gap.gap_id] = ReconciledEvidence(
-                    source_count=0,
-                    needs_confirmation=True,
-                )
-    else:
-        # Non-Researcher RecipeResearcher — fallback to Protocol's research()
-        for gap in researchable_gaps[:2]:
-            from cooking_plan_agent.domain.models import EvidenceQuery
-            from cooking_plan_agent.research.query_builder import build_minimal_query
+    # P1-06 research cache key: query + provider tag + allow-list + safety
+    # policy version (+ model for LLM-backed researchers).
+    allow_list_fingerprint = _stable_digest(*sorted(set(settings.allowed_research_domains)))
+    provider_tag = type(researcher).__name__
+    model_tag = settings.llm_model
 
-            query_text = build_minimal_query(gap, dish_name)
-            query = EvidenceQuery(
-                query_text=query_text,
-                gap_type=gap.gap_class,
-                recipe_context=dish_name,
-            )
+    async def _resolve_uncached(gap: object, query_text: str) -> ReconciledEvidence:
+        if isinstance(researcher, Researcher):
             try:
-                results = await researcher.research(query)
-                if results:
-                    # Map results to ReconciledEvidence as best-effort
-                    research_evidence[gap.gap_id] = ReconciledEvidence(
-                        source_count=len(results),
-                        needs_confirmation=False,
-                    )
-                else:
-                    research_evidence[gap.gap_id] = ReconciledEvidence(
-                        source_count=0,
-                        needs_confirmation=True,
-                    )
+                return await researcher.resolve_gap(gap, dish_name)  # type: ignore[arg-type]
             except Exception:  # noqa: BLE001 — any failure → confirmation
-                research_evidence[gap.gap_id] = ReconciledEvidence(
-                    source_count=0,
-                    needs_confirmation=True,
-                )
+                return ReconciledEvidence(source_count=0, needs_confirmation=True)
+        # Non-Researcher RecipeResearcher — Protocol research() path.
+        from cooking_plan_agent.domain.models import EvidenceQuery
+
+        query = EvidenceQuery(
+            query_text=query_text,
+            gap_type=gap.gap_class,  # type: ignore[attr-defined]
+            recipe_context=dish_name,
+        )
+        try:
+            results = await researcher.research(query)
+            if results:
+                return ReconciledEvidence(source_count=len(results), needs_confirmation=False)
+            return ReconciledEvidence(source_count=0, needs_confirmation=True)
+        except Exception:  # noqa: BLE001 — any failure → confirmation
+            return ReconciledEvidence(source_count=0, needs_confirmation=True)
+
+    async def _resolve(gap: object) -> ReconciledEvidence:
+        query_text = build_minimal_query(gap, dish_name)  # type: ignore[arg-type]
+        if cache is None:
+            return await _resolve_uncached(gap, query_text)
+        key = build_research_cache_key(
+            query_text,
+            provider_tag=provider_tag,
+            allow_list_fingerprint=allow_list_fingerprint,
+            safety_policy_version=RESEARCH_SAFETY_POLICY_VERSION,
+            model=model_tag,
+        )
+        value = await cache.get_or_compute(
+            key,
+            settings.cache_ttl_seconds,
+            lambda: _resolve_uncached(gap, query_text),
+        )
+        from typing import cast
+
+        return cast(ReconciledEvidence, value)
+
+    research_evidence: dict[str, ReconciledEvidence] = {}
+    for gap in researchable_gaps[:2]:  # At most 2 queries (handbook 10.9)
+        research_evidence[gap.gap_id] = await _resolve(gap)
 
     return {"research_evidence": research_evidence}
+
+
+async def apply_research_evidence_node(
+    state: PlanState,
+    runtime: Runtime[WorkflowContext],
+) -> dict[str, object]:
+    """Write reconciled research evidence back into candidates (P1-01).
+
+    Sits between ``research_missing`` and IR validation so search results
+    actually update the plan — research is no longer a write-only bypass.
+
+    For each gap with evidence:
+      1. Locates the exact target via ``gap_id + recipe_id + field_path``
+         (never by list position).
+      2. Applies reliable values (heat / duration / temperature) to the
+         candidate step and records an EvidenceRef-backed Assumption.
+      3. Marks the gap resolved; only unresolved gaps stay in state.
+
+    Anything that cannot be safely auto-applied — no source, disagreement,
+    field-location failure, or a safety-critical temperature without a
+    verifiable URL — sets ``needs_confirmation`` so routing surfaces the
+    user confirmation instead of silently guessing (P1-01 rules 5 & 6).
+    """
+    from cooking_plan_agent.research.evidence_apply import apply_evidence_to_candidate
+
+    research_evidence = state.get("research_evidence", {})
+    if not research_evidence:
+        # No research ran — leave gaps untouched; downstream routing handles them.
+        return {}
+
+    candidates = list(state.get("extracted_candidates", ()))
+    gaps = state.get("gaps", ())
+
+    applied_gap_ids: set[str] = set()
+    assumptions: list[Assumption] = []
+    needs_confirmation = False
+
+    for gap in gaps:
+        reconciled = research_evidence.get(gap.gap_id)
+        if reconciled is None:
+            # Gap not targeted by research — stays unresolved.
+            continue
+
+        # Locate the recipe by stable recipe_id, never by list position.
+        candidate_idx = next(
+            (i for i, candidate in enumerate(candidates) if candidate.recipe_id == gap.recipe_id),
+            None,
+        )
+        if candidate_idx is None:
+            needs_confirmation = True  # recipe-level location failure
+            continue
+
+        result = apply_evidence_to_candidate(candidates[candidate_idx], gap, reconciled)
+        if result.applied and result.candidate is not None:
+            candidates[candidate_idx] = result.candidate
+            applied_gap_ids.add(gap.gap_id)
+            if result.assumption is not None:
+                assumptions.append(result.assumption)
+            # Even applied values that came from conflicting evidence (MAD
+            # over threshold) must surface for user confirmation — never
+            # silently adopt a disputed value (P1-01 rule 5).
+            if reconciled.needs_confirmation:
+                needs_confirmation = True
+        else:
+            needs_confirmation = needs_confirmation or result.needs_confirmation
+
+    remaining_gaps = tuple(g for g in gaps if g.gap_id not in applied_gap_ids)
+    if any(g.gap_class in ("critical", "safety_critical") for g in remaining_gaps):
+        needs_confirmation = True
+
+    return {
+        "extracted_candidates": tuple(candidates),
+        "gaps": remaining_gaps,
+        "research_assumptions": tuple(assumptions),
+        "needs_confirmation": needs_confirmation,
+    }
 
 
 async def validate_recipe_ir_node(
@@ -443,6 +580,7 @@ async def validate_recipe_ir_node(
     that will be routed to FAILED terminal.
     """
     from cooking_plan_agent.parsing.ir_builder import (
+        attach_research_assumptions,
         build_recipe_ir,
         validate_recipe_ir_semantics,
     )
@@ -493,6 +631,10 @@ async def validate_recipe_ir_node(
         from cooking_plan_agent.repair.options import apply_ingredient_substitutions_patch
 
         recipes = list(apply_ingredient_substitutions_patch(tuple(recipes), request.approved_decisions))
+
+    # P1-01: attach evidence-backed research assumptions so provenance is
+    # traceable in the final assumption/response.
+    recipes = list(attach_research_assumptions(tuple(recipes), state.get("research_assumptions", ())))
 
     # Semantic validation
     report = validate_recipe_ir_semantics(tuple(recipes))
@@ -718,9 +860,7 @@ async def merge_preparation_node(
             if after_last is not None:
                 # raw task → sanitise task
                 deps.append(TaskDependency(predecessor_id=after_last))
-            resources = tuple(
-                ResourceNeed(quantity=1, resource_type=r) for r in insertion.required_resources
-            )
+            resources = tuple(ResourceNeed(quantity=1, resource_type=r) for r in insertion.required_resources)
             task = CookingTask(
                 task_id=task_id,
                 dish_id=insertion.recipe_id,
@@ -739,9 +879,7 @@ async def merge_preparation_node(
                 rte_task = next((t for t in all_recipe_tasks if t.task_id == before_first), None)
                 if rte_task is not None:
                     rte_dep = TaskDependency(predecessor_id=task_id)
-                    updated = rte_task.model_copy(
-                        update={"dependencies": rte_task.dependencies + (rte_dep,)}
-                    )
+                    updated = rte_task.model_copy(update={"dependencies": rte_task.dependencies + (rte_dep,)})
                     for idx, t in enumerate(all_recipe_tasks):
                         if t.task_id == before_first:
                             all_recipe_tasks[idx] = updated
@@ -822,43 +960,93 @@ async def solve_schedule_node(
     schedule() returns tuple[ScheduleResult, VerificationReport] — we store
     only the result; verification is done independently in verify_schedule_node.
 
-    Lazy-imports inside the function avoid coupling to OR-Tools at import time
-    (OR-Tools is a heavy C++ dependency).
+    Error semantics (P1-04): ``SCHEDULE_INFEASIBLE`` means ONLY that the
+    solver proved no solution exists for a VALID model. Everything else uses
+    a distinct code:
+      - MODEL_INVALID → SCHEDULE_MODEL_INVALID (model construction bug)
+      - UNKNOWN       → SCHEDULE_UNKNOWN (solver hit its limit, undetermined)
+      - missing task graph → INTERNAL_ERROR (invariant break, never INFEASIBLE)
+      - ValueError/TypeError during solve → SCHEDULE_MODEL_INVALID
+      - RuntimeError from the solver → INTERNAL_ERROR
     """
+    import asyncio
+
+    from cooking_plan_agent.domain.enums import SolverStatus
     from cooking_plan_agent.scheduling.models import SchedulingProblem
     from cooking_plan_agent.scheduling.orchestrator import schedule as solve_schedule_fn
 
     task_graph = state.get("task_graph")
+    request = state["request"]
     if task_graph is None:
+        # Missing DAG is an internal invariant failure, not a business
+        # infeasibility — solve must never run without a task graph.
         return {
             "error": WorkflowError(
-                error_code=DomainErrorCode.SCHEDULE_INFEASIBLE.value,
-                message="No task graph available for scheduling",
-                correlation_id=state["request"].request_id,
+                error_code=DomainErrorCode.INTERNAL_ERROR.value,
+                message="No task graph available for scheduling — internal invariant violated",
+                correlation_id=request.request_id,
                 node_name="solve_schedule",
             )
         }
 
     problem = SchedulingProblem(
         tasks=task_graph.tasks,
-        resources=state["request"].kitchen_resources,
-        requested_time_limit_minutes=state["request"].time_limit_minutes,
+        resources=request.kitchen_resources,
+        requested_time_limit_minutes=request.time_limit_minutes,
         solver_timeout_seconds=_solver_timeout(),
     )
 
     try:
-        # schedule() returns (ScheduleResult, VerificationReport)
-        result, _ = solve_schedule_fn(problem)
-        return {"schedule_result": result}
-    except (ValueError, TypeError, RuntimeError) as exc:
+        # CP-SAT solving is CPU-bound — run it in a worker thread so the
+        # event loop stays responsive (P1-02). The verifier is synchronous
+        # and stays inside the solve call; it is not moved to a thread.
+        result, _ = await asyncio.to_thread(solve_schedule_fn, problem)
+    except (ValueError, TypeError) as exc:
+        # Model-construction phase: bad variable shapes, contradictory
+        # constraints → the model was never valid.
         return {
             "error": WorkflowError(
-                error_code=DomainErrorCode.SCHEDULE_INFEASIBLE.value,
-                message=str(exc),
-                correlation_id=state["request"].request_id,
+                error_code=DomainErrorCode.SCHEDULE_MODEL_INVALID.value,
+                message=f"Scheduling model construction failed: {exc}",
+                correlation_id=request.request_id,
                 node_name="solve_schedule",
             )
         }
+    except RuntimeError as exc:
+        # Solver-internal failure (runtime) — not a business outcome.
+        return {
+            "error": WorkflowError(
+                error_code=DomainErrorCode.INTERNAL_ERROR.value,
+                message=f"Scheduling solver failed: {exc}",
+                correlation_id=request.request_id,
+                node_name="solve_schedule",
+            )
+        }
+
+    # Map solver status to a stable, distinct error code. Only INFEASIBLE is a
+    # business outcome (routes to render_infeasible_response); MODEL_INVALID
+    # and UNKNOWN are FAILED responses (P1-04).
+    status = result.status
+    if status == SolverStatus.MODEL_INVALID:
+        return {
+            "error": WorkflowError(
+                error_code=DomainErrorCode.SCHEDULE_MODEL_INVALID.value,
+                message="The scheduling model is invalid — likely a data inconsistency",
+                correlation_id=request.request_id,
+                node_name="solve_schedule",
+            )
+        }
+    if status == SolverStatus.UNKNOWN:
+        return {
+            "error": WorkflowError(
+                error_code=DomainErrorCode.SCHEDULE_UNKNOWN.value,
+                message="The solver could not determine feasibility within the time limit",
+                correlation_id=request.request_id,
+                node_name="solve_schedule",
+            )
+        }
+
+    return {"schedule_result": result}
 
 
 async def verify_schedule_node(

@@ -134,10 +134,14 @@ class FakeSearchProvider:
         self,
         query: str,
         max_results: int = 3,
+        *,
+        include_domains: tuple[str, ...] = (),
     ) -> tuple[SearchDocument, ...]:
         """Return matching fixtures, capped at max_results.
 
         Simple keyword matching: document title/snippet contains any query word.
+        ``include_domains`` is accepted for Protocol compatibility (P1-05) but
+        ignored — the fake fixtures are pre-curated for CI.
         """
         query_lower = query.lower()
         matched: list[SearchDocument] = []
