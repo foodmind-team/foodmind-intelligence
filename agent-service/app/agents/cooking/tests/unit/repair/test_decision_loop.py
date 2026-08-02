@@ -272,6 +272,38 @@ class TestDecisionLoop:
         assert isinstance(response, ReadyPlanResponse), f"expected READY, got {type(response).__name__}"
 
     @pytest.mark.asyncio
+    async def test_reduce_servings_uses_requested_servings_base(self, graph, context) -> None:
+        """回归：削减份量选项须基于用户请求份量（4 人份 → from 4 to 2），而非固定 2。"""
+        # 4 人份需求：chicken 400g / peanut 100g；库存 chicken 200g(50%)、peanut 100g(足)。
+        request = _base_request(
+            recipes=({"recipe_id": "recipe-1", "text": "Cook chicken with peanuts.", "target_servings": 4},),
+            inventory_lots=(
+                InventoryLotSnapshot(
+                    lot_id="lot-1",
+                    item_id="chicken",
+                    canonical_name="chicken breast",
+                    on_hand=Decimal(200),
+                    reserved=Decimal(0),
+                    unit="g",
+                ),
+                InventoryLotSnapshot(
+                    lot_id="lot-peanut",
+                    item_id="peanut",
+                    canonical_name="peanut",
+                    on_hand=Decimal(100),
+                    reserved=Decimal(0),
+                    unit="g",
+                ),
+            ),
+        )
+        result = await graph.ainvoke({"request": request}, context=context, config={"recursion_limit": 30})
+        response = result.get("response")
+        assert isinstance(response, ConfirmationPlanResponse), f"got {type(response).__name__}"
+        reduce_opts = [o for o in response.repair_options if o.option_type == "reduce_servings"]
+        assert reduce_opts, "确认响应必须包含削减份量选项"
+        assert "from 4 to 2" in reduce_opts[0].description, reduce_opts[0].description
+
+    @pytest.mark.asyncio
     async def test_extend_time_loop(self, graph, context) -> None:
         """extend_time resolves an infeasible makespan → READY."""
         request = _base_request(time_limit_minutes=5)  # too tight

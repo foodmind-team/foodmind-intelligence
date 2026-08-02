@@ -228,6 +228,38 @@ class TestProposePortionAdjustments:
         # 25% of 4 servings = 1 serving
         assert "to 1" in options[0].description or "from 4 to 1" in options[0].description
 
+    def test_decimal_servings_base(self):
+        """小数份量基准：original_servings 支持 Decimal（如 3.5 人份）。"""
+        shortages = (
+            IngredientFeasibility(
+                ingredient_name="chicken breast",
+                required=Decimal(400),
+                available=Decimal(200),  # 50%
+                shortage=Decimal(200),
+                unit="g",
+            ),
+        )
+        options = propose_portion_adjustments(shortages, original_servings=Decimal("3.5"))
+        assert len(options) == 1
+        # 50% of 3.5 = 1.75 → ROUND_HALF_EVEN 取整为 2
+        assert "from 3.5 to 2" in options[0].description
+        assert options[0].option_type == "reduce_servings"
+
+    def test_servings_base_matches_requested(self):
+        """回归：基准份量必须来自调用方（4 人份 → 50% 短缺 → from 4 to 2）。"""
+        shortages = (
+            IngredientFeasibility(
+                ingredient_name="chicken breast",
+                required=Decimal(400),
+                available=Decimal(200),
+                shortage=Decimal(200),
+                unit="g",
+            ),
+        )
+        options = propose_portion_adjustments(shortages, original_servings=4)
+        assert len(options) == 1
+        assert "from 4 to 2" in options[0].description
+
 
 # ======================================================================
 # 5.20  propose_equipment_alternatives
