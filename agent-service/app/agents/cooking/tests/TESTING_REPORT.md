@@ -2,7 +2,7 @@
 
 > **Handbook Chapter 11：Testing, Security, and Quality**
 >
-> 执行日期：2026-07-31 | 状态：✅ 全部通过 | 覆盖率：**88%**
+> 执行日期：2026-08-02 | 状态：✅ 全部通过 | 覆盖率：**88%**
 
 ---
 
@@ -11,11 +11,11 @@
 ```mermaid
 flowchart TD
     subgraph "测试层级金字塔"
-        UAT["🎯 UAT 场景<br/>11 tests<br/>30s"]
-        INT["🔗 集成测试<br/>workflow graph<br/>10s"]
-        SEC["🔒 安全测试<br/>53 tests<br/>0.6s"]
-        CON["📜 合约测试<br/>contract + OpenAPI<br/>0.3s"]
-        UNIT["🧩 单元测试<br/>domain / normalisation / preprocess<br/>preparation / scheduling / research<br/>365 tests"]
+        UAT["🎯 UAT 场景<br/>12 tests"]
+        INT["🔗 集成测试<br/>workflow graph<br/>6 tests"]
+        SEC["🔒 安全测试<br/>53 tests"]
+        CON["📜 合约测试<br/>contract + OpenAPI<br/>16 tests"]
+        UNIT["🧩 单元测试<br/>domain / normalisation / parsing<br/>scheduling / safety / repair ...<br/>584 tests"]
     end
     UNIT --> CON
     CON --> SEC
@@ -32,12 +32,12 @@ flowchart TD
 ```mermaid
 graph LR
     subgraph "7 大测试类别"
-        A["Domain 模型<br/>90 tests"] --> B["文本预处理<br/>44 tests"]
-        B --> C["单位转换<br/>48 tests"]
-        C --> D["分解/图/路径<br/>53 tests"]
-        D --> E["排程求解/验证<br/>80+ tests"]
-        E --> F["Web 研究<br/>24 tests"]
-        F --> G["API 合约/安全<br/>100+ tests"]
+        A["Domain 模型<br/>90 tests"] --> B["单位转换/归一化<br/>108 tests"]
+        B --> C["解析/预处理<br/>82 tests"]
+        C --> D["分解/图/路径<br/>49 tests"]
+        D --> E["排程求解/验证<br/>54 tests"]
+        E --> F["安全/库存/修复/渲染<br/>166 tests"]
+        F --> G["合约/安全/集成<br/>75 tests"]
     end
 
     style A fill:#e8f5e9
@@ -56,24 +56,32 @@ tests/
 ├── conftest.py                          # 根配置：Hypothesis profile + OR-Tools 日志静默
 ├── fixtures/__init__.py                 # 18 个共享工厂函数
 │
-├── unit/                                # ═══ 单元测试 (365 tests) ═══
+├── unit/                                # ═══ 单元测试 (584 tests) ═══
 │   ├── domain/test_models.py            #   90 — Pydantic 不变量 / 错误码 / 枚举
-│   ├── normalisation/test_units.py      #   48 — 分类器 / 转换器 / 缩放 / 错误层次
-│   ├── parsing/test_preprocess.py       #   44 — 解码 / 归一化 / 语言检测 / 管道
-│   ├── preparation/test_preparation.py  #   53 — 分解 / trie / DAG / 拓扑 / 关键路径
-│   ├── scheduling/test_scheduling.py    #   62 — 10 fixtures / 验证器 / 编排器
-│   ├── scheduling/test_golden.py        #    9 — 手算最优解 golden 案例
-│   ├── scheduling/test_mutations.py     #   10 — 破坏排程负向测试
-│   ├── research/test_research.py        #   24 — 9 研究场景 / 清理器 / 提取器
-│   ├── test_properties.py               #    8 — Hypothesis property-based
-│   └── test_health.py                   #    1 — 活跃度检查
+│   ├── normalisation/test_units.py      #    — 分类器 / 转换器 / 缩放 / 错误层次
+│   ├── normalisation/test_names.py      #  108 — 归一化 / 名称清理
+│   ├── parsing/test_preprocess.py       #    — 解码 / 归一化 / 语言检测 / 管道
+│   ├── parsing/test_parser_pipeline.py  #   82 — 管道级解析
+│   ├── preparation/test_preparation.py  #   49 — 分解 / trie / DAG / 拓扑 / 关键路径
+│   ├── scheduling/test_scheduling.py    #   54 — 10 fixtures / 验证器 / 编排器
+│   ├── scheduling/test_golden.py        #     — 手算最优解 golden 案例
+│   ├── scheduling/test_mutations.py     #     — 破坏排程负向测试
+│   ├── research/test_research.py        #   18 — 9 研究场景 / 清理器 / 提取器
+│   ├── safety/test_safety_engine.py     #   37 — 6 规则引擎 / 严重度
+│   ├── inventory/test_feasibility.py    #   51 — FEFO 分配 / 短缺检测
+│   ├── repair/test_options.py           #   40 — 修复方案 / 排序
+│   ├── rendering/test_rendering.py      #   38 — 时间线 / mise en place
+│   ├── llm/test_llm_adapters.py         #    7 — LLM 适配器
+│   ├── test_properties.py               #     — Hypothesis property-based
+│   └── test_health.py                   #   10 — 活跃度 / property 检查
 │
 ├── contract/test_api_contract.py        # ═══ 合约测试 (16 tests) ═══
 ├── integration/test_workflow_graph.py   # ═══ 集成测试 (6 tests) ═══
 ├── security/                            # ═══ 安全测试 (53 tests) ═══
 │   ├── test_dependencies.py             #   34 — 鉴权 / 关联 ID / 日志注入
 │   └── test_app_security.py             #   19 — NUL / 超大 / 注入 / SSRF
-└── uat/test_scenarios.py                # ═══ UAT 场景 (11 tests) ═══
+├── uat/test_scenarios.py                # ═══ UAT 场景 (12 tests) ═══
+└── smoke/test_docker_smoke.py           # ═══ 冒烟测试 (9 tests) ═══
 ```
 
 ---
@@ -206,6 +214,7 @@ def test_scaled_quantity_never_negative(quantity, original, target):
     result = scale_ingredient(demand, original, target)
     assert result.quantity >= 0  # → 永远成立
 
+
 # ---- 不变量 2：单位往返换算精确保持 ----
 @given(quantity=st.decimals(min_value="0.001", max_value=1000))
 @seed(20260731)
@@ -215,6 +224,7 @@ def test_unit_round_trip_preserves_quantity(quantity):
     back_to_g = conv.convert(in_kg, "kg", "g")
     assert back_to_g == quantity  # Decimal 精确算术
 
+
 # ---- 不变量 3：前缀树子节点数量守恒 ----
 @given(num_chains=st.integers(1, 5))
 @seed(20260731)
@@ -222,6 +232,7 @@ def test_prefix_tree_quantity_conservation(num_chains):
     # 构建共享 wash + 分支 cut 的前缀树
     # 验证：wash.quantity = Σ cut.quantity
     ...
+
 
 # ---- 不变量 4：拓扑排序包含每个节点恰好一次 ----
 @given(num_tasks=st.integers(2, 8))
@@ -336,7 +347,7 @@ flowchart TD
 
 ---
 
-## 5. UAT 业务场景测试（11 tests）
+## 5. UAT 业务场景测试（12 tests）
 
 > Handbook 11.9：10 个完整业务路径，每个验证一条业务规则
 
@@ -422,26 +433,33 @@ def test_excessive_task_count_resolved_in_time():
 ```mermaid
 xychart-beta
     title "模块覆盖率 (%)"
-    x-axis ["domain", "normalisation", "parsing", "preparation", "scheduling", "research", "api", "application", "config", "workflow"]
+    x-axis ["domain", "normalisation", "parsing", "api", "application", "config", "preparation", "scheduling", "research", "workflow", "safety", "inventory", "repair", "rendering", "llm"]
     y-axis "覆盖率 %" 0 --> 100
-    bar [100, 100, 100, 98, 96, 74, 100, 100, 100, 50]
+    bar [100, 93, 82, 85, 93, 100, 86, 97, 82, 78, 98, 98, 98, 94, 87]
 ```
 
 ### 覆盖率明细
 
+> 2026-08-02 实测（`pytest --cov=cooking_plan_agent --cov-report=term-missing`）
+
 | 模块 | 语句数 | 未覆盖 | 覆盖率 | 未覆盖原因 |
 |------|--------|--------|--------|-----------|
-| `domain/` | 217 | 0 | **100%** | — |
-| `normalisation/` | 94 | 0 | **100%** | — |
-| `parsing/` | 81 | 0 | **100%** | — |
-| `api/` | 48 | 0 | **100%** | — |
-| `application/` | 27 | 0 | **100%** | — |
-| `config/` | 18 | 0 | **100%** | — |
-| `preparation/` | 128 | 3 | **98%** | 防御性分支 |
-| `scheduling/` | 436 | 14 | **96%** | 边界 + 降级路径 |
-| `research/` | 304 | 67 | **74%** | Researcher 完整管道需 LLM |
-| `workflow/` | 241 | 118 | **50%** | STUB 节点待连线 |
-| **总计** | **1923** | **222** | **88%** | |
+| `domain/` | 319 | 0 | **100%** | — |
+| `config/` | 29 | 0 | **100%** | — |
+| `normalisation/` | 144 | 10 | **93%** | 名称别名边界 |
+| `parsing/` | 667 | 117 | **82%** | 中英文解析分支 / inference 降级路径 |
+| `api/` | 61 | 9 | **85%** | 异常处理器分支 |
+| `application/` | 28 | 2 | **93%** | 防御性 FAILED 回退 |
+| `preparation/` | 304 | 42 | **86%** | trie / task_graph 边界 |
+| `scheduling/` | 446 | 15 | **97%** | 边界 + 降级路径 |
+| `research/` | 338 | 61 | **82%** | Researcher 完整管道需 LLM |
+| `workflow/` | 381 | 83 | **78%** | research_missing / 错误路由分支 |
+| `safety/` | 226 | 4 | **98%** | 防御性分支 |
+| `inventory/` | 91 | 2 | **98%** | 防御性分支 |
+| `repair/` | 126 | 3 | **98%** | 防御性分支 |
+| `rendering/` | 187 | 12 | **94%** | 空结果分支 |
+| `llm/` | 193 | 26 | **87%** | 适配器错误路径 |
+| **总计** | **3682** | **425** | **88%** | |
 
 ---
 
@@ -457,9 +475,9 @@ flowchart LR
     end
 
     A -->|"0 errors"| PASS1["✅"]
-    B -->|"79 files formatted"| PASS2["✅"]
-    C -->|"type check"| PASS3["✅"]
-    D -->|"457 passed, 88%"| PASS4["✅"]
+    B -->|"122 files formatted"| PASS2["✅"]
+    C -->|"0 errors, strict"| PASS3["✅"]
+    D -->|"680 passed, 88%"| PASS4["✅"]
     E -->|"domain zero framework imports"| PASS5["✅"]
 
     style PASS1 fill:#4caf50,color:#fff
@@ -476,31 +494,38 @@ $ uv run ruff check .
 All checks passed!
 
 $ uv run ruff format --check .
-79 files already formatted
+122 files already formatted
+
+$ uv run mypy src
+Success: no issues found in 69 source files
 
 $ uv run pytest -q
-457 passed, 1 warning in 1.48s
+680 passed, 1 warning in ~25s
 
 $ uv run pytest --cov=cooking_plan_agent --cov-report=term-missing
-TOTAL  1923  222  88%
+TOTAL  3682  425  88%
+
+$ uv run pytest tests/contract tests/security -v
+69 passed
+
+$ uv run python scripts/export_openapi.py --check
+PASSED — all checks OK
 ```
 
 ---
 
 ## 9. 测试执行时间分布
 
+> 2026-08-02 实测（`pytest -q` 各目录，含启动开销）
+
 ```mermaid
-pie title 测试执行时间分布 (总计 ~1.5s)
-    "Domain 模型" : 0.09
-    "单位转换" : 0.03
-    "文本预处理" : 0.02
-    "分解/图/路径" : 0.03
-    "排程求解器 (含 CP-SAT)" : 0.35
-    "Web 研究 (fake provider)" : 0.05
-    "API 合约" : 0.30
-    "集成 (workflow graph)" : 0.15
-    "安全 (53 tests)" : 0.60
-    "UAT (11 scenarios)" : 0.05
+pie title 测试执行时间分布 (总计 ~26s)
+    "单元测试 (584 tests)" : 1.7
+    "合约测试 (16 tests)" : 13.5
+    "安全测试 (53 tests)" : 10.4
+    "集成测试 (6 tests)" : 0.8
+    "UAT (12 tests)" : 0.6
+    "冒烟测试 (9 tests)" : 0.9
 ```
 
 ---
@@ -509,14 +534,23 @@ pie title 测试执行时间分布 (总计 ~1.5s)
 
 | 指标 | 数值 |
 |------|------|
-| 总测试数 | **457** |
-| 全部通过 | ✅ 457/457 |
+| 总测试数 | **680** |
+| 全部通过 | ✅ 680/680 |
 | 失败数 | 0 |
 | 代码覆盖率 | **88%** |
-| 新增测试文件 | 7 |
+| Mypy strict | ✅ 0 errors |
 | 测试目录重组 | ✅ 按 Handbook 11.1 分层 |
-| CI 闸门 | ruff ✅ / format ✅ / pytest ✅ |
+| CI 闸门 | ruff ✅ / format ✅ / mypy ✅ / pytest ✅ / OpenAPI ✅ |
 | 确定性与离线 | ✅ 无外网 + 固定 Hypothesis seed |
 | Verifier 完整性 | ✅ 拒绝全部 10 种破坏 |
-| UAT 场景 | ✅ 10/10 全覆盖 |
+| UAT 场景 | ✅ 12/12 全覆盖 |
+| Happy path 断言 | ✅ graph 级用例明确断言 READY |
 | 安全边界 | ✅ NUL / 注入 / SSRF / 密钥不泄 |
+
+### 已知限制
+
+- `research/researcher.py`（53%）与 `workflow/nodes.py` 的 research_missing 分支需要 LLM/真实搜索方可覆盖完整管道。
+- `api/errors.py` 异常处理器的兜底分支（generic_exception_handler）仅在未预期异常时执行，默认不覆盖。
+- `parsing/inference.py`（61%）的本地推理降级路径较多，仍有未覆盖分支。
+- 合约与安全测试耗时偏高（约 24s），其中 OpenAPI 导出与鉴权矩阵占主要部分，属正常非性能问题。
+- 冒烟测试使用 TestClient 直接验证应用工厂、健康检查与内部鉴权，不依赖 Docker 镜像。

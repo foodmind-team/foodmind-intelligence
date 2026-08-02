@@ -157,8 +157,9 @@ class TestGapDetection:
         gaps = find_recipe_gaps(candidate)
 
         result = infer_local(candidate, gaps)
-        unresolved_critical = [g for g in result.unresolved_gaps
-                               if g.gap_class in (GapClass.CRITICAL, GapClass.SAFETY_CRITICAL)]
+        unresolved_critical = [
+            g for g in result.unresolved_gaps if g.gap_class in (GapClass.CRITICAL, GapClass.SAFETY_CRITICAL)
+        ]
         assert len(unresolved_critical) == 0, (
             f"Unresolved critical gaps: {[g.description for g in unresolved_critical]}"
         )
@@ -193,8 +194,13 @@ class TestGapDetection:
         candidate = await extractor.extract(GOLDEN_FIXTURES["rib_soup"])
         gaps = find_recipe_gaps(candidate)
 
-        valid = {GapClass.CRITICAL, GapClass.SAFETY_CRITICAL,
-                 GapClass.RESOURCE_CRITICAL, GapClass.OPTIMISATION, GapClass.COSMETIC}
+        valid = {
+            GapClass.CRITICAL,
+            GapClass.SAFETY_CRITICAL,
+            GapClass.RESOURCE_CRITICAL,
+            GapClass.OPTIMISATION,
+            GapClass.COSMETIC,
+        }
         for gap in gaps:
             assert gap.gap_class in valid, f"Invalid gap class: {gap.gap_class}"
 
@@ -234,8 +240,7 @@ class TestLocalInference:
         extractor = RecipeExtractor()
         candidate = await extractor.extract(GOLDEN_FIXTURES["crab_legs"])
         all_gaps = find_recipe_gaps(candidate)
-        non_critical = tuple(g for g in all_gaps
-                             if g.gap_class not in (GapClass.CRITICAL, GapClass.SAFETY_CRITICAL))
+        non_critical = tuple(g for g in all_gaps if g.gap_class not in (GapClass.CRITICAL, GapClass.SAFETY_CRITICAL))
 
         result = infer_local(candidate, non_critical)
         assert len(result.filled_gaps) == 0
@@ -250,9 +255,7 @@ class TestLocalInference:
         result = infer_local(candidate, gaps)
         for gap in result.filled_gaps:
             if gap.gap_class == GapClass.SAFETY_CRITICAL:
-                assert gap.confidence <= Decimal("0.5"), (
-                    f"Safety-critical gap should have low confidence: {gap}"
-                )
+                assert gap.confidence <= Decimal("0.5"), f"Safety-critical gap should have low confidence: {gap}"
 
 
 # =============================================================================
@@ -389,7 +392,6 @@ class TestParserPipeline:
             recipe_ir = build_recipe_ir(updated)
             report = validate_recipe_ir_semantics((recipe_ir,))
 
-            assert report.passed, (
-                f"Fixture '{name}' failed validation:\n"
-                + "\n".join(f"  [{i.severity}] {i.message}" for i in report.issues)
+            assert report.passed, f"Fixture '{name}' failed validation:\n" + "\n".join(
+                f"  [{i.severity}] {i.message}" for i in report.issues
             )

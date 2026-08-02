@@ -39,7 +39,11 @@ class GenerateCookingPlanService:
     individual nodes.
     """
 
-    def __init__(self, graph: CompiledStateGraph, context: WorkflowContext) -> None:
+    def __init__(
+        self,
+        graph: CompiledStateGraph[PlanState, WorkflowContext],
+        context: WorkflowContext,
+    ) -> None:
         """Initialise the service with a compiled graph and immutable context.
 
         Args:
@@ -75,10 +79,10 @@ class GenerateCookingPlanService:
         )
 
         response = result.get("response")
-        if response is None:
-            # Graph reached END without setting a response — defensive fallback.
+        if not isinstance(response, PlanResponse):
+            # Graph reached END without a valid terminal response — defensive fallback.
             logger.error(
-                "Graph completed without a response field | request_id=%s | state_keys=%s",
+                "Graph completed without a valid response field | request_id=%s | state_keys=%s",
                 request.request_id,
                 list(result.keys()),
             )

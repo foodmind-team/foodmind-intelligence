@@ -25,6 +25,7 @@ def _set_env() -> None:
     os.environ["COOKING_PLAN_INTERNAL_SERVICE_TOKEN"] = _TEST_TOKEN
     # Clear lru_cache so get_settings() reads the updated env var
     from cooking_plan_agent.config.settings import get_settings
+
     get_settings.cache_clear()
 
 

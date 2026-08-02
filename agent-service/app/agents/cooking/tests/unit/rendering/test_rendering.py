@@ -47,9 +47,15 @@ from cooking_plan_agent.workflow.state import PlanState
 # ======================================================================
 
 
-def _make_task(task_id: str, dish_id: str, instruction: str, duration: int,
-               category: str = "general", work_mode: WorkMode = WorkMode.ACTIVE,
-               resources: tuple = ()) -> CookingTask:
+def _make_task(
+    task_id: str,
+    dish_id: str,
+    instruction: str,
+    duration: int,
+    category: str = "general",
+    work_mode: WorkMode = WorkMode.ACTIVE,
+    resources: tuple = (),
+) -> CookingTask:
     return CookingTask(
         task_id=task_id,
         dish_id=dish_id,
@@ -61,9 +67,9 @@ def _make_task(task_id: str, dish_id: str, instruction: str, duration: int,
     )
 
 
-def _make_prep_task(task_id: str, instruction: str, duration: int,
-                    consumes: tuple[str, ...] = (),
-                    produces: tuple[str, ...] = ()) -> CookingTask:
+def _make_prep_task(
+    task_id: str, instruction: str, duration: int, consumes: tuple[str, ...] = (), produces: tuple[str, ...] = ()
+) -> CookingTask:
     return CookingTask(
         task_id=task_id,
         dish_id="shared",
@@ -120,13 +126,15 @@ def sample_schedule(sample_intervals):
 @pytest.fixture
 def prep_tasks():
     return (
-        _make_prep_task("p1", "[Prep] wash 500.0 of chicken breast", 3,
-                         produces=("chicken:washed:shared",)),
-        _make_prep_task("p2", "[Prep] dice 500.0 of chicken breast", 5,
-                         consumes=("chicken:washed:shared",),
-                         produces=("chicken:diced:shared",)),
-        _make_prep_task("p3", "[Prep] wash 300.0 of tomato", 2,
-                         produces=("tomato:washed:shared",)),
+        _make_prep_task("p1", "[Prep] wash 500.0 of chicken breast", 3, produces=("chicken:washed:shared",)),
+        _make_prep_task(
+            "p2",
+            "[Prep] dice 500.0 of chicken breast",
+            5,
+            consumes=("chicken:washed:shared",),
+            produces=("chicken:diced:shared",),
+        ),
+        _make_prep_task("p3", "[Prep] wash 300.0 of tomato", 2, produces=("tomato:washed:shared",)),
     )
 
 
@@ -321,9 +329,7 @@ class TestValidateCompletionChecklist:
                 completion_item_id="comp-1",
                 ingredient_name="test",
                 recipe_ids=(),
-                allocations=(
-                    LotAllocation(inventory_lot_id="", quantity=Decimal(1), unit="g"),
-                ),
+                allocations=(LotAllocation(inventory_lot_id="", quantity=Decimal(1), unit="g"),),
             ),
         )
         issues = validate_completion_checklist(sample_proposal, bad)
@@ -364,6 +370,7 @@ class TestRenderReadyResponse:
         )
         # Manually inject task_graph since render_ready uses it
         from cooking_plan_agent.preparation.task_graph import TaskGraph
+
         state["task_graph"] = TaskGraph(tasks=all_tasks, edges=())
 
         response = render_ready_response(state)
@@ -392,9 +399,7 @@ class TestRenderReadyResponse:
                     available=Decimal(400),
                     shortage=Decimal(0),
                     unit="g",
-                    proposed_allocations=(
-                        LotAllocation(inventory_lot_id="lot-001", quantity=Decimal(400), unit="g"),
-                    ),
+                    proposed_allocations=(LotAllocation(inventory_lot_id="lot-001", quantity=Decimal(400), unit="g"),),
                 ),
             ),
             is_feasible=True,
@@ -520,15 +525,25 @@ class TestRenderFailedResponse:
 class TestValidateTerminalResponse:
     def test_valid_ready(self):
         r = ReadyPlanResponse(
-            plan_id="p1", solver_status="OPTIMAL", makespan_minutes=30,
-            timeline=(), completion_checklist=(), mise_en_place=(), dish_completions=(),
+            plan_id="p1",
+            solver_status="OPTIMAL",
+            makespan_minutes=30,
+            timeline=(),
+            completion_checklist=(),
+            mise_en_place=(),
+            dish_completions=(),
         )
         assert validate_terminal_response(r) is r
 
     def test_ready_negative_makespan(self):
         r = ReadyPlanResponse(
-            plan_id="p1", solver_status="OPTIMAL", makespan_minutes=0,
-            timeline=(), completion_checklist=(), mise_en_place=(), dish_completions=(),
+            plan_id="p1",
+            solver_status="OPTIMAL",
+            makespan_minutes=0,
+            timeline=(),
+            completion_checklist=(),
+            mise_en_place=(),
+            dish_completions=(),
         )
         with pytest.raises(ValueError, match="makespan"):
             validate_terminal_response(r)
@@ -556,7 +571,9 @@ class TestValidateTerminalResponse:
 
     def test_valid_failed(self):
         r = FailedPlanResponse(
-            error_code="ERR", correlation_id="c1", message="fail",
+            error_code="ERR",
+            correlation_id="c1",
+            message="fail",
         )
         assert validate_terminal_response(r) is r
 

@@ -51,5 +51,7 @@ class Settings(BaseSettings):
 
 
 @lru_cache
-def get_settings():
-    return Settings()
+def get_settings() -> Settings:
+    # model_validate({}) keeps mypy happy (internal_service_token has no
+    # default) while still reading all COOKING_PLAN_* env sources.
+    return Settings.model_validate({})

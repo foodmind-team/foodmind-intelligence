@@ -15,3 +15,6 @@ wheels/
 
 # Project rules (local only, not for remote)
 .trae/
+
+# Development plans (local only, not for remote)
+docs/

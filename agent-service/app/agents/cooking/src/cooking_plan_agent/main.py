@@ -9,11 +9,14 @@ import logging
 import os
 import signal
 import sys
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from cooking_plan_agent.api import register_exception_handlers
 from cooking_plan_agent.api import router as agent_router
@@ -36,21 +39,31 @@ class _RedactingJsonFormatter(logging.Formatter):
     provider prompts/responses, credentials, internal service tokens.
     """
 
-    _REDACT_FIELDS = frozenset({
-        "recipe_text", "recipes", "inventory", "dietary_rules",
-        "dietary_restrictions", "prompt", "response", "provider_payload",
-        "internal_service_token", "credential", "api_key",
-    })
+    _REDACT_FIELDS = frozenset(
+        {
+            "recipe_text",
+            "recipes",
+            "inventory",
+            "dietary_rules",
+            "dietary_restrictions",
+            "prompt",
+            "response",
+            "provider_payload",
+            "internal_service_token",
+            "credential",
+            "api_key",
+        }
+    )
 
     def format(self, record: logging.LogRecord) -> str:
-        log_entry = {
+        log_entry: dict[str, str | bool] = {
             "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
         }
         if hasattr(record, "request_id"):
-            log_entry["request_id"] = record.request_id  # type: ignore[attr-defined]
+            log_entry["request_id"] = record.request_id
         if record.exc_info and record.exc_info[1]:
             log_entry["exception"] = str(record.exc_info[1])
 
@@ -58,11 +71,28 @@ class _RedactingJsonFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key in self._REDACT_FIELDS:
                 log_entry[f"_{key}_redacted"] = True
-            elif key not in {"name", "msg", "args", "levelname", "levelno",
-                              "pathname", "filename", "module", "exc_info",
-                              "exc_text", "stack_info", "lineno", "funcName",
-                              "created", "msecs", "relativeCreated", "thread",
-                              "threadName", "process", "message"}:
+            elif key not in {
+                "name",
+                "msg",
+                "args",
+                "levelname",
+                "levelno",
+                "pathname",
+                "filename",
+                "module",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "lineno",
+                "funcName",
+                "created",
+                "msecs",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "process",
+                "message",
+            }:
                 log_entry[key] = value
 
         return json.dumps(log_entry, default=str)
@@ -97,7 +127,7 @@ logger = logging.getLogger(__name__)
 
 _shutting_down = False
 _active_request_count = 0
-_provider_clients: list = []  # populated when LLM/search providers are wired
+_provider_clients: list[object] = []  # populated when LLM/search providers are wired
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +136,7 @@ _provider_clients: list = []  # populated when LLM/search providers are wired
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Build and inject services on startup; graceful cleanup on shutdown.
 
     Handbook 9.5: construct provider clients and workflow context during lifespan.
@@ -165,9 +195,7 @@ async def lifespan(app: FastAPI):
         app.state.llm_explainer = None
 
     # RecipeExtractor: LLM-backed when enabled, otherwise rule-based fallback.
-    recipe_extractor = (
-        LLMRecipeExtractor(llm_client) if llm_client is not None else None
-    )  # type: ignore[assignment]
+    recipe_extractor = LLMRecipeExtractor(llm_client) if llm_client is not None else None
 
     # Wire RecipeResearcher when web research is enabled (handbook 10.1).
     recipe_researcher: Researcher | LLMKnowledgeResearcher | None = None
@@ -217,6 +245,7 @@ async def lifespan(app: FastAPI):
 
     # Allow in-flight work to drain (bounded timeout).
     import asyncio
+
     drain_seconds = 10
     for _ in range(drain_seconds * 10):
         if _active_request_count <= 0:
@@ -250,7 +279,7 @@ async def lifespan(app: FastAPI):
 # ============================================================================
 
 
-def _handle_sigterm(signum, frame) -> None:
+def _handle_sigterm(signum: int, frame: object | None) -> None:
     """Set the shutdown flag so lifespan cleanup runs on ASGI server stop.
 
     The ASGI server (uvicorn) receives SIGTERM and calls the lifespan's
@@ -270,7 +299,10 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 # ---------------------------------------------------------------------------
 
 
-async def _add_correlation_id_header(request, call_next):
+async def _add_correlation_id_header(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
     """Propagate the correlation ID from request.state into response headers."""
     response = await call_next(request)
     correlation_id = getattr(request.state, "correlation_id", None)
@@ -284,7 +316,10 @@ async def _add_correlation_id_header(request, call_next):
 # ---------------------------------------------------------------------------
 
 
-async def _shutdown_middleware(request, call_next):
+async def _shutdown_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
     """Reject new requests with 503 when the server is shutting down.
 
     Handbook 12.5: stop accepting new requests; allow bounded in-flight
@@ -292,7 +327,6 @@ async def _shutdown_middleware(request, call_next):
     """
     global _active_request_count
     if _shutting_down:
-        from starlette.responses import JSONResponse
         return JSONResponse(
             status_code=503,
             content={
@@ -347,15 +381,13 @@ def create_app() -> FastAPI:
         """
         return {"status": "alive"}
 
-    @application.get("/health/ready", tags=["health"])
-    async def readiness() -> dict:
+    @application.get("/health/ready", tags=["health"], response_model=dict[str, object])
+    async def readiness() -> JSONResponse:
         """Readiness: application is ready to serve traffic.
 
         Handbook 12.4: checks that the application graph/services were constructed
         and local configuration is valid. Returns 503 if not ready.
         """
-        from starlette.responses import JSONResponse
-
         settings_ok = getattr(application.state, "settings_validated", False)
         graph_ok = getattr(application.state, "graph_compiled", False)
         shutting_down = _shutting_down

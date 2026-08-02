@@ -186,7 +186,10 @@ def generate_perf_scenario(
         sauce = random.choice(_SAUCES)
         garnish = random.choice(_GARNISHES)
         dish_name = random.choice(_DISH_TEMPLATES).format(
-            protein=protein, veg=veg, sauce=sauce, garnish=garnish,
+            protein=protein,
+            veg=veg,
+            sauce=sauce,
+            garnish=garnish,
         )
         recipe_id = f"perf_recipe_{r_idx + 1}"
 
@@ -218,7 +221,13 @@ def generate_perf_scenario(
         for s_idx, pattern in enumerate(step_patterns):
             task_id = f"{recipe_id}_s{s_idx + 1}"
             step_text, task = _generate_step(
-                task_id, recipe_id, pattern, s_idx + 1, steps_per_recipe, s_idx > 0, task_id if s_idx == 0 else generated_tasks[-1].task_id,
+                task_id,
+                recipe_id,
+                pattern,
+                s_idx + 1,
+                steps_per_recipe,
+                s_idx > 0,
+                task_id if s_idx == 0 else generated_tasks[-1].task_id,
             )
             step_lines.append(f"{s_idx + 1}. {step_text}")
             if task is not None:
@@ -226,11 +235,13 @@ def generate_perf_scenario(
 
         # Build recipe text (preprocessed format)
         text = f"{dish_name}\n\n食材：\n" + "\n".join(ingredient_lines) + "\n\n步骤：\n" + "\n".join(step_lines)
-        recipe_texts.append({
-            "recipe_id": recipe_id,
-            "text": text,
-            "target_servings": target_servings,
-        })
+        recipe_texts.append(
+            {
+                "recipe_id": recipe_id,
+                "text": text,
+                "target_servings": target_servings,
+            }
+        )
 
     # Build SchedulingProblem
     problem = SchedulingProblem(
@@ -286,10 +297,7 @@ class ScenarioResult:
 
     def summary(self) -> str:
         """One-line description for logging."""
-        return (
-            f"Scenario(seed={self.seed}, recipes={self.total_recipes}, "
-            f"tasks={self.total_tasks})"
-        )
+        return f"Scenario(seed={self.seed}, recipes={self.total_recipes}, tasks={self.total_tasks})"
 
 
 # =============================================================================

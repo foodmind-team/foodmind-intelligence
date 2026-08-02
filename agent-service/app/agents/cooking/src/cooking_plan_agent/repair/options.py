@@ -235,8 +235,12 @@ def propose_ingredient_substitutions(
                         f"Purchase {shortage.shortage} {shortage.unit} of "
                         f"'{shortage.ingredient_name}' (no known substitute available)"
                     ),
-                    changes=(f"Add {shortage.shortage} {shortage.unit} of {shortage.ingredient_name} to shopping list",),
-                    effects=(f"Increase {shortage.ingredient_name} availability by {shortage.shortage} {shortage.unit}",),
+                    changes=(
+                        f"Add {shortage.shortage} {shortage.unit} of {shortage.ingredient_name} to shopping list",
+                    ),
+                    effects=(
+                        f"Increase {shortage.ingredient_name} availability by {shortage.shortage} {shortage.unit}",
+                    ),
                     revalidation_status="validated",
                 )
             )
@@ -247,13 +251,9 @@ def propose_ingredient_substitutions(
                 RepairOption(
                     option_id=f"repair_sub_{shortage.ingredient_name}_{sub_name.split()[0]}_{uuid4().hex[:6]}",
                     option_type="substitute_ingredient",
-                    description=(
-                        f"Substitute '{shortage.ingredient_name}' with "
-                        f"'{sub_name}': {note}"
-                    ),
+                    description=(f"Substitute '{shortage.ingredient_name}' with '{sub_name}': {note}"),
                     changes=(
-                        f"Replace {shortage.ingredient_name} ({shortage.shortage} {shortage.unit}) "
-                        f"with {sub_name}",
+                        f"Replace {shortage.ingredient_name} ({shortage.shortage} {shortage.unit}) with {sub_name}",
                     ),
                     effects=(
                         f"Resolves {shortage.shortage} {shortage.unit} shortage of "
@@ -318,14 +318,8 @@ def propose_portion_adjustments(
             option_id=f"repair_servings_{new_servings}_{uuid4().hex[:6]}",
             option_type="reduce_servings",
             description=description,
-            changes=(
-                f"Scale all ingredient quantities to {new_servings} servings "
-                f"(was {original_servings})",
-            ),
-            effects=(
-                f"All ingredient shortages resolved by scaling down to "
-                f"{new_servings} servings",
-            ),
+            changes=(f"Scale all ingredient quantities to {new_servings} servings (was {original_servings})",),
+            effects=(f"All ingredient shortages resolved by scaling down to {new_servings} servings",),
             revalidation_status="validated",
         ),
     )
@@ -430,10 +424,7 @@ def propose_equipment_alternatives(
                 RepairOption(
                     option_id=f"repair_noalt_{resource}_{uuid4().hex[:6]}",
                     option_type="alternative_equipment",
-                    description=(
-                        f"No known alternative for '{resource}'. "
-                        f"Manual resolution required."
-                    ),
+                    description=(f"No known alternative for '{resource}'. Manual resolution required."),
                     changes=(f"Source or improvise alternative for {resource}",),
                     effects=("Requires manual equipment sourcing",),
                     revalidation_status="validated",
@@ -446,9 +437,7 @@ def propose_equipment_alternatives(
                 RepairOption(
                     option_id=f"repair_eq_{base_resource}_{alt_name.split()[0]}_{uuid4().hex[:6]}",
                     option_type="alternative_equipment",
-                    description=(
-                        f"Use '{alt_name}' instead of '{resource}': {note}"
-                    ),
+                    description=(f"Use '{alt_name}' instead of '{resource}': {note}"),
                     changes=(f"Replace {resource} with {alt_name}",),
                     effects=(f"Resolves missing '{resource}'. {note}",),
                     revalidation_status="validated",
@@ -484,10 +473,7 @@ def propose_dish_replacements(
         return ()
 
     # Identify ingredients with no known substitutes
-    unsubstitutable = [
-        s for s in shortages
-        if s.ingredient_name.lower().strip() not in _INGREDIENT_SUBSTITUTIONS
-    ]
+    unsubstitutable = [s for s in shortages if s.ingredient_name.lower().strip() not in _INGREDIENT_SUBSTITUTIONS]
 
     if not unsubstitutable:
         return ()  # All shortages have substitutes available
@@ -554,13 +540,10 @@ def propose_time_extension(
         option_id=f"repair_time_{minimum_required_minutes}_{uuid4().hex[:6]}",
         option_type="extend_time",
         description=(
-            f"Extend cooking time from {current_time_limit} to "
-            f"{minimum_required_minutes} minutes (adds {gap} minutes)"
+            f"Extend cooking time from {current_time_limit} to {minimum_required_minutes} minutes (adds {gap} minutes)"
         ),
         changes=(f"Increase time limit to {minimum_required_minutes} minutes",),
-        effects=(
-            f"All tasks can be scheduled within {minimum_required_minutes} minutes",
-        ),
+        effects=(f"All tasks can be scheduled within {minimum_required_minutes} minutes",),
         revalidation_status="validated",
     )
 
@@ -627,12 +610,12 @@ def validate_repair_option(
 
 # Priority ordering: least disruptive options first (handbook 5.24).
 _OPTION_TYPE_PRIORITY: dict[str, int] = {
-    "reduce_servings": 1,       # Least disruptive — just scale down
+    "reduce_servings": 1,  # Least disruptive — just scale down
     "alternative_equipment": 2,  # Use what you have differently
     "substitute_ingredient": 3,  # Swap ingredients
-    "extend_time": 4,            # Just wait longer
-    "replace_dish": 5,           # Change the menu
-    "purchase": 6,               # Most disruptive — go shopping
+    "extend_time": 4,  # Just wait longer
+    "replace_dish": 5,  # Change the menu
+    "purchase": 6,  # Most disruptive — go shopping
 }
 
 
@@ -651,10 +634,12 @@ def rank_repair_options(
         Sorted tuple, least disruptive first.
     """
     valid = [o for o in options if o.revalidation_status == "validated"]
-    valid.sort(key=lambda o: (
-        _OPTION_TYPE_PRIORITY.get(o.option_type, 99),
-        o.option_id,
-    ))
+    valid.sort(
+        key=lambda o: (
+            _OPTION_TYPE_PRIORITY.get(o.option_type, 99),
+            o.option_id,
+        )
+    )
     return tuple(valid)
 
 
@@ -667,7 +652,7 @@ def apply_approved_decisions(
     request: GeneratePlanRequest,
     approved_ids: tuple[str, ...],
     available_options: tuple[RepairOption, ...],
-) -> dict:
+) -> dict[str, object]:
     """Apply user-approved repair decisions to produce a resolved plan input.
 
     This is a planning step — it modifies the request context (e.g. removes
@@ -690,7 +675,7 @@ def apply_approved_decisions(
     approved_set = set(approved_ids)
     applied: list[str] = []
 
-    modifications: dict = {}
+    modifications: dict[str, object] = {}
 
     for opt in available_options:
         if opt.option_id not in approved_set:
@@ -701,12 +686,14 @@ def apply_approved_decisions(
         if opt.option_type == "extend_time":
             # Extract the proposed new time limit from the option description
             import re
+
             match = re.search(r"to (\d+) minutes", opt.description)
             if match:
                 modifications["time_limit_minutes"] = int(match.group(1))
 
         elif opt.option_type == "reduce_servings":
             import re
+
             match = re.search(r"from \d+ to (\d+)", opt.description)
             if match:
                 modifications["target_servings"] = int(match.group(1))

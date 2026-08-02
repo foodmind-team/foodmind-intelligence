@@ -57,14 +57,10 @@ class SafetyEngine:
                     task_id = f"safety_{finding.rule_id.lower()}_{uuid4().hex[:8]}"
                     safety_task_ids.append(task_id)
 
-        has_unrepairable = any(
-            f.severity == "hard_unrepairable" for f in findings
-        )
+        has_unrepairable = any(f.severity == "hard_unrepairable" for f in findings)
         # A plan is safe if no hard-level findings exist (repairable or not).
         # Warnings do not block — they surface but don't affect is_safe.
-        is_safe = not any(
-            f.severity.startswith("hard_") for f in findings
-        )
+        is_safe = not any(f.severity.startswith("hard_") for f in findings)
 
         return SafetyReport(
             report_id=f"safety_{uuid4().hex[:12]}",

@@ -1,4 +1,5 @@
 """Quick script to show parsed output of golden fixtures."""
+
 import asyncio
 
 from cooking_plan_agent.parsing.extractor import RecipeExtractor

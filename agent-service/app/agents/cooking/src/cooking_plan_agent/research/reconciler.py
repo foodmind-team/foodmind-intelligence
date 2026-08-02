@@ -113,8 +113,9 @@ def reconcile(
     temps: list[Decimal] = [e.explicit_temperature_c for e in evidence_items if e.explicit_temperature_c is not None]
     reconciled_temp: Decimal | None = None
     if temps:
-        reconciled_temp = sum(temps) / len(temps)
-        reconciled_temp = reconciled_temp.quantize(Decimal("0.1"))
+        # sum with a Decimal start keeps pure Decimal arithmetic; dividing by a
+        # Decimal avoids mixing float precision into financial-style quantities.
+        reconciled_temp = (sum(temps, Decimal(0)) / Decimal(len(temps))).quantize(Decimal("0.1"))
 
     # If no data at all, flag confirmation
     if reconciled_heat is None and reconciled_min is None and reconciled_max is None and reconciled_temp is None:

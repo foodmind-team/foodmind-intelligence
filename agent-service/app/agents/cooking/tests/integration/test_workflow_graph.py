@@ -4,16 +4,18 @@ Each test verifies the COMPLETE path through the graph (nodes visited),
 not individual node logic. Uses fake services for deterministic testing.
 """
 
+from decimal import Decimal
+
 import pytest
 
+from cooking_plan_agent.domain.enums import HeatLevel
 from cooking_plan_agent.domain.models import (
-    ConfirmationPlanResponse,
     ExtractedIngredient,
     ExtractedRecipeCandidate,
     ExtractedStep,
-    FailedPlanResponse,
     GeneratePlanRequest,
-    InfeasiblePlanResponse,
+    InventoryLotSnapshot,
+    KitchenResourceSnapshot,
     ReadyPlanResponse,
 )
 from cooking_plan_agent.workflow.context import WorkflowContext
@@ -26,7 +28,7 @@ from cooking_plan_agent.workflow.state import PlanState
 
 
 class FakeRecipeExtractor:
-    """Returns a minimal valid candidate for testing."""
+    """Returns a gap-free candidate so the happy path reaches READY."""
 
     async def extract(self, source_text: str) -> ExtractedRecipeCandidate:
         return ExtractedRecipeCandidate(
@@ -46,7 +48,11 @@ class FakeRecipeExtractor:
                 ExtractedStep(
                     step_number=1,
                     instruction="Cook for 10 minutes",
+                    category="heating",
                     active_duration_minutes=10,
+                    heat_level=HeatLevel.HIGH,
+                    target_temperature_c=Decimal(200),
+                    resources_hint=("stove",),
                 ),
             ),
         )
@@ -73,7 +79,7 @@ def context():
 
 @pytest.fixture
 def valid_request():
-    """Minimal valid request with one recipe."""
+    """Deterministic READY input: inventory + resources cover all demands."""
     return GeneratePlanRequest(
         request_id="test-req-001",
         user_id="test-user",
@@ -86,8 +92,24 @@ def valid_request():
         ),
         dietary_restrictions=(),
         user_allergens=(),
-        inventory_lots=(),
-        kitchen_resources=(),
+        inventory_lots=(
+            InventoryLotSnapshot(
+                lot_id="lot-001",
+                item_id="item-001",
+                canonical_name="chicken breast",
+                on_hand=Decimal(300),
+                reserved=Decimal(0),
+                unit="g",
+            ),
+        ),
+        kitchen_resources=(
+            KitchenResourceSnapshot(
+                resource_id="stove-1",
+                resource_type="stove",
+                capacity=Decimal(4),
+                capacity_unit="burners",
+            ),
+        ),
     )
 
 
@@ -99,7 +121,12 @@ def valid_request():
 @pytest.mark.asyncio
 async def test_complete_recipe_happy_path(graph, context, valid_request):
     """8.11: Complete recipe -> Parse -> validate -> safety -> feasibility ->
-    merge -> DAG -> solve -> verify -> READY."""
+    merge -> DAG -> solve -> verify -> READY.
+
+    The fixture is fully specified (no gaps, sufficient inventory, available
+    resources), so the graph must terminate with a verified READY plan —
+    not merely "one of the four terminal states".
+    """
     initial_state: PlanState = {"request": valid_request}
 
     result = await graph.ainvoke(
@@ -109,16 +136,10 @@ async def test_complete_recipe_happy_path(graph, context, valid_request):
     )
 
     response = result.get("response")
-    assert response is not None, "Graph must produce a response"
-    assert isinstance(
-        response,
-        (
-            ReadyPlanResponse,
-            ConfirmationPlanResponse,
-            InfeasiblePlanResponse,
-            FailedPlanResponse,
-        ),
-    ), f"Unexpected response type: {type(response)}"
+    assert isinstance(response, ReadyPlanResponse), f"Happy path must return READY, got {type(response).__name__}"
+    assert response.status == "READY"
+    assert response.makespan_minutes > 0
+    assert response.solver_status in ("OPTIMAL", "FEASIBLE")
 
 
 @pytest.mark.asyncio

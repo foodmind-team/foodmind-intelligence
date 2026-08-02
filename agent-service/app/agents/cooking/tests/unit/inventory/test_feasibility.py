@@ -210,14 +210,10 @@ class TestAllocateFefo:
         assert alloc.inventory_lot_id == "lot-001"
         assert alloc.quantity == Decimal(400)
 
-    def test_fefo_prefers_earliest_expiry(
-        self, chicken_demand, chicken_lot, chicken_lot_expiring
-    ):
+    def test_fefo_prefers_earliest_expiry(self, chicken_demand, chicken_lot, chicken_lot_expiring):
         """Expiring lot (Aug 1) should be drawn first, then the non-expiring one."""
         # Demand 400: expiring has 300 → taken first, remainder from fresh lot
-        result = allocate_fefo(
-            chicken_demand, (chicken_lot, chicken_lot_expiring), _TODAY
-        )
+        result = allocate_fefo(chicken_demand, (chicken_lot, chicken_lot_expiring), _TODAY)
         assert result.shortage == 0
         assert result.available == Decimal(400)
         allocs = result.proposed_allocations
@@ -304,9 +300,7 @@ class TestAllocateFefo:
 class TestCheckAllInventory:
     """5.12 Aggregate inventory check."""
 
-    def test_all_satisfied(
-        self, chicken_demand, tomato_demand, chicken_lot, tomato_lot
-    ):
+    def test_all_satisfied(self, chicken_demand, tomato_demand, chicken_lot, tomato_lot):
         report = check_all_inventory(
             (chicken_demand, tomato_demand),
             (chicken_lot, tomato_lot),
@@ -314,9 +308,7 @@ class TestCheckAllInventory:
         assert report.is_feasible is True
         assert len(report.ingredient_shortages) == 0
 
-    def test_partial_shortage(
-        self, chicken_demand, tomato_demand, tomato_lot
-    ):
+    def test_partial_shortage(self, chicken_demand, tomato_demand, tomato_lot):
         """Chicken has no matching lot → one shortage."""
         # chicken_demand: 400g, but only tomato lot available
         report = check_all_inventory(
@@ -346,16 +338,12 @@ class TestCheckAllInventory:
         assert report.is_feasible is False
 
     def test_expired_lots_excluded(self, chicken_demand, chicken_lot_expired):
-        report = check_all_inventory(
-            (chicken_demand,), (chicken_lot_expired,), _TODAY
-        )
+        report = check_all_inventory((chicken_demand,), (chicken_lot_expired,), _TODAY)
         assert report.is_feasible is False
 
     def test_expired_lots_included_without_date(self, chicken_demand, chicken_lot_expired):
         """Without cooking_date, expired lots are treated as usable."""
-        report = check_all_inventory(
-            (chicken_demand,), (chicken_lot_expired,), None
-        )
+        report = check_all_inventory((chicken_demand,), (chicken_lot_expired,), None)
         assert report.is_feasible is False  # 200 < 400
 
 
@@ -450,9 +438,7 @@ class TestFindCompatibleResources:
 
     def test_finds_multiple_matches(self, stove_resource, induction_resource):
         need = ResourceNeed(resource_type="stove", quantity=1)
-        result = find_compatible_resources(
-            need, (stove_resource, induction_resource)
-        )
+        result = find_compatible_resources(need, (stove_resource, induction_resource))
         assert set(result) == {"res-stove-1", "res-stove-induction"}
 
     def test_no_match(self, oven_resource):
@@ -466,9 +452,7 @@ class TestFindCompatibleResources:
             quantity=1,
             required_capabilities=("induction",),
         )
-        result = find_compatible_resources(
-            need, (stove_resource, induction_resource)
-        )
+        result = find_compatible_resources(need, (stove_resource, induction_resource))
         assert result == ("res-stove-induction",)
 
 
@@ -488,13 +472,9 @@ class TestCheckRequiredResources:
             duration_minutes=5,
             work_mode="ACTIVE",
             category="heating",
-            resources=(
-                ResourceNeed(resource_type="stove", quantity=1),
-            ),
+            resources=(ResourceNeed(resource_type="stove", quantity=1),),
         )
-        missing = check_required_resources(
-            (task,), (stove_resource, oven_resource)
-        )
+        missing = check_required_resources((task,), (stove_resource, oven_resource))
         assert missing == ()
 
     def test_missing_resource(self, oven_resource):
@@ -505,9 +485,7 @@ class TestCheckRequiredResources:
             duration_minutes=5,
             work_mode="ACTIVE",
             category="heating",
-            resources=(
-                ResourceNeed(resource_type="stove", quantity=1),
-            ),
+            resources=(ResourceNeed(resource_type="stove", quantity=1),),
         )
         missing = check_required_resources((task,), (oven_resource,))
         assert "stove" in missing

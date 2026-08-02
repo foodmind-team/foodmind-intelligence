@@ -21,7 +21,7 @@ _ENTITY_RE = re.compile(r"&[a-zA-Z]+;|&#\d+;")
 # Excessive whitespace
 _WHITESPACE_RE = re.compile(r"\s+")
 # Prompt injection markers — instruct/inject/system/override patterns
-_INJECTION_PATTERNS: tuple[re.Pattern, ...] = tuple(
+_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.IGNORECASE)
     for p in (
         r"\b(ignore|forget|disregard)\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|messages?)\b",
