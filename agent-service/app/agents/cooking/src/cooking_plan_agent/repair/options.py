@@ -731,7 +731,11 @@ def apply_approved_decisions(
 # 5.26  Structured decision loop (P0-06)
 # =============================================================================
 
-# The five decision kinds the confirmation loop supports (P0-06 rule 5).
+# The six decision kinds the confirmation loop supports (P0-06 rule 5).
+# "purchase" (外出采购) is confirmable end-to-end: selecting it emits a
+# structured decision the client echoes back; applying it is a no-op on
+# the schedule inputs — the client buys the missing ingredients, updates
+# the inventory snapshot in the backend, and resubmits the request.
 SUPPORTED_DECISION_TYPES = frozenset(
     {
         "reduce_servings",
@@ -739,6 +743,7 @@ SUPPORTED_DECISION_TYPES = frozenset(
         "substitute_ingredient",
         "alternative_equipment",
         "replace_dish",
+        "purchase",
     }
 )
 
@@ -787,7 +792,7 @@ def validate_approved_decisions(
     """Validate a client's resubmitted decisions (P0-06 rule 3).
 
     Checks:
-      - option_type is one of the five supported kinds
+      - option_type is one of the six supported kinds
       - payload is not conflicting (mutually exclusive decision kinds)
       - option_id is non-empty
       - plan_revision matches the confirmation the client is answering
@@ -888,6 +893,12 @@ def apply_approved_decisions_structured(
         # substitute_ingredient is handled as a patch by the IR builder
         # (payload: {recipe_id, ingredient, substitute}) — see
         # apply_ingredient_substitutions_patch.
+
+        elif decision.option_type == "purchase":
+            # 外出采购：决策本身不改变排程输入（agent 无法代购）。
+            # 用户购买后由后端更新库存快照（inventory_lots）并重新提交请求；
+            # 若库存未变，重跑仍会返回 NEEDS_CONFIRMATION（可再次选择）。
+            pass  # no-op：继续到最终 model_copy（保留 approved_decisions）
 
     new_request = new_request.model_copy(update={"kitchen_resources": tuple(new_kitchen)})
     return new_request
