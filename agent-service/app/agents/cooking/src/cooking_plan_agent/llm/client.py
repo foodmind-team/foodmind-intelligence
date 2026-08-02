@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from cooking_plan_agent.observability.redaction import redact
+
 logger = logging.getLogger(__name__)
 
 
@@ -114,11 +116,15 @@ class LLMClient:
                     raise LLMError("LLM returned empty content")
                 return str(content).strip()
             except (httpx.HTTPStatusError, httpx.TransportError, KeyError, IndexError, LLMError) as exc:
+                # P4-03 (补 P2-05): never log the raw exception text — the
+                # provider error body may embed credentials or keyed URLs.
+                # Only the safe exception type + redacted summary is emitted.
                 logger.warning(
-                    "LLM call failed | attempt=%d/%d | error=%s",
+                    "LLM call failed | attempt=%d/%d | exception_type=%s | error=%s",
                     attempt + 1,
                     self._max_retries + 1,
-                    exc,
+                    type(exc).__name__,
+                    redact(str(exc)),
                 )
                 if attempt < self._max_retries:
                     continue
