@@ -795,6 +795,8 @@ async def check_feasibility_node(
             ingredient_shortages=ingredient_report.ingredient_shortages,
             missing_resources=tuple(sorted(missing_resources)),
             is_feasible=is_feasible,
+            # 透传完整分配结果，保证 READY 消耗清单可用（不丢弃满足食材的 FEFO 分配）。
+            ingredient_results=ingredient_report.ingredient_results,
         ),
         "repair_options": repair_options,
     }
