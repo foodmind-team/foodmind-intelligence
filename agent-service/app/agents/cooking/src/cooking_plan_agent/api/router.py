@@ -17,6 +17,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 
+from cooking_plan_agent.api.backpressure import request_lease
 from cooking_plan_agent.api.dependencies import (
     extract_correlation_id,
     require_internal_service,
@@ -63,6 +64,7 @@ async def generate_plan(
     body: GeneratePlanRequest,
     service: Annotated[GenerateCookingPlanService, Depends(get_generate_service)],
     _correlation_id: Annotated[str, Depends(extract_correlation_id)],
+    _lease: Annotated[None, Depends(request_lease)] = None,
 ) -> PlanResponse:
     """Generate a cooking plan from the supplied recipes and constraints.
 
@@ -73,6 +75,10 @@ async def generate_plan(
     The correlation ID is injected via the X-Request-ID dependency and
     propagated to response headers by the CORSMiddleware (configured in
     create_app).
+
+    P1-03: the request_lease dependency bounds concurrency — when the
+    active/queued limiter is saturated the request is rejected with 503 +
+    Retry-After instead of piling onto the event loop.
     """
     logger.info(
         "Generating plan | request_id=%s | recipes=%d | time_limit=%s",

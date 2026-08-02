@@ -26,6 +26,7 @@ def route_on_workflow_error(
         return "render_failed_response"
     return "__continue__"
 
+
 # ---------------------------------------------------------------------------
 # 8.6 Routing after gap detection
 # ---------------------------------------------------------------------------
@@ -83,6 +84,34 @@ def route_after_local_inference(
 
     # Non-researchable critical gaps → confirmation
     return "build_confirmation_response"
+
+
+# ---------------------------------------------------------------------------
+# 8.6 Routing after research evidence application (P1-01)
+# ---------------------------------------------------------------------------
+
+
+def route_after_research(
+    state: PlanState,
+) -> Literal["build_confirmation_response", "validate_recipe_ir"]:
+    """After evidence application, reliable evidence proceeds to IR.
+
+    Routes to confirmation whenever the plan cannot proceed safely:
+      - ``needs_confirmation`` set (disagreement over threshold, no sources,
+        field-location failure, safety-critical temperature without a
+        verifiable URL — P1-01 rules 5 & 6)
+      - any critical / safety_critical gap remains unresolved after research
+
+    Only fully-applied, reliable evidence continues to IR validation.
+    """
+    if state.get("needs_confirmation"):
+        return "build_confirmation_response"
+
+    gaps = state.get("gaps", ())
+    if any(g.gap_class in ("critical", "safety_critical") for g in gaps):
+        return "build_confirmation_response"
+
+    return "validate_recipe_ir"
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +175,10 @@ def route_after_solve(
     MODEL_INVALID/UNKNOWN -> FAILED (likely a model construction bug).
 
     Any workflow error takes precedence and short-circuits to FAILED (P0-03).
+    Statuses are compared via the SolverStatus enum, never raw strings (P1-04).
     """
+    from cooking_plan_agent.domain.enums import SolverStatus
+
     if state.get("error") is not None:
         return "render_failed_response"
 
@@ -155,9 +187,9 @@ def route_after_solve(
         return "render_failed_response"
 
     status = result.status
-    if status in ("OPTIMAL", "FEASIBLE"):
+    if status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
         return "verify_schedule"
-    if status == "INFEASIBLE":
+    if status == SolverStatus.INFEASIBLE:
         return "render_infeasible_response"
     # MODEL_INVALID, UNKNOWN -> FAILED
     return "render_failed_response"

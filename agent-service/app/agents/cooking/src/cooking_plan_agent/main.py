@@ -153,6 +153,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     settings = get_settings()
 
+    # P1-03: process-level request limiter (active + queued layers). Created
+    # here so it can be injected via FastAPI dependencies; health endpoints
+    # bypass it and read the snapshot instead.
+    from cooking_plan_agent.api.backpressure import RequestLimiter
+
+    app.state.request_limiter = RequestLimiter(
+        max_active=settings.max_active_requests,
+        max_queued=settings.max_queued_requests,
+        queue_timeout_seconds=settings.queue_timeout_seconds,
+    )
+
+    # P1-06: intermediate-artifact cache (parse/research results). In-memory,
+    # instance-level; disabled by default. Only affects performance.
+    from cooking_plan_agent.infrastructure.cache import InMemoryTTLCache
+
+    cache: InMemoryTTLCache[str, object] | None = None
+    if settings.cache_enabled:
+        cache = InMemoryTTLCache(
+            max_entries=settings.cache_max_entries,
+            max_item_size_bytes=settings.cache_max_item_bytes,
+            default_ttl_seconds=settings.cache_ttl_seconds,
+        )
+        _provider_clients.append(cache)  # closed (cleared) on shutdown
+
     # Reset shutdown flag on startup (critical for tests: module-level
     # global persists across TestClient instances and must be reset).
     _shutting_down = False
@@ -186,7 +210,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
             temperature=settings.llm_temperature,
+            connection_pool_size=settings.llm_connection_pool_size,
         )
+        # P1-02: one lifecycle-level client, closed exactly once on shutdown.
+        _provider_clients.append(llm_client)
         app.state.llm_explainer = LLMPlanExplainer(llm_client)
         logger.info(
             "LLM integration enabled",
@@ -201,14 +228,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Wire RecipeResearcher when web research is enabled (handbook 10.1).
     recipe_researcher: Researcher | LLMKnowledgeResearcher | None = None
     if settings.web_research_enabled:
-        if llm_client is not None:
+        from cooking_plan_agent.research.researcher import SearchProvider
+
+        allow_list = DomainAllowList.from_settings(
+            custom_domains=settings.allowed_research_domains,
+        )
+        provider: SearchProvider
+        if settings.tavily_api_key:
+            # P1-05: real, controlled Tavily search provider. Key is a
+            # SecretStr — never logged; the client is closed on shutdown.
+            from cooking_plan_agent.research.providers.tavily import TavilySearchProvider
+
+            provider = TavilySearchProvider(
+                api_key=settings.tavily_api_key,
+                base_url=settings.tavily_base_url,
+                search_depth=settings.tavily_search_depth,
+                max_results=settings.research_max_results_per_query,
+                connection_pool_size=settings.tavily_connection_pool_size,
+                timeout_seconds=settings.research_timeout_seconds,
+            )
+            _provider_clients.append(provider)
+            recipe_researcher = Researcher(
+                provider=provider,
+                allow_list=allow_list,
+                settings=settings,
+            )
+        elif llm_client is not None:
             # LLM knowledge research — fills gaps from model culinary knowledge
             # without web search (deterministic domain filtering still applies).
             recipe_researcher = LLMKnowledgeResearcher(llm_client)
         else:
-            allow_list = DomainAllowList.from_settings(
-                custom_domains=settings.allowed_research_domains,
-            )
             provider = FakeSearchProvider()
             recipe_researcher = Researcher(
                 provider=provider,
@@ -220,6 +269,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         recipe_extractor=recipe_extractor,  # type: ignore[arg-type]
         recipe_researcher=recipe_researcher,
         safety_engine=SafetyEngine(),
+        cache=cache,  # type: ignore[arg-type]
     )
 
     # Build and compile the LangGraph workflow graph once at startup.
@@ -423,6 +473,26 @@ def create_app() -> FastAPI:
                 },
             },
         )
+
+    @application.get("/health/load", tags=["health"])
+    async def load_snapshot() -> dict[str, object]:
+        """Load snapshot from the request limiter (P1-03).
+
+        Bypasses the business limiter (separate route, no lease dependency)
+        so orchestrators can always probe the process while it is overloaded.
+        """
+        from cooking_plan_agent.api.backpressure import RequestLimiter
+
+        limiter = getattr(application.state, "request_limiter", None)
+        if not isinstance(limiter, RequestLimiter):
+            return {"limiter": "not_initialised"}
+        snapshot = limiter.snapshot()
+        return {
+            "active": snapshot.active,
+            "queued": snapshot.queued,
+            "rejected_total": snapshot.rejected_total,
+            "queue_wait_ms": snapshot.queue_wait_ms,
+        }
 
     return application
 

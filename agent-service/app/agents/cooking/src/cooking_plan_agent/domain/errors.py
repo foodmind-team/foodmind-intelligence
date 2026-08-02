@@ -155,6 +155,14 @@ class DomainErrorCode(StrEnum):
     # This is a direct mapping of OR-Tools CpSolverStatus.UNKNOWN.
     SCHEDULE_UNKNOWN = "SCHEDULE_UNKNOWN"
 
+    # The CP-SAT model itself is malformed: contradictory constraints, invalid
+    # variables, or a scheduling problem shape the builder cannot express.
+    # Distinct from SCHEDULE_INFEASIBLE — INFEASIBLE means the solver PROVED no
+    # solution exists for a valid model; MODEL_INVALID means the model was
+    # never valid (a construction bug). Both are independent of the solver's
+    # own status enum but map to a FAILED response (P1-04).
+    SCHEDULE_MODEL_INVALID = "SCHEDULE_MODEL_INVALID"
+
     # The independent verifier (ScheduleVerifier) rejected the solver's output.
     # This indicates the solver produced a result that appears valid but
     # violates constraints—a possible signal of a bug in CP-SAT model

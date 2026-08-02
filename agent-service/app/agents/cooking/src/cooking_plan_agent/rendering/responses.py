@@ -138,6 +138,11 @@ def render_confirmation_response(state: PlanState) -> ConfirmationPlanResponse:
     for recipe in parsed:
         assumptions.extend(recipe.assumptions)
 
+    # P1-01: research evidence that was applied but still warrants
+    # confirmation (e.g. conflict over threshold) is surfaced here with its
+    # EvidenceRef provenance — never silently dropped.
+    assumptions.extend(state.get("research_assumptions", ()))
+
     # Collect repair options
     repair_options = state.get("repair_options", ())
 

@@ -43,12 +43,18 @@ class SearchProvider(Protocol):
 
     Each provider normalises its results into SearchDocument,
     hiding provider-specific SDK details from the rest of the pipeline.
+
+    P1-05: ``include_domains`` is the request-side allow-list — providers that
+    support it (Tavily) pass it to the upstream API; others ignore it. The
+    response-side allow-list filter always runs in the Researcher.
     """
 
     async def search(
         self,
         query: str,
         max_results: int,
+        *,
+        include_domains: tuple[str, ...] = (),
     ) -> tuple[SearchDocument, ...]: ...
 
 
@@ -94,7 +100,11 @@ class Researcher:
 
         try:
             docs = await asyncio.wait_for(
-                self._provider.search(query.query_text, max_r),
+                self._provider.search(
+                    query.query_text,
+                    max_r,
+                    include_domains=tuple(self._allow_list.domains),
+                ),
                 timeout=self._settings.research_timeout_seconds,
             )
         except TimeoutError:

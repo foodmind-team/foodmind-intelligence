@@ -11,6 +11,7 @@ rule-based extractor is used so the pipeline degrades gracefully.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from decimal import Decimal
 from typing import Any
@@ -44,6 +45,10 @@ _SYSTEM_PROMPT = (
     "Rules: quantity must be a positive number when given; omit fields the text "
     "does not specify (use null or empty list, never invent values)."
 )
+
+# Stable cache tag (P1-06 rule 2): changing the prompt changes this digest, so
+# cached parse artifacts keyed on the old prompt are never reused.
+PARSE_PROMPT_VERSION = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 
 
 class LLMRecipeExtractor:

@@ -24,6 +24,8 @@ curl localhost:8000/health/ready
 | Error Code | Action |
 |-----------|--------|
 | `SCHEDULE_VERIFICATION_FAILED` | **P1 alert** — indicates solver or verifier bug. Capture the failing request payload, solver status, and verifier issues. Roll back to previous image if rate > 1%. |
+| `SCHEDULE_MODEL_INVALID` | **P1 alert** — a model-construction bug (contradictory constraints, invalid scheduling problem shape). Capture the request payload and task graph; roll back if rate > 0.5%. |
+| `SCHEDULE_UNKNOWN` | **P2 alert** — solver hit its time limit before determining feasibility. Raised as a FAILED response, never as INFEASIBLE (P1-04). Review solver budget if rate climbs. |
 | `EXTERNAL_PROVIDER_UNAVAILABLE` | Check LLM/Search provider status. If provider is down, service degrades to local inference — this is expected. |
 | `INTERNAL_ERROR` | Check logs for unexpected exceptions. May indicate a code defect. |
 
@@ -95,7 +97,7 @@ docker stats cooking-plan-agent
 3. **Scale vertically**: Increase container CPU limit if consistently at 100%.
 4. **Reduce concurrent requests**: Add rate limiting at the Spring Boot side.
 
-**Note**: Solver timeouts are expected for very large plans (6 recipes × 100 tasks). The system falls back to `NEEDS_CONFIRMATION` or `INFEASIBLE`.
+**Note**: Solver timeouts are expected for very large plans (6 recipes × 100 tasks). Per P1-04 the result is a `FAILED` response with `SCHEDULE_UNKNOWN` — never `INFEASIBLE`, because the solver did not prove infeasibility; it simply ran out of budget.
 
 ---
 
@@ -197,3 +199,49 @@ docker logs cooking-plan-agent --tail 20
 **Important**:
 - The Agent does not own any database migrations — database rollback belongs to Spring Boot.
 - The Agent image is immutable (no volume mounts for code). Rollback is a simple container swap.
+
+---
+
+## Scenario 9: Overload / Backpressure (P1-03)
+
+**Symptom**: `POST /internal/v1/agents/cooking-plan/generate` returns HTTP 503 with
+`{"detail": {"code": "OVERLOADED", ...}}` and a `Retry-After` header.
+
+**Capacity parameters** (process-level, single instance):
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `COOKING_PLAN_MAX_ACTIVE_REQUESTS` | 20 | Max requests running concurrently |
+| `COOKING_PLAN_MAX_QUEUED_REQUESTS` | 100 | Max requests waiting for a slot |
+| `COOKING_PLAN_QUEUE_TIMEOUT_SECONDS` | 5.0 | Max wait before a queued request is rejected |
+
+The limiter is **process-level**. Horizontal scaling limits are a separate
+concern (P3-02).
+
+**Diagnosis**:
+
+```bash
+# Watch active/queued/rejected metrics — the probe bypasses the limiter
+curl -s localhost:8000/health/load | jq .
+```
+
+**Alert thresholds**:
+
+- **Warn (P2)** when `active >= 0.8 * max_active` for > 30 s, or when
+  `rejected_total` grows.
+- **Page (P1)** when `queued` stays above `max_queued / 2` for > 60 s — the
+  service is persistently saturated and callers are being turned away.
+
+**Response**:
+
+1. **Check provider health**: 503s usually mean upstream (LLM / solver) is
+   slow; verify `llm_overall_timeout_seconds` and solver budget aren't
+   exceeded for every request.
+2. **Scale horizontally**: add another Agent instance — the limiter is
+   per-process, so capacity grows with instances (dedupe/coordination via
+   P3-02).
+3. **Tune limits**: raise `max_active_requests` only with evidence of headroom
+   in provider quota and CPU; never set `max_queued_requests` unbounded.
+
+**Rollback**: reducing limits is a config change (`docker compose` env) — no
+image rollback required.
