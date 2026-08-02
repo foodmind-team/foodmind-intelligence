@@ -182,6 +182,13 @@ class Settings(BaseSettings):
     # Max tasks the in-process worker executes concurrently.
     task_worker_concurrency: int = 2
 
+    # --- Async task SSE progress (P4-04) ---
+    # Optional Server-Sent-Events progress stream per task. Enabled by
+    # default when the task API is on; the polling endpoints stay available
+    # regardless and remain the fallback. When disabled, GET /tasks/{id}/events
+    # returns 404 and polling is unaffected.
+    task_sse_enabled: bool = True
+
     # define the model config
     model_config = SettingsConfigDict(
         env_prefix="COOKING_PLAN_",

@@ -154,6 +154,16 @@ class TaskRecord(StrictModel):
     revision: int = 0
     """Confirmation revision; new revision after NEEDS_CONFIRMATION resume."""
 
+    event_id: int = 0
+    """Monotonic progress-event counter (P4-04).
+
+    Incremented atomically on every persisted status/progress change so SSE
+    subscribers can resume with ``Last-Event-ID`` without replaying old
+    events. 0 = task creation; each successful conditional write (claim or
+    update) bumps it by exactly one, in the same SQL statement as the
+    status change (no duplicate event IDs under concurrent writers).
+    """
+
     progress: TaskProgress = TaskProgress()
     """Latest progress snapshot."""
 
