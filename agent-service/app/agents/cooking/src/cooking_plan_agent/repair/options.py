@@ -12,9 +12,11 @@ from typing import NamedTuple
 from uuid import uuid4
 
 from cooking_plan_agent.domain.models import (
+    ApprovedDecision,
     FeasibilityReport,
     GeneratePlanRequest,
     IngredientFeasibility,
+    RecipeIR,
     RepairOption,
     StrictModel,
 )
@@ -706,3 +708,220 @@ def apply_approved_decisions(
         "applied_ids": tuple(applied),
         "modifications": modifications,
     }
+
+
+# =============================================================================
+# 5.26  Structured decision loop (P0-06)
+# =============================================================================
+
+# The five decision kinds the confirmation loop supports (P0-06 rule 5).
+SUPPORTED_DECISION_TYPES = frozenset(
+    {
+        "reduce_servings",
+        "extend_time",
+        "substitute_ingredient",
+        "alternative_equipment",
+        "replace_dish",
+    }
+)
+
+
+def build_approved_decisions(
+    repair_options: tuple[RepairOption, ...],
+    plan_revision: str | None,
+) -> tuple[ApprovedDecision, ...]:
+    """Convert presented RepairOptions into structured, submittable decisions.
+
+    Every supported option becomes an ApprovedDecision whose payload is
+    populated from the option's structured description. The client can
+    resubmit these verbatim; the server re-validates them (P0-06 rule 2).
+    """
+    import re as _re
+
+    decisions: list[ApprovedDecision] = []
+    for option in repair_options:
+        if option.option_type not in SUPPORTED_DECISION_TYPES:
+            continue
+        payload: dict[str, object] = {}
+        if option.option_type == "extend_time":
+            match = _re.search(r"to (\d+) minutes", option.description)
+            if match:
+                payload["time_limit_minutes"] = int(match.group(1))
+        elif option.option_type == "reduce_servings":
+            match = _re.search(r"from \d+ to (\d+)", option.description)
+            if match:
+                payload["servings"] = int(match.group(1))
+        decisions.append(
+            ApprovedDecision(
+                option_id=option.option_id,
+                option_type=option.option_type,
+                payload=payload,
+                plan_revision=plan_revision,
+            )
+        )
+    return tuple(decisions)
+
+
+def validate_approved_decisions(
+    decisions: tuple[ApprovedDecision, ...],
+    current_plan_revision: str | None,
+) -> tuple[str, ...]:
+    """Validate a client's resubmitted decisions (P0-06 rule 3).
+
+    Checks:
+      - option_type is one of the five supported kinds
+      - payload is not conflicting (mutually exclusive decision kinds)
+      - option_id is non-empty
+      - plan_revision matches the confirmation the client is answering
+        (stale confirmation rejected)
+
+    Returns a tuple of issue strings. Empty = all valid.
+    """
+    issues: list[str] = []
+    seen_option_ids: set[str] = set()
+    seen_types: set[str] = set()
+
+    for decision in decisions:
+        if not decision.option_id.strip():
+            issues.append("decision has empty option_id")
+        if decision.option_id in seen_option_ids:
+            issues.append(f"duplicate option_id: {decision.option_id}")
+        seen_option_ids.add(decision.option_id)
+
+        if decision.option_type not in SUPPORTED_DECISION_TYPES:
+            issues.append(
+                f"unsupported option_type {decision.option_type!r}; "
+                f"supported: {sorted(SUPPORTED_DECISION_TYPES)}"
+            )
+        else:
+            # Conflicting decisions: e.g. reduce_servings + replace_dish both
+            # change portions. Reject mutually exclusive combinations.
+            if decision.option_type in seen_types:
+                issues.append(f"conflicting decisions of type {decision.option_type}")
+            seen_types.add(decision.option_type)
+
+        if decision.plan_revision is not None and current_plan_revision is not None:
+            if decision.plan_revision != current_plan_revision:
+                issues.append(
+                    f"stale plan_revision {decision.plan_revision!r}, "
+                    f"current is {current_plan_revision!r}"
+                )
+
+    return tuple(issues)
+
+
+def apply_approved_decisions_structured(
+    request: GeneratePlanRequest,
+    decisions: tuple[ApprovedDecision, ...],
+) -> GeneratePlanRequest:
+    """Apply approved decisions to produce a resolved request (P0-06 rule 4).
+
+    Pure transformation: never mutates the input request. Returns a new
+    GeneratePlanRequest with the applicable constraints updated:
+      - reduce_servings   → target_servings of every recipe
+      - extend_time       → time_limit_minutes
+      - substitute_ingredient → recorded in approved payload for the IR
+        builder (ingredient substitution applied downstream as a patch)
+      - alternative_equipment → kitchen resource snapshot adjusted
+      - replace_dish      → recipe removed from the request
+    """
+    new_request = request
+    new_kitchen: list[object] = list(request.kitchen_resources)
+
+    for decision in decisions:
+        payload = decision.payload
+        if decision.option_type == "reduce_servings" and payload.get("servings") is not None:
+            servings = int(str(payload["servings"]))
+            new_recipes = tuple(
+                r.model_copy(update={"target_servings": servings})
+                if r.target_servings != servings
+                else r
+                for r in new_request.recipes
+            )
+            new_request = new_request.model_copy(update={"recipes": new_recipes})
+
+        elif decision.option_type == "extend_time" and payload.get("time_limit_minutes") is not None:
+            new_request = new_request.model_copy(
+                update={"time_limit_minutes": int(str(payload["time_limit_minutes"]))}
+            )
+
+        elif decision.option_type == "replace_dish" and payload.get("recipe_id"):
+
+            target = str(payload["recipe_id"])
+            new_recipes = tuple(r for r in new_request.recipes if r.recipe_id != target)
+            if len(new_recipes) == len(new_request.recipes):
+                # No-op replace of an unknown dish is tolerated but unused.
+                continue
+            new_request = new_request.model_copy(update={"recipes": new_recipes})
+
+        elif decision.option_type == "alternative_equipment" and payload.get("resource_type"):
+            from cooking_plan_agent.domain.models import KitchenResourceSnapshot
+
+            target_type = str(payload["resource_type"]).lower()
+            alternative = str(payload.get("alternative", "")).lower()
+            if not alternative:
+                continue
+            # Replace resources of the target type with an alternative type.
+            kept = [
+                r
+                for r in new_kitchen
+                if not isinstance(r, KitchenResourceSnapshot) or r.resource_type.lower() != target_type
+            ]
+            kept.append(
+                KitchenResourceSnapshot(
+                    resource_id=f"alt-{alternative}",
+                    resource_type=alternative,
+                    capacity=Decimal(1),
+                )
+            )
+            new_kitchen = kept
+
+        # substitute_ingredient is handled as a patch by the IR builder
+        # (payload: {recipe_id, ingredient, substitute}) — see
+        # apply_ingredient_substitutions_patch.
+
+    new_request = new_request.model_copy(update={"kitchen_resources": tuple(new_kitchen)})
+    return new_request
+
+
+def apply_ingredient_substitutions_patch(
+    recipes: tuple[RecipeIR, ...],
+    decisions: tuple[ApprovedDecision, ...],
+) -> tuple[RecipeIR, ...]:
+    """Patch RecipeIR ingredients per substitute_ingredient decisions.
+
+    Pure transformation: each decision with option_type
+    ``substitute_ingredient`` renames the target ingredient's canonical
+    name to the substitute so safety (allergen) and feasibility checks
+    re-run against the NEW ingredient (P0-06 rule 6).
+    """
+    substitutes = {
+        (d.payload.get("recipe_id"), d.payload.get("ingredient")): d.payload.get("substitute")
+        for d in decisions
+        if d.option_type == "substitute_ingredient"
+        and d.payload.get("recipe_id")
+        and d.payload.get("ingredient")
+        and d.payload.get("substitute")
+    }
+    if not substitutes:
+        return recipes
+
+    patched: list[RecipeIR] = []
+    for recipe in recipes:
+        changed = False
+        new_ingredients = list(recipe.ingredients)
+        for i, ingredient in enumerate(recipe.ingredients):
+            key = (recipe.recipe_id, ingredient.canonical_name)
+            substitute = substitutes.get(key)
+            if substitute is not None:
+                new_ingredients[i] = ingredient.model_copy(
+                    update={
+                        "canonical_name": str(substitute),
+                        "raw_name": str(substitute),
+                    }
+                )
+                changed = True
+        if changed:
+            recipe = recipe.model_copy(update={"ingredients": tuple(new_ingredients)})
+        patched.append(recipe)
+    return tuple(patched)

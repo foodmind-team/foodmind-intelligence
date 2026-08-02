@@ -91,6 +91,12 @@ class ScheduleVerifier:
         # --- Check 9: safety-tagged tasks are present in the schedule ---
         issues.extend(self._check_safety_tasks(task_map, interval_map))
 
+        # --- Check 10: safety-task ordering (P0-07) ---
+        # Sanitisation tasks must start after their raw-protein predecessor
+        # ends and finish before their RTE successor starts. Anchor loss
+        # (a dependency referencing a missing task) is also a failure.
+        issues.extend(self._check_safety_ordering(task_map, interval_map))
+
         return VerificationReport(
             passed=len(issues) == 0,
             issues=tuple(issues),
@@ -166,6 +172,66 @@ class ScheduleVerifier:
                         task_ids=(task_id,),
                     )
                 )
+
+        return issues
+
+    # ------------------------------------------------------------------
+    # Check 10: safety-task ordering and anchor integrity (P0-07)
+    # ------------------------------------------------------------------
+
+    def _check_safety_ordering(
+        self,
+        task_map: dict[str, CookingTask],
+        interval_map: dict[str, ScheduledInterval],
+    ) -> list[VerificationIssue]:
+        """Verify the raw → sanitise → RTE ordering for safety tasks.
+
+        Every safety-tagged task that has dependencies must:
+          - start at or after every predecessor's end (no misplaced
+            sanitisation before raw handling finishes)
+          - have all its dependency anchors present in the schedule
+            (missing predecessor = broken anchor)
+
+        Successors are checked transitively via the dependency edges, so a
+        sanitise task that is a predecessor of an RTE task enforces that the
+        RTE task starts after the sanitise task ends.
+        """
+        issues: list[VerificationIssue] = []
+
+        for task_id, task in task_map.items():
+            if not task.safety_tags:
+                continue
+            interval = interval_map.get(task_id)
+            if interval is None:
+                continue  # presence already reported by Check 9
+
+            for dep in task.dependencies:
+                pred_interval = interval_map.get(dep.predecessor_id)
+                if pred_interval is None:
+                    issues.append(
+                        VerificationIssue(
+                            code="SAFETY_ANCHOR_MISSING",
+                            message=(
+                                f"Safety task '{task_id}' depends on missing "
+                                f"task '{dep.predecessor_id}' (broken anchor)"
+                            ),
+                            task_ids=(task_id, dep.predecessor_id),
+                        )
+                    )
+                    continue
+                if interval.start_minute < pred_interval.end_minute:
+                    issues.append(
+                        VerificationIssue(
+                            code="SAFETY_TASK_MISPLACED",
+                            message=(
+                                f"Safety task '{task_id}' starts at "
+                                f"{interval.start_minute} but its predecessor "
+                                f"'{dep.predecessor_id}' ends at "
+                                f"{pred_interval.end_minute} (must start after)"
+                            ),
+                            task_ids=(task_id, dep.predecessor_id),
+                        )
+                    )
 
         return issues
 

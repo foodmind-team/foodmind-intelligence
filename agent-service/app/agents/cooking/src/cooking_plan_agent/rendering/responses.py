@@ -59,6 +59,22 @@ def render_ready_response(state: PlanState) -> ReadyPlanResponse:
         makespan = schedule.makespan_minutes or 0
         timeline = build_timeline(schedule, all_tasks)
 
+    # P0-05: when the caller supplied an absolute serving instant, attach
+    # it to the timeline as display context (plan start derives from it).
+    # This is a display aid only — scheduling itself uses integer minutes.
+    if timeline and request.serving_at is not None:
+        serving_iso = request.serving_at.isoformat()
+        timeline = tuple(
+            {
+                **entry,
+                "serving_at": serving_iso,
+                "offset_from_serving_minutes": -int(str(entry["end_minute"])),
+            }
+            if isinstance(entry, dict)
+            else entry
+            for entry in timeline
+        )
+
     # Build mise en place from prep tasks
     prep_tasks = state.get("prep_tasks", ())
     safety_tasks = state.get("safety_tasks", ())
@@ -104,11 +120,15 @@ def render_confirmation_response(state: PlanState) -> ConfirmationPlanResponse:
     Sources assumptions from parsed recipes (inferred fields) and repair
     options from the feasibility check. Generates user-facing questions.
 
+    P0-06: also emits structured, client-submittable ApprovedDecisions so
+    the client can resubmit them verbatim instead of opaque string IDs.
+
     Args:
         state: Workflow state at any CONFIRMATION transition.
 
     Returns:
-        ConfirmationPlanResponse with assumptions, options, and questions.
+        ConfirmationPlanResponse with assumptions, options, decisions,
+        and questions.
     """
     request = state["request"]
 
@@ -130,12 +150,21 @@ def render_confirmation_response(state: PlanState) -> ConfirmationPlanResponse:
     if not questions:
         questions.append("Would you like to proceed with these options?")
 
+    # P0-06: plan revision — the confirmation the client will answer.
+    plan_revision = f"{request.request_id}:v1"
+
+    from cooking_plan_agent.repair.options import build_approved_decisions
+
+    decisions = build_approved_decisions(repair_options, plan_revision)
+
     return ConfirmationPlanResponse(
         plan_id=request.request_id,
         status="NEEDS_CONFIRMATION",
         assumptions=tuple(assumptions),
         repair_options=repair_options,
         questions=tuple(questions),
+        decisions=decisions,
+        plan_revision=plan_revision,
     )
 
 
