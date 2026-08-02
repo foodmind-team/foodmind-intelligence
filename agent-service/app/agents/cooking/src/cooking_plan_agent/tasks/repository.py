@@ -39,6 +39,7 @@ def _row_to_record(row: tuple[Any, ...]) -> TaskRecord:
         request_payload_json,
         thread_id,
         revision,
+        event_id,
         progress_json,
         result_json,
         error_json,
@@ -57,6 +58,7 @@ def _row_to_record(row: tuple[Any, ...]) -> TaskRecord:
         request_payload=json.loads(request_payload_json),
         thread_id=thread_id,
         revision=revision,
+        event_id=event_id,
         progress=_progress_from_json(progress_json),
         result=json.loads(result_json) if result_json else None,
         error=json.loads(error_json) if error_json else None,
@@ -150,6 +152,7 @@ class SQLiteTaskRepository(TaskRepository):
         request_payload   TEXT NOT NULL,
         thread_id         TEXT NOT NULL,
         revision          INTEGER NOT NULL DEFAULT 0,
+        event_id          INTEGER NOT NULL DEFAULT 0,
         progress          TEXT NOT NULL DEFAULT '{}',
         result            TEXT,
         error             TEXT,
@@ -164,6 +167,17 @@ class SQLiteTaskRepository(TaskRepository):
     CREATE INDEX IF NOT EXISTS idx_cooking_tasks_user ON cooking_tasks (user_id);
     """
 
+    # Columns introduced after the initial table definition. ``CREATE TABLE
+    # IF NOT EXISTS`` never alters an existing table, so a database created
+    # by an earlier release gets the missing columns via a lightweight ALTER
+    # TABLE in astart(); fresh databases already include them in _SCHEMA.
+    _ADDED_COLUMNS: dict[str, str] = {
+        "attempts": "attempts INTEGER NOT NULL DEFAULT 0",
+        "max_attempts": "max_attempts INTEGER NOT NULL DEFAULT 3",
+        "lease_expires_at": "lease_expires_at TEXT",
+        "event_id": "event_id INTEGER NOT NULL DEFAULT 0",
+    }
+
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._conn: Any | None = None
@@ -176,13 +190,24 @@ class SQLiteTaskRepository(TaskRepository):
         return self._conn
 
     async def astart(self) -> None:
-        """Open the SQLite connection and create the schema (idempotent)."""
+        """Open the SQLite connection, create the schema, and migrate columns."""
         import aiosqlite
 
         if self._conn is None:
             self._conn = await aiosqlite.connect(self._db_path)
             await self._conn.executescript(self._SCHEMA)
+            await self._migrate_columns()
             await self._conn.commit()
+
+    async def _migrate_columns(self) -> None:
+        """Add columns introduced after the initial schema to existing tables."""
+        cursor = await self.conn.execute("PRAGMA table_info(cooking_tasks)")
+        rows = await cursor.fetchall()
+        await cursor.close()
+        existing = {row[1] for row in rows}
+        for column, ddl in self._ADDED_COLUMNS.items():
+            if column not in existing:
+                await self.conn.execute(f"ALTER TABLE cooking_tasks ADD COLUMN {ddl}")
 
     async def close(self) -> None:
         conn = self._conn
@@ -201,6 +226,7 @@ class SQLiteTaskRepository(TaskRepository):
             json.dumps(record.request_payload, default=str),
             record.thread_id,
             record.revision,
+            record.event_id,
             record.progress.model_dump_json(),
             json.dumps(record.result, default=str) if record.result else None,
             json.dumps(record.error, default=str) if record.error else None,
@@ -214,7 +240,7 @@ class SQLiteTaskRepository(TaskRepository):
 
     _SELECT = """
         SELECT task_id, request_id, user_id, status, request_payload,
-               thread_id, revision, progress, result, error,
+               thread_id, revision, event_id, progress, result, error,
                created_at, updated_at, expires_at,
                attempts, max_attempts, lease_expires_at
         FROM cooking_tasks
@@ -233,10 +259,10 @@ class SQLiteTaskRepository(TaskRepository):
         if existing is not None:
             raise DuplicateRequestError(record.request_id)
         cols = (
-            "task_id, request_id, user_id, status, request_payload, thread_id, revision, progress, "
+            "task_id, request_id, user_id, status, request_payload, thread_id, revision, event_id, progress, "
             "result, error, created_at, updated_at, expires_at, attempts, max_attempts, lease_expires_at"
         )
-        placeholders = ", ".join("?" for _ in range(16))
+        placeholders = ", ".join("?" for _ in range(17))
         await self.conn.execute(
             f"INSERT INTO cooking_tasks ({cols}) VALUES ({placeholders})",
             self._columns(record),
@@ -254,10 +280,14 @@ class SQLiteTaskRepository(TaskRepository):
         # Conditional update keyed on the expected status (D2): the stored
         # row only moves when it is still in the state the caller observed,
         # so concurrent workers cannot clobber a newer revision.
+        # event_id is bumped in the same statement (P4-04): the increment
+        # happens atomically with the conditional write, so a stale writer
+        # that loses the race never produces a duplicate event ID.
         cursor = await self.conn.execute(
             """
             UPDATE cooking_tasks
             SET status=?, request_payload=?, thread_id=?, revision=?,
+                event_id = event_id + 1,
                 progress=?, result=?, error=?, updated_at=?, expires_at=?,
                 attempts=?, max_attempts=?, lease_expires_at=?
             WHERE task_id=? AND status=?
@@ -312,7 +342,8 @@ class SQLiteTaskRepository(TaskRepository):
             """
             UPDATE cooking_tasks
             SET status='RUNNING', updated_at=?, lease_expires_at=?,
-                attempts = attempts + 1
+                attempts = attempts + 1,
+                event_id = event_id + 1
             WHERE task_id = (
                 SELECT task_id FROM cooking_tasks
                 WHERE status='QUEUED'
