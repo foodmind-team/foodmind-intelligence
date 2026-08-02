@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -32,6 +33,7 @@ from cooking_plan_agent.tasks.models import (
     TaskProgress,
     TaskRecord,
     TaskStatus,
+    is_terminal,
     new_task_id,
     utc_now,
 )
@@ -80,6 +82,10 @@ class AsyncTaskService:
         self._lease_seconds = lease_seconds
         self._max_attempts = max_attempts
         self._worker_task: asyncio.Task[None] | None = None
+        # P4-04: SSE subscription registry — task_id -> subscriber queues.
+        # Subscribers are only ever notified after a successful persisted
+        # state change (see _notify call sites), never from in-memory state.
+        self._subscribers: dict[str, set[asyncio.Queue[TaskRecord]]] = {}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -169,7 +175,129 @@ class AsyncTaskService:
 
         cancelled = record.model_copy(update={"status": TaskStatus.CANCELLED, "updated_at": utc_now()})
         updated = await self._repo.update(cancelled, expected_status=record.status)
+        if updated is not None:
+            self._notify(updated)
         return updated or record
+
+    # -- SSE progress subscription (P4-04) -----------------------------------
+
+    async def subscribe(
+        self,
+        task_id: str,
+        last_event_id: int,
+        *,
+        keepalive_seconds: float | None = None,
+    ) -> AsyncIterator[TaskRecord | None]:
+        """Yield live task snapshots for an SSE progress stream (P4-04).
+
+        Behaviour:
+          - A task that does not exist yields nothing (the router maps the
+            absence to 404 before opening the stream).
+          - The current snapshot is replayed when ``last_event_id`` is
+            older (``Last-Event-ID`` recovery); a terminal task always
+            surfaces its final snapshot so a reconnecting client
+            immediately learns the task is done.
+          - Live worker updates are streamed via the subscription registry.
+            ``None`` is yielded every ``keepalive_seconds`` while idle so
+            the transport can emit an SSE comment frame; the stream closes
+            right after the terminal snapshot.
+        """
+        snapshot = await self._repo.get(task_id)
+        if snapshot is None:
+            return
+
+        queue: asyncio.Queue[TaskRecord] = asyncio.Queue()
+        self._register(task_id, queue)
+        try:
+            # Re-read AFTER registering so an update that lands between the
+            # snapshot read and registration is either delivered to the queue
+            # or superseded by this authoritative re-read — never lost.
+            current = await self._repo.get(task_id)
+            if current is None:
+                return
+            terminal = is_terminal(current.status)
+            if terminal or current.event_id > last_event_id:
+                yield current
+                last_event_id = current.event_id
+            if terminal:
+                return
+
+            while True:
+                record = await self._next_event(queue, keepalive_seconds)
+                if record is None:
+                    yield None  # idle keepalive tick — no state change
+                    continue
+                if record.event_id <= last_event_id:
+                    continue  # stale duplicate — never replayed
+                yield record
+                last_event_id = record.event_id
+                if is_terminal(record.status):
+                    return
+        finally:
+            self._unregister(task_id, queue)
+
+    @staticmethod
+    async def _next_event(
+        queue: asyncio.Queue[TaskRecord],
+        keepalive_seconds: float | None,
+    ) -> TaskRecord | None:
+        """Await the next snapshot, or None when the keepalive interval elapses.
+
+        Uses two explicit tasks so a timeout (or a generator close while the
+        subscription is idle) never leaves a pending ``queue.get`` future
+        behind. ``put_nowait`` on an unbounded queue cannot race this: an
+        item stays in the queue until a fresh ``get`` consumes it.
+        """
+        if keepalive_seconds is None:
+            return await queue.get()
+        get_task = asyncio.create_task(queue.get())
+        sleep_task = asyncio.create_task(asyncio.sleep(keepalive_seconds))
+        try:
+            await asyncio.wait({get_task, sleep_task}, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            get_task.cancel()
+            sleep_task.cancel()
+            raise
+        if get_task.done():
+            sleep_task.cancel()
+            try:
+                await sleep_task
+            except asyncio.CancelledError:
+                pass
+            return get_task.result()
+        # keepalive interval elapsed with no state change
+        get_task.cancel()
+        try:
+            await get_task
+        except asyncio.CancelledError:
+            pass
+        return None
+
+    def _register(self, task_id: str, queue: asyncio.Queue[TaskRecord]) -> None:
+        """Attach a subscriber queue to a task's fan-out set."""
+        self._subscribers.setdefault(task_id, set()).add(queue)
+
+    def _unregister(self, task_id: str, queue: asyncio.Queue[TaskRecord]) -> None:
+        """Detach a subscriber queue; drop empty task entries."""
+        subscribers = self._subscribers.get(task_id)
+        if subscribers is None:
+            return
+        subscribers.discard(queue)
+        if not subscribers:
+            self._subscribers.pop(task_id, None)
+
+    def _notify(self, record: TaskRecord) -> None:
+        """Fan out a persisted snapshot to every subscriber of the task (P4-04).
+
+        Called only after a successful conditional write (``update`` /
+        ``claim_available``), so subscribers observe the same atomic,
+        monotonic event_id sequence that a fresh reader would.
+        """
+        subscribers = self._subscribers.get(record.task_id)
+        if not subscribers:
+            return
+        for queue in tuple(subscribers):
+            queue.put_nowait(record)
 
     def _thread_id(self, request: GeneratePlanRequest) -> str:
         from cooking_plan_agent.infrastructure.checkpointer import build_thread_id
@@ -225,6 +353,7 @@ class AsyncTaskService:
             )
             updated = await self._repo.update(expired, expected_status=record.status)
             if updated is not None:
+                self._notify(updated)
                 logger.info(
                     "Task expired | task_id=%s | from=%s",
                     record.task_id,
@@ -245,11 +374,14 @@ class AsyncTaskService:
         record = await self._repo.claim_available(self._lease_seconds)
         if record is None:
             return
+        self._notify(record)  # P4-04: QUEUED -> RUNNING is a progress event
 
         heartbeat = asyncio.create_task(self._renew_heartbeat(record.task_id))
         try:
             terminal = await self._run_graph(record)
-            await self._repo.update(terminal, expected_status=TaskStatus.RUNNING)
+            updated = await self._repo.update(terminal, expected_status=TaskStatus.RUNNING)
+            if updated is not None:
+                self._notify(updated)  # P4-04: terminal snapshot -> done event
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — failure handling below
@@ -316,14 +448,15 @@ class AsyncTaskService:
                     ),
                 }
             )
-            await self._repo.update(dead, expected_status=TaskStatus.RUNNING)
+            updated = await self._repo.update(dead, expected_status=TaskStatus.RUNNING)
+            if updated is not None:
+                self._notify(updated)  # P4-04: dead-letter terminal -> done event
             logger.warning(
                 "Task dead-lettered | task_id=%s | attempts=%d",
                 record.task_id,
                 record.attempts,
             )
             return
-
         # Re-queue with a short backoff so a flapping task cannot busy-loop.
         # The hard TTL (expires_at) is never extended by a retry.
         backoff = min(30.0, 2.0**record.attempts)
@@ -341,7 +474,9 @@ class AsyncTaskService:
         )
         # Never requeue past the hard TTL: the worker loop will expire it.
         if requeued.expires_at is None or requeued.expires_at > utc_now():
-            await self._repo.update(requeued, expected_status=TaskStatus.RUNNING)
+            updated = await self._repo.update(requeued, expected_status=TaskStatus.RUNNING)
+            if updated is not None:
+                self._notify(updated)  # P4-04: re-queue progress event
             logger.info(
                 "Task re-queued after failure | task_id=%s | attempt=%d/%d",
                 record.task_id,
