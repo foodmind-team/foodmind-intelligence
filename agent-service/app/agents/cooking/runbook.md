@@ -12,8 +12,9 @@
 **Diagnosis**:
 
 ```bash
-# Check logs for error codes
-docker logs cooking-plan-agent 2>&1 | jq 'select(.level == "ERROR") | {code: .error_code, node: .node, message: .message}'
+# Check logs for error codes (P2-03: public messages come from the central
+# message catalog; diagnosis is keyed by error_code + correlation_id, not message text)
+docker logs cooking-plan-agent 2>&1 | jq 'select(.level == "ERROR" or (.msg | contains("Workflow FAILED"))) | {code: .error_code, node: .node, correlation_id: .correlation_id}'
 
 # Check structured metrics (if Prometheus is wired)
 curl localhost:8000/health/ready
@@ -24,10 +25,12 @@ curl localhost:8000/health/ready
 | Error Code | Action |
 |-----------|--------|
 | `SCHEDULE_VERIFICATION_FAILED` | **P1 alert** — indicates solver or verifier bug. Capture the failing request payload, solver status, and verifier issues. Roll back to previous image if rate > 1%. |
-| `SCHEDULE_MODEL_INVALID` | **P1 alert** — a model-construction bug (contradictory constraints, invalid scheduling problem shape). Capture the request payload and task graph; roll back if rate > 0.5%. |
-| `SCHEDULE_UNKNOWN` | **P2 alert** — solver hit its time limit before determining feasibility. Raised as a FAILED response, never as INFEASIBLE (P1-04). Review solver budget if rate climbs. |
-| `EXTERNAL_PROVIDER_UNAVAILABLE` | Check LLM/Search provider status. If provider is down, service degrades to local inference — this is expected. |
+| `SCHEDULE_MODEL_INVALID` | **P1 alert** — a model-construction bug (contradictory constraints, invalid scheduling problem shape). Retryable per the error catalog (P3-05). Capture the request payload and task graph; roll back if rate > 0.5%. |
+| `SCHEDULE_UNKNOWN` | **P2 alert** — solver hit its time limit before determining feasibility. Retryable per the error catalog (P3-05). Raised as a FAILED response, never as INFEASIBLE (P1-04). Review solver budget if rate climbs. |
+| `EXTERNAL_PROVIDER_UNAVAILABLE` | Check LLM/Search provider status. Retryable per the error catalog (P3-05). If provider is down, service degrades to local inference — this is expected. |
 | `INTERNAL_ERROR` | Check logs for unexpected exceptions. May indicate a code defect. |
+
+> **P2-03 note**: client-facing `message` in FAILED responses always resolves through the public message catalog (`domain/errors.py` → `_PUBLIC_MESSAGES`), never from node exceptions. Missing catalog rows fail closed to `INTERNAL_ERROR`. To trace an incident, use `correlation_id` (present in response body and logs) — do not rely on the public message text.
 
 **Rollback**: `docker run -d --name cpa-rollback <previous-image-digest>`
 

@@ -29,7 +29,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from cooking_plan_agent.domain.errors import DomainErrorCode, WorkflowException, is_retryable
+from cooking_plan_agent.domain.errors import (
+    DomainErrorCode,
+    WorkflowException,
+    is_retryable,
+    public_message_for,
+)
 from cooking_plan_agent.domain.models import ErrorEnvelope
 
 logger = logging.getLogger(__name__)
@@ -146,10 +151,10 @@ async def workflow_exception_handler(
     assert isinstance(exc, WorkflowException)
     correlation_id = _correlation_id(request)
     logger.warning(
-        "WorkflowException caught | code=%s | correlation_id=%s | message=%s",
+        "WorkflowException caught | code=%s | correlation_id=%s | exception_type=%s",
         exc.code.value,
         correlation_id,
-        exc.message,
+        type(exc).__name__,
     )
     return JSONResponse(
         status_code=200,
@@ -157,7 +162,9 @@ async def workflow_exception_handler(
             "status": "FAILED",
             "error_code": exc.code.value,
             "correlation_id": correlation_id,
-            "message": exc.message,
+            # P2-03: client-facing text always resolves through the public
+            # message catalog — never echoes the exception message.
+            "message": public_message_for(exc.code.value),
         },
     )
 

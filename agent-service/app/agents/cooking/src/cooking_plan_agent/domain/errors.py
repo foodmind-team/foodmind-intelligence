@@ -82,6 +82,11 @@ class DomainErrorCode(StrEnum):
     # time_limit_minutes).
     INVALID_TIME_LIMIT = "INVALID_TIME_LIMIT"
 
+    # The serving time is malformed or ambiguous: not a valid HH:MM string,
+    # or a serving_at instant without a timezone offset (P0-05). The client
+    # must resubmit a well-formed time expression.
+    INVALID_SERVING_TIME = "INVALID_SERVING_TIME"
+
     # An approved decision in the request is invalid: unsupported type,
     # conflicting combination, unknown/stale plan_revision, or malformed
     # payload (P0-06).
@@ -312,3 +317,62 @@ def is_retryable(error_code: str) -> bool:
 def retryable_error_codes() -> tuple[str, ...]:
     """Return the sorted set of catalogued retryable codes (audit/report)."""
     return tuple(sorted(_RETRYABLE_ERROR_CODES))
+
+
+# ===========================================================================
+# Public message catalog (P2-03) — stable, sanitised client-facing text
+# ===========================================================================
+# Single source of truth for FAILED response messages. Every registered
+# error code has one stable public message that is free of secrets, provider
+# payloads, recipe text and raw exception details. Nodes never build their
+# own client-facing strings; the renderers resolve them here. Unknown codes
+# fail closed to INTERNAL_ERROR instead of echoing raw message text.
+#
+# Retry semantics deliberately live in _RETRYABLE_ERROR_CODES (P3-05) — this
+# catalog is content-only to keep a single source of truth for retryability.
+
+_PUBLIC_MESSAGES: dict[str, str] = {
+    DomainErrorCode.INVALID_RECIPE_TEXT.value: ("The recipe text could not be parsed into a usable recipe."),
+    DomainErrorCode.DUPLICATE_RECIPE_ID.value: ("The request contains duplicate recipe identifiers."),
+    DomainErrorCode.TOO_MANY_RECIPES.value: ("The request contains more recipes than the service allows."),
+    DomainErrorCode.RECIPE_TEXT_TOO_LARGE.value: ("One or more recipe texts exceed the allowed size limit."),
+    DomainErrorCode.REQUEST_TOO_LARGE.value: ("The request exceeds the allowed total size."),
+    DomainErrorCode.UNSUPPORTED_SCHEMA_VERSION.value: ("The request schema version is not supported."),
+    DomainErrorCode.INVALID_TIME_LIMIT.value: "The time limit is invalid.",
+    DomainErrorCode.INVALID_SERVING_TIME.value: "The serving time is invalid.",
+    DomainErrorCode.INVALID_APPROVED_DECISION.value: ("One or more approved decisions are invalid or conflicting."),
+    DomainErrorCode.REQUEST_VALIDATION_ERROR.value: ("The request failed validation."),
+    DomainErrorCode.UNSUPPORTED_UNIT_CONVERSION.value: ("A required unit conversion is not supported."),
+    DomainErrorCode.SAFETY_CONSTRAINT_VIOLATION.value: ("A food-safety constraint cannot be satisfied."),
+    DomainErrorCode.SAFETY_POLICY_UNAVAILABLE.value: (
+        "The food-safety policy for the requested region is unavailable."
+    ),
+    DomainErrorCode.INSUFFICIENT_INVENTORY.value: ("There is not enough inventory to fulfil the plan."),
+    DomainErrorCode.NO_COMPATIBLE_RESOURCE.value: ("No compatible kitchen resource is available."),
+    DomainErrorCode.TASK_GRAPH_CYCLE.value: ("The task dependency graph is invalid."),
+    DomainErrorCode.SCHEDULE_INFEASIBLE.value: ("No feasible schedule exists under the current constraints."),
+    DomainErrorCode.SCHEDULE_UNKNOWN.value: (
+        "The scheduler could not determine a feasible schedule within the time limit."
+    ),
+    DomainErrorCode.SCHEDULE_MODEL_INVALID.value: ("The scheduling model is invalid."),
+    DomainErrorCode.SCHEDULE_VERIFICATION_FAILED.value: ("The generated schedule failed verification."),
+    DomainErrorCode.EXTERNAL_PROVIDER_UNAVAILABLE.value: ("An external service is temporarily unavailable."),
+    DomainErrorCode.INTERNAL_ERROR.value: "An unexpected internal error occurred.",
+}
+
+
+def public_message_for(error_code: str) -> str:
+    """Return the stable client-facing message for ``error_code``.
+
+    Unknown codes fail closed to the INTERNAL_ERROR message (P2-03) — the
+    caller must never fall back to echoing raw exception text.
+    """
+    return _PUBLIC_MESSAGES.get(
+        error_code,
+        _PUBLIC_MESSAGES[DomainErrorCode.INTERNAL_ERROR.value],
+    )
+
+
+def is_known_error_code(error_code: str) -> bool:
+    """True when ``error_code`` has a registered public message row."""
+    return error_code in _PUBLIC_MESSAGES

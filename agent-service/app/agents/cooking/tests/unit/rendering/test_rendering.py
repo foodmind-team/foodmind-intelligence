@@ -497,24 +497,65 @@ class TestRenderInfeasibleResponse:
 
 
 class TestRenderFailedResponse:
-    def test_error_from_state(self):
+    def test_error_from_state_uses_catalog_message(self):
+        # P2-03: public text comes from the message catalog, never the node's
+        # internal message.
         error = WorkflowError(
-            error_code="TEST_ERROR",
-            message="Test failure",
+            error_code="SCHEDULE_UNKNOWN",
+            message="internal diagnostic detail",
             correlation_id="corr-123",
         )
         state = _make_state(error=error)
         response = render_failed_response(state)
         assert isinstance(response, FailedPlanResponse)
-        assert response.error_code == "TEST_ERROR"
+        assert response.error_code == "SCHEDULE_UNKNOWN"
         assert response.correlation_id == "corr-123"
-        assert response.message == "Test failure"
+        assert response.message == ("The scheduler could not determine a feasible schedule within the time limit.")
+
+    def test_internal_message_never_leaks(self):
+        # A node message containing secrets must never reach the response —
+        # the catalog text wins (P2-03).
+        error = WorkflowError(
+            error_code="SCHEDULE_UNKNOWN",
+            message="Bearer token=sk-abc123 provider_payload",
+            correlation_id="corr-123",
+        )
+        response = render_failed_response(_make_state(error=error))
+        assert "sk-abc123" not in response.message
+        assert "provider_payload" not in response.message
+
+    def test_public_message_override(self):
+        # A node may explicitly override the catalog text, provided it stays
+        # free of sensitive detail.
+        error = WorkflowError(
+            error_code="SCHEDULE_UNKNOWN",
+            message="internal",
+            public_message="The scheduler timed out; please retry.",
+            correlation_id="corr-123",
+        )
+        response = render_failed_response(_make_state(error=error))
+        assert response.message == "The scheduler timed out; please retry."
+
+    def test_unknown_error_code_fails_closed(self):
+        # P2-03: an error code without a catalog row must fail closed to
+        # INTERNAL_ERROR instead of echoing the raw message.
+        error = WorkflowError(
+            error_code="TEST_ERROR",
+            message="raw exception details",
+            correlation_id="corr-123",
+        )
+        response = render_failed_response(_make_state(error=error))
+        assert response.error_code == "INTERNAL_ERROR"
+        assert response.correlation_id == "corr-123"
+        assert response.message == "An unexpected internal error occurred."
+        assert "raw exception details" not in response.message
 
     def test_fallback_when_no_error(self):
         state = _make_state()
         response = render_failed_response(state)
         assert response.error_code == "INTERNAL_ERROR"
         assert response.correlation_id == "req-1"
+        assert response.message == "An unexpected internal error occurred."
 
 
 # ======================================================================

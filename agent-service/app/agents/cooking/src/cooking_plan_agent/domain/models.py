@@ -534,13 +534,28 @@ class ApprovedDecision(StrictModel):
 
 
 class WorkflowError(StrictModel):
-    """Structured error for workflow-level failures."""
+    """Structured error for workflow-level failures.
+
+    P2-03: the client-facing text is resolved from the centralised public
+    message catalog (domain.errors) — ``message`` is an internal diagnostic
+    and must never leak provider payloads, secrets or recipe text. A node
+    may explicitly override the public text with ``public_message`` (still
+    free of sensitive detail); otherwise the catalog row decides.
+    """
 
     error_code: str
+    # Internal diagnostic message for logs/support. Not rendered verbatim to
+    # the client — the catalog row for error_code provides the public text.
     message: str
     correlation_id: str
     node_name: str | None = None
     recoverable: bool = False
+    # Optional explicit override of the catalog's public message. Must stay
+    # stable and free of sensitive detail; None falls back to the catalog.
+    public_message: str | None = None
+    # Controlled diagnostic context (e.g. exception_type) for internal logs
+    # only. Must not contain secrets or raw provider payloads.
+    diagnostics: dict[str, str] | None = None
 
 
 # ---------------------------------------------------------------------------
