@@ -1,4 +1,4 @@
-from datetime import date  # Date type for expiry_date (no time component needed)
+from datetime import date, datetime  # Date type for expiry_date (no time component needed)
 from decimal import Decimal  # Exact decimal arithmetic — never float for inventory
 from typing import (  # Typed annotation composition (e.g. PositiveDecimal)
     Annotated,
@@ -382,6 +382,32 @@ class RecipeGap(StrictModel):
 # ---------------------------------------------------------------------------
 
 
+class SafetyInsertion(StrictModel):
+    """A structured safety-task insertion anchored between recipe steps (P0-07).
+
+    Produced by safety rules (e.g. cross-contamination) instead of bare
+    task IDs. Carries the exact step anchors so merge_preparation can build
+    the ``raw task → sanitise task → RTE task`` dependency chain:
+
+      - after_step_number: the LAST step that must finish before the safety
+        task starts (e.g. raw protein handling).
+      - before_step_number: the FIRST step that must start after the safety
+        task ends (e.g. ready-to-eat assembly/plating).
+
+    Duration and resources come from policy configuration — never the old
+    fixed 1-minute placeholder.
+    """
+
+    insertion_id: str
+    rule_id: str
+    recipe_id: str
+    after_step_number: int | None = None
+    before_step_number: int | None = None
+    task_instruction: str
+    duration_minutes: int = Field(ge=1)
+    required_resources: tuple[str, ...] = ()
+
+
 class SafetyFinding(StrictModel):
     """Output of a single safety rule evaluation."""
 
@@ -392,6 +418,9 @@ class SafetyFinding(StrictModel):
     affected_ingredient_names: tuple[str, ...] = ()
     recommended_action: str | None = None
     evidence: tuple[EvidenceRef, ...] = ()
+    # P0-07: structured insertion template when the finding is repairable by
+    # injecting a safety task between two recipe steps.
+    insertion: SafetyInsertion | None = None
 
 
 class SafetyReport(StrictModel):
@@ -402,6 +431,8 @@ class SafetyReport(StrictModel):
     is_safe: bool
     has_unrepairable: bool
     required_safety_task_ids: tuple[str, ...] = ()
+    # P0-07: structured insertions anchored between recipe steps.
+    insertions: tuple[SafetyInsertion, ...] = ()
 
 
 class SafetyContext(StrictModel):
@@ -450,6 +481,27 @@ class RepairOption(StrictModel):
     revalidation_status: str = "validated"
 
 
+class ApprovedDecision(StrictModel):
+    """A structured, client-submittable decision (P0-06).
+
+    Unlike a bare option_id string, an ApprovedDecision carries:
+      - option_id:  which presented option was chosen
+      - option_type: one of the five supported decision kinds
+      - payload:    machine-readable values (servings, minutes, ingredient
+                    substitution, resource alternative, dish to replace)
+      - plan_revision: version of the confirmation response the client is
+                    answering — used to reject stale confirmations
+
+    The confirmation response returns these verbatim; the client resubmits
+    them in the next request's approved_decisions field.
+    """
+
+    option_id: str
+    option_type: str
+    payload: dict[str, object] = {}
+    plan_revision: str | None = None
+
+
 class WorkflowError(StrictModel):
     """Structured error for workflow-level failures."""
 
@@ -487,11 +539,23 @@ class GeneratePlanRequest(StrictModel):
     dietary_restrictions: tuple[str, ...] = ()
     user_allergens: tuple[str, ...] = ()
     time_limit_minutes: int | None = None
+    # --- Time semantics (P0-05) ---
+    # cooking_date: the calendar day the plan is executed on. Drives the
+    # safety engine's expired-lot check and FEFO inventory allocation.
+    cooking_date: date | None = None
+    # serving_at: absolute serving time WITH timezone. Only when both date
+    # and timezone are known is this converted to an absolute instant; the
+    # legacy `serving_time` (HH:MM string) is kept for back-compat but is
+    # never treated as an absolute wall-clock by itself.
+    serving_at: datetime | None = None
     serving_time: str | None = None
     inventory_lots: tuple["InventoryLotSnapshot", ...] = ()
     kitchen_resources: tuple["KitchenResourceSnapshot", ...] = ()
-    approved_decisions: tuple[str, ...] = ()
+    approved_decisions: tuple["ApprovedDecision", ...] = ()
     schema_version: str = "1.0"
+    # Revision of the confirmation response these decisions answer (P0-06).
+    # Used to reject stale confirmations when the plan has changed.
+    plan_revision: str | None = None
 
 
 class ReadyPlanResponse(StrictModel):
@@ -508,13 +572,20 @@ class ReadyPlanResponse(StrictModel):
 
 
 class ConfirmationPlanResponse(StrictModel):
-    """NEEDS_CONFIRMATION response."""
+    """NEEDS_CONFIRMATION response.
+
+    ``decisions`` carries the structured, client-submittable approved
+    decisions (P0-06). The client resubmits these verbatim in the next
+    request's ``approved_decisions`` field.
+    """
 
     plan_id: str
     status: str = "NEEDS_CONFIRMATION"
     assumptions: tuple["Assumption", ...] = ()
     repair_options: tuple["RepairOption", ...] = ()
     questions: tuple[str, ...] = ()
+    decisions: tuple["ApprovedDecision", ...] = ()
+    plan_revision: str | None = None
 
 
 class InfeasiblePlanResponse(StrictModel):

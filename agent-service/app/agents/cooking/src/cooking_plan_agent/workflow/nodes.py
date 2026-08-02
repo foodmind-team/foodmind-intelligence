@@ -29,11 +29,18 @@ from cooking_plan_agent.workflow.state import PlanState
 # ============================================================================
 
 
+def _solver_timeout() -> float:
+    """Return the configured CP-SAT solver timeout in seconds (P0-05)."""
+    from cooking_plan_agent.config.settings import get_settings
+
+    return get_settings().solver_timeout_seconds
+
+
 async def validate_input_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
 ) -> dict[str, object]:
-    """Validate the incoming GeneratePlanRequest (P0-03).
+    """Validate the incoming GeneratePlanRequest (P0-03, P0-05).
 
     Checks (in order so the FIRST violation wins):
       1. Non-empty recipes
@@ -147,6 +154,64 @@ async def validate_input_node(
                 node_name="validate_input",
             )
         }
+
+    # --- P0-05 time semantics ---
+
+    # 8. serving_time must be a valid HH:MM string (legacy field).
+    if request.serving_time is not None:
+        parts = request.serving_time.split(":")
+        valid = (
+            len(parts) == 2
+            and parts[0].isdigit()
+            and parts[1].isdigit()
+            and 0 <= int(parts[0]) <= 23
+            and 0 <= int(parts[1]) <= 59
+        )
+        if not valid:
+            return {
+                "error": WorkflowError(
+                    error_code="INVALID_SERVING_TIME",
+                    message=f"serving_time must be HH:MM, got {request.serving_time!r}",
+                    correlation_id=request.request_id,
+                    node_name="validate_input",
+                )
+            }
+
+    # 9. serving_at must carry a timezone (never treated as local wall-clock).
+    if request.serving_at is not None:
+        if request.serving_at.tzinfo is None or request.serving_at.utcoffset() is None:
+            return {
+                "error": WorkflowError(
+                    error_code="INVALID_SERVING_TIME",
+                    message="serving_at must include a timezone offset",
+                    correlation_id=request.request_id,
+                    node_name="validate_input",
+                )
+            }
+
+    # 10. Approved decisions (P0-06): structural + revision validation.
+    if request.approved_decisions:
+        from cooking_plan_agent.repair.options import validate_approved_decisions
+
+        issues = validate_approved_decisions(request.approved_decisions, request.plan_revision)
+        if issues:
+            return {
+                "error": WorkflowError(
+                    error_code=DomainErrorCode.INVALID_APPROVED_DECISION.value,
+                    message="; ".join(issues),
+                    correlation_id=request.request_id,
+                    node_name="validate_input",
+                )
+            }
+
+        # Apply decisions as a pure transformation → the downstream pipeline
+        # (safety, feasibility, scheduling) re-runs against the RESOLVED
+        # request, never bypassing hard rules (P0-06 rule 6).
+        from cooking_plan_agent.repair.options import apply_approved_decisions_structured
+
+        resolved = apply_approved_decisions_structured(request, request.approved_decisions)
+        if resolved is not request:
+            return {"request": resolved}
 
     return {}
 
@@ -414,6 +479,14 @@ async def validate_recipe_ir_node(
                 )
             }
 
+    # P0-06: apply substitute_ingredient decisions as a RecipeIR patch so
+    # safety (allergen) and feasibility checks re-run against the NEW
+    # ingredient — hard rules are never bypassed (rule 6).
+    if request.approved_decisions:
+        from cooking_plan_agent.repair.options import apply_ingredient_substitutions_patch
+
+        recipes = list(apply_ingredient_substitutions_patch(tuple(recipes), request.approved_decisions))
+
     # Semantic validation
     report = validate_recipe_ir_semantics(tuple(recipes))
     if not report.passed:
@@ -468,7 +541,7 @@ async def validate_safety_node(
         dietary_restrictions=request.dietary_restrictions,
         user_allergens=request.user_allergens,
         inventory_lots=request.inventory_lots,
-        cooking_date=None,  # MVP: no cooking date from request yet
+        cooking_date=request.cooking_date,
     )
 
     report = safety_engine.evaluate(context)
@@ -502,7 +575,7 @@ async def check_feasibility_node(
     ingredient_report = check_all_inventory(
         requirements=tuple(all_ingredients),
         lots=request.inventory_lots,
-        cooking_date=None,  # MVP: no cooking_date from request yet
+        cooking_date=request.cooking_date,
     )
 
     # --- Resource pre-check (from step hints, pre-decomposition) ---
@@ -579,8 +652,10 @@ async def merge_preparation_node(
 
     Safety tasks are generated from the safety report when present.
     """
+    from uuid import uuid4
+
     from cooking_plan_agent.domain.enums import WorkMode
-    from cooking_plan_agent.domain.models import CookingTask, TaskDependency
+    from cooking_plan_agent.domain.models import CookingTask, ResourceNeed, TaskDependency
     from cooking_plan_agent.preparation.decompose import decompose_step
 
     parsed_recipes = state.get("parsed_recipes", ())
@@ -590,9 +665,13 @@ async def merge_preparation_node(
     all_recipe_tasks: list[CookingTask] = []
     # Track the last task of each recipe to chain subsequent steps
     recipe_last_task: dict[str, str] = {}
+    # P0-07: per-recipe map step_number → (first_task_id, last_task_id) so
+    # safety insertions can anchor between exact recipe steps.
+    step_task_anchors: dict[str, dict[int, tuple[str, str]]] = {}
 
     for recipe in parsed_recipes:
         last_task_id: str | None = None
+        anchors: dict[int, tuple[str, str]] = {}
         for step in recipe.steps:
             tasks = decompose_step(recipe.recipe_id, step)
             if not tasks:
@@ -607,24 +686,77 @@ async def merge_preparation_node(
 
             all_recipe_tasks.extend(tasks)
             last_task_id = tasks[-1].task_id
+            anchors[step.step_number] = (tasks[0].task_id, tasks[-1].task_id)
 
+        step_task_anchors[recipe.recipe_id] = anchors
         if last_task_id is not None:
             recipe_last_task[recipe.recipe_id] = last_task_id
 
-    # --- Safety tasks (inject from safety report if present) ---
+    # --- Safety tasks (P0-07: anchored insertions from the safety report) ---
     safety_task_list: list[CookingTask] = []
     safety_report = state.get("safety_report")
-    if safety_report is not None and safety_report.required_safety_task_ids:
+    if safety_report is not None:
+        # 1. Structured insertions with exact step anchors.
+        for insertion in safety_report.insertions:
+            anchors = step_task_anchors.get(insertion.recipe_id, {})
+            after_pair = anchors.get(insertion.after_step_number) if insertion.after_step_number is not None else None
+            before_pair = (
+                anchors.get(insertion.before_step_number) if insertion.before_step_number is not None else None
+            )
+            _after_first, after_last = after_pair if after_pair is not None else (None, None)
+            before_first, _before_last = before_pair if before_pair is not None else (None, None)
+
+            task_id = f"safety_{insertion.insertion_id}_{uuid4().hex[:8]}"
+            deps: list[TaskDependency] = []
+            if after_last is not None:
+                # raw task → sanitise task
+                deps.append(TaskDependency(predecessor_id=after_last))
+            resources = tuple(
+                ResourceNeed(quantity=1, resource_type=r) for r in insertion.required_resources
+            )
+            task = CookingTask(
+                task_id=task_id,
+                dish_id=insertion.recipe_id,
+                instruction=insertion.task_instruction,
+                duration_minutes=insertion.duration_minutes,
+                work_mode=WorkMode.ACTIVE,
+                category="safety",
+                dependencies=tuple(deps),
+                resources=resources,
+                safety_tags=(insertion.rule_id,),
+            )
+            safety_task_list.append(task)
+
+            # 2. sanitise task → RTE task (reverse dependency on the RTE head)
+            if before_first is not None:
+                rte_task = next((t for t in all_recipe_tasks if t.task_id == before_first), None)
+                if rte_task is not None:
+                    rte_dep = TaskDependency(predecessor_id=task_id)
+                    updated = rte_task.model_copy(
+                        update={"dependencies": rte_task.dependencies + (rte_dep,)}
+                    )
+                    for idx, t in enumerate(all_recipe_tasks):
+                        if t.task_id == before_first:
+                            all_recipe_tasks[idx] = updated
+                            break
+
+        # 3. Fallback: legacy bare task IDs (no anchors) — keep the old
+        #    behaviour for rules that still emit IDs only.
+        anchored_ids = {s.insertion_id for s in safety_report.insertions}
         for task_id in safety_report.required_safety_task_ids:
+            if any(s.rule_id.lower() in task_id for s in safety_report.insertions):
+                continue  # already materialised via insertion above
             task = CookingTask(
                 task_id=task_id,
                 dish_id="_safety",
                 instruction=f"Safety task: {task_id}",
-                duration_minutes=1,
+                duration_minutes=3,
                 work_mode=WorkMode.ACTIVE,
                 category="safety",
+                safety_tags=(task_id,),
             )
             safety_task_list.append(task)
+        _ = anchored_ids  # keep for clarity
 
     return {
         "recipe_tasks": tuple(all_recipe_tasks),
@@ -703,6 +835,8 @@ async def solve_schedule_node(
     problem = SchedulingProblem(
         tasks=task_graph.tasks,
         resources=state["request"].kitchen_resources,
+        requested_time_limit_minutes=state["request"].time_limit_minutes,
+        solver_timeout_seconds=_solver_timeout(),
     )
 
     try:
@@ -761,6 +895,8 @@ async def verify_schedule_node(
     problem = SchedulingProblem(
         tasks=task_graph.tasks,
         resources=state["request"].kitchen_resources,
+        requested_time_limit_minutes=state["request"].time_limit_minutes,
+        solver_timeout_seconds=_solver_timeout(),
     )
 
     try:
