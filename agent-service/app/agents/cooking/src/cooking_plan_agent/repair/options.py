@@ -13,9 +13,12 @@ from uuid import uuid4
 
 from cooking_plan_agent.domain.models import (
     ApprovedDecision,
+    ConfirmationQuestion,
     FeasibilityReport,
     GeneratePlanRequest,
     IngredientFeasibility,
+    QuestionAnswer,
+    QuestionResponseType,
     RecipeIR,
     RepairOption,
     StrictModel,
@@ -916,3 +919,114 @@ def apply_ingredient_substitutions_patch(
             recipe = recipe.model_copy(update={"ingredients": tuple(new_ingredients)})
         patched.append(recipe)
     return tuple(patched)
+
+
+# =============================================================================
+# P4-02  Structured confirmation answers → ApprovedDecision mapping
+# =============================================================================
+
+# Bounded free-text answer length (P4-02 rule 5: bound length/types).
+_MAX_TEXT_ANSWER_LENGTH = 500
+
+
+class ConfirmationAnswersError(ValueError):
+    """Raised when a set of confirmation answers is invalid (P4-02).
+
+    Carries the individual issues (unknown question_id, invalid option,
+    missing required answer, duplicate answer, over-length text) so the
+    caller can produce field-level fix guidance (P2-04 fault matrix).
+    """
+
+    def __init__(self, issues: tuple[str, ...]) -> None:
+        self.issues = issues
+        super().__init__("; ".join(issues))
+
+
+def answers_to_approved_decisions(
+    questions: tuple[ConfirmationQuestion, ...],
+    answers: tuple[QuestionAnswer, ...],
+    plan_revision: str | None,
+    presented_decisions: tuple[ApprovedDecision, ...] = (),
+) -> tuple[ApprovedDecision, ...]:
+    """Validate client answers and map them losslessly to ApprovedDecision.
+
+    Validation (P4-02 rule 4 / P2-04 fault matrix):
+      - every answer's question_id must exist in the presented questions;
+      - no duplicate answers for the same question;
+      - every required question must be answered;
+      - CHOICE answers must hit exactly one of the question's option values;
+      - TEXT answers must be non-empty and bounded in length.
+
+    Mapping (D9): only CHOICE answers that select a presented repair
+    decision emit an ApprovedDecision — the EXACT object that was
+    presented (looked up by option_id), so the payload is preserved
+    verbatim with zero rewriting. Gap/assumption answers are validated
+    but have no ApprovedDecision carrier yet (contract v2).
+
+    Args:
+        questions: The ConfirmationQuestions presented to the client.
+        answers: The client's submitted QuestionAnswers.
+        plan_revision: The revision of the confirmation being answered.
+        presented_decisions: The ApprovedDecisions carried by the
+            confirmation response (used to map option values verbatim).
+
+    Returns:
+        The decisions to resubmit in the next request's
+        ``approved_decisions`` field.
+
+    Raises:
+        ConfirmationAnswersError: With field-level fix guidance when any
+            answer fails validation.
+    """
+    issues: list[str] = []
+    by_id: dict[str, ConfirmationQuestion] = {q.question_id: q for q in questions}
+    answered_ids: set[str] = set()
+
+    for answer in answers:
+        question = by_id.get(answer.question_id)
+        if question is None:
+            issues.append(f"unknown question_id: {answer.question_id}")
+            continue
+        if answer.question_id in answered_ids:
+            issues.append(f"duplicate answer for question_id: {answer.question_id}")
+        answered_ids.add(answer.question_id)
+
+        value = answer.value.strip()
+        if question.response_type == QuestionResponseType.CHOICE:
+            valid_values = {option.value for option in question.options}
+            if value not in valid_values:
+                issues.append(
+                    f"invalid option for question {answer.question_id!r}: {answer.value!r}; "
+                    f"allowed: {sorted(valid_values)}"
+                )
+        else:
+            if not value:
+                issues.append(f"empty answer for question {answer.question_id!r}")
+            elif len(value) > _MAX_TEXT_ANSWER_LENGTH:
+                issues.append(
+                    f"answer for question {answer.question_id!r} exceeds {_MAX_TEXT_ANSWER_LENGTH} characters"
+                )
+
+    # Required questions must all be answered.
+    for question in questions:
+        if question.required and question.question_id not in answered_ids:
+            issues.append(f"missing required answer for question {question.question_id!r}")
+
+    if issues:
+        raise ConfirmationAnswersError(tuple(issues))
+
+    # Lossless mapping: an answer selects a presented decision verbatim
+    # (by option_id); payload is never rebuilt from prose (D9).
+    decisions_by_option_id: dict[str, ApprovedDecision] = {d.option_id: d for d in presented_decisions}
+    mapped: list[ApprovedDecision] = []
+    for answer in answers:
+        decision = decisions_by_option_id.get(answer.value)
+        if decision is None:
+            continue
+        if plan_revision is not None and decision.plan_revision != plan_revision:
+            # Keep the decision's payload/type; only rebind the revision the
+            # client is answering. This is a metadata update, not a payload
+            # rewrite (D9).
+            decision = decision.model_copy(update={"plan_revision": plan_revision})
+        mapped.append(decision)
+    return tuple(mapped)
