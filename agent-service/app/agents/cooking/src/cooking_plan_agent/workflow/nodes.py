@@ -8,6 +8,7 @@ No broad exception catching that masks errors as partial success.
 # LangGraph runtime type — context is injected by the framework
 from langgraph.runtime import Runtime
 
+from cooking_plan_agent.domain.errors import DomainErrorCode
 from cooking_plan_agent.domain.models import (
     Assumption,
     ExtractedRecipeCandidate,
@@ -32,25 +33,121 @@ async def validate_input_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
 ) -> dict[str, object]:
-    """Validate the incoming GeneratePlanRequest.
+    """Validate the incoming GeneratePlanRequest (P0-03).
 
-    Checks: non-empty recipes, reasonable serving/task counts, schema version.
-    STUB: passes through. Full validation when contract is finalized.
+    Checks (in order so the FIRST violation wins):
+      1. Non-empty recipes
+      2. recipe_id uniqueness
+      3. Recipe count vs Settings.max_recipe_count
+      4. Per-recipe text byte size vs Settings.max_recipe_text_bytes
+      5. Total serialised request size vs Settings.max_request_bytes
+      6. schema_version in Settings.supported_schema_versions
+      7. time_limit_minutes is non-negative
 
     Returns an empty dict on success or {'error': WorkflowError} on failure.
-    The graph does NOT have an error edge from validate_input, so an error
-    here will propagate as a runtime exception.
+    The graph routes any error straight to the FAILED terminal.
     """
+    from cooking_plan_agent.config.settings import get_settings
+
     request = state["request"]
+    settings = get_settings()
+
+    # 1. Non-empty recipes — keep the original request error code (P0-03:
+    #    must not be overwritten by downstream SCHEDULE_INFEASIBLE).
     if not request.recipes:
         return {
             "error": WorkflowError(
-                error_code="INVALID_RECIPE_TEXT",
+                error_code=DomainErrorCode.INVALID_RECIPE_TEXT.value,
                 message="Request contains no recipes",
                 correlation_id=request.request_id,
                 node_name="validate_input",
             )
         }
+
+    # 2. Duplicate recipe IDs
+    seen: set[str] = set()
+    for recipe in request.recipes:
+        if recipe.recipe_id in seen:
+            return {
+                "error": WorkflowError(
+                    error_code=DomainErrorCode.DUPLICATE_RECIPE_ID.value,
+                    message=f"Duplicate recipe_id: {recipe.recipe_id}",
+                    correlation_id=request.request_id,
+                    node_name="validate_input",
+                )
+            }
+        seen.add(recipe.recipe_id)
+
+    # 3. Recipe count cap
+    if len(request.recipes) > settings.max_recipe_count:
+        return {
+            "error": WorkflowError(
+                error_code=DomainErrorCode.TOO_MANY_RECIPES.value,
+                message=(
+                    f"Request contains {len(request.recipes)} recipes, "
+                    f"max allowed is {settings.max_recipe_count}"
+                ),
+                correlation_id=request.request_id,
+                node_name="validate_input",
+            )
+        }
+
+    # 4. Per-recipe text byte cap
+    for recipe in request.recipes:
+        text_bytes = len(recipe.text.encode("utf-8"))
+        if text_bytes > settings.max_recipe_text_bytes:
+            return {
+                "error": WorkflowError(
+                    error_code=DomainErrorCode.RECIPE_TEXT_TOO_LARGE.value,
+                    message=(
+                        f"Recipe '{recipe.recipe_id}' text is {text_bytes} bytes, "
+                        f"max allowed is {settings.max_recipe_text_bytes}"
+                    ),
+                    correlation_id=request.request_id,
+                    node_name="validate_input",
+                )
+            }
+
+    # 5. Total serialised request size
+    try:
+        total_bytes = len(request.model_dump_json().encode("utf-8"))
+    except Exception:  # noqa: BLE001 — serialisation must not crash validation
+        total_bytes = 0
+    if total_bytes > settings.max_request_bytes:
+        return {
+            "error": WorkflowError(
+                error_code=DomainErrorCode.REQUEST_TOO_LARGE.value,
+                message=f"Request is {total_bytes} bytes, max allowed is {settings.max_request_bytes}",
+                correlation_id=request.request_id,
+                node_name="validate_input",
+            )
+        }
+
+    # 6. schema_version support
+    if request.schema_version not in settings.supported_schema_versions:
+        return {
+            "error": WorkflowError(
+                error_code=DomainErrorCode.UNSUPPORTED_SCHEMA_VERSION.value,
+                message=(
+                    f"schema_version '{request.schema_version}' is not supported; "
+                    f"supported versions: {sorted(settings.supported_schema_versions)}"
+                ),
+                correlation_id=request.request_id,
+                node_name="validate_input",
+            )
+        }
+
+    # 7. Negative time limit
+    if request.time_limit_minutes is not None and request.time_limit_minutes < 0:
+        return {
+            "error": WorkflowError(
+                error_code=DomainErrorCode.INVALID_TIME_LIMIT.value,
+                message=f"time_limit_minutes must be >= 0, got {request.time_limit_minutes}",
+                correlation_id=request.request_id,
+                node_name="validate_input",
+            )
+        }
+
     return {}
 
 
@@ -73,14 +170,13 @@ async def parse_recipes_node(
         # Use configured extractor (LLM or rule-based from WorkflowContext)
         for recipe in request.recipes:
             try:
-                text = recipe.get("text", "")
-                if isinstance(text, str) and text:
-                    candidate = await extractor.extract(text)
+                if recipe.text:
+                    candidate = await extractor.extract(recipe.text)
                     candidates.append(candidate)
             except Exception as exc:  # noqa: BLE001 — per-node error → error state
                 return {
                     "error": WorkflowError(
-                        error_code="EXTERNAL_PROVIDER_UNAVAILABLE",
+                        error_code=DomainErrorCode.EXTERNAL_PROVIDER_UNAVAILABLE.value,
                         message=f"Recipe extraction failed: {exc}",
                         correlation_id=request.request_id,
                         node_name="parse_recipes",
@@ -92,9 +188,8 @@ async def parse_recipes_node(
 
         rule_extractor = RuleExtractor()
         for recipe in request.recipes:
-            text = recipe.get("text", "")
-            if isinstance(text, str) and text:
-                candidate = await rule_extractor.extract(text)
+            if recipe.text:
+                candidate = await rule_extractor.extract(recipe.text)
                 candidates.append(candidate)
 
     return {"extracted_candidates": tuple(candidates)}
@@ -284,23 +379,35 @@ async def validate_recipe_ir_node(
     if not candidates:
         return {
             "error": WorkflowError(
-                error_code="INVALID_RECIPE_TEXT",
+                error_code=DomainErrorCode.INVALID_RECIPE_TEXT.value,
                 message="No extracted recipe candidates to validate",
                 correlation_id=state["request"].request_id,
                 node_name="validate_recipe_ir",
             )
         }
 
+    request = state["request"]
+    # The extractor produces candidates in the same order as the request's
+    # non-empty recipes. Pair each candidate with its request recipe input so
+    # the caller's recipe_id overrides the extractor's internal ID and the
+    # target_servings drives ingredient scaling (P0-04 rules 2 & 5).
+    request_recipes = tuple(r for r in request.recipes if r.text)
+    pairs = tuple(zip(candidates, request_recipes, strict=True))
+
     # Build RecipeIR from each candidate
     recipes: list[RecipeIR] = []
-    for candidate in candidates:
+    for candidate, recipe_input in pairs:
         try:
-            recipe_ir = build_recipe_ir(candidate)
+            recipe_ir = build_recipe_ir(
+                candidate,
+                request_recipe_id=recipe_input.recipe_id,
+                target_servings=recipe_input.target_servings,
+            )
             recipes.append(recipe_ir)
         except (ValueError, TypeError) as exc:
             return {
                 "error": WorkflowError(
-                    error_code="INVALID_RECIPE_TEXT",
+                    error_code=DomainErrorCode.INVALID_RECIPE_TEXT.value,
                     message=f"Failed to build RecipeIR: {exc}",
                     correlation_id=state["request"].request_id,
                     node_name="validate_recipe_ir",
@@ -313,7 +420,7 @@ async def validate_recipe_ir_node(
         error_details = "; ".join(i.message for i in report.issues if i.severity == "error")
         return {
             "error": WorkflowError(
-                error_code="INVALID_RECIPE_TEXT",
+                error_code=DomainErrorCode.INVALID_RECIPE_TEXT.value,
                 message=f"Recipe semantic validation failed: {error_details}",
                 correlation_id=state["request"].request_id,
                 node_name="validate_recipe_ir",
@@ -558,7 +665,7 @@ async def build_task_graph_node(
         # Cycle detection or invalid dependencies -> workflow error
         return {
             "error": WorkflowError(
-                error_code="TASK_GRAPH_CYCLE",
+                error_code=DomainErrorCode.TASK_GRAPH_CYCLE.value,
                 message=str(exc),
                 correlation_id=state["request"].request_id,
                 node_name="build_task_graph",
@@ -586,7 +693,7 @@ async def solve_schedule_node(
     if task_graph is None:
         return {
             "error": WorkflowError(
-                error_code="SCHEDULE_INFEASIBLE",
+                error_code=DomainErrorCode.SCHEDULE_INFEASIBLE.value,
                 message="No task graph available for scheduling",
                 correlation_id=state["request"].request_id,
                 node_name="solve_schedule",
@@ -605,7 +712,7 @@ async def solve_schedule_node(
     except (ValueError, TypeError, RuntimeError) as exc:
         return {
             "error": WorkflowError(
-                error_code="SCHEDULE_INFEASIBLE",
+                error_code=DomainErrorCode.SCHEDULE_INFEASIBLE.value,
                 message=str(exc),
                 correlation_id=state["request"].request_id,
                 node_name="solve_schedule",
@@ -633,7 +740,7 @@ async def verify_schedule_node(
     if schedule_result is None:
         return {
             "error": WorkflowError(
-                error_code="SCHEDULE_VERIFICATION_FAILED",
+                error_code=DomainErrorCode.SCHEDULE_VERIFICATION_FAILED.value,
                 message="No schedule result to verify",
                 correlation_id=state["request"].request_id,
                 node_name="verify_schedule",
@@ -644,7 +751,7 @@ async def verify_schedule_node(
     if task_graph is None:
         return {
             "error": WorkflowError(
-                error_code="SCHEDULE_VERIFICATION_FAILED",
+                error_code=DomainErrorCode.SCHEDULE_VERIFICATION_FAILED.value,
                 message="No task graph available for verification",
                 correlation_id=state["request"].request_id,
                 node_name="verify_schedule",
@@ -663,7 +770,7 @@ async def verify_schedule_node(
     except (ValueError, TypeError, RuntimeError) as exc:
         return {
             "error": WorkflowError(
-                error_code="SCHEDULE_VERIFICATION_FAILED",
+                error_code=DomainErrorCode.SCHEDULE_VERIFICATION_FAILED.value,
                 message=str(exc),
                 correlation_id=state["request"].request_id,
                 node_name="verify_schedule",

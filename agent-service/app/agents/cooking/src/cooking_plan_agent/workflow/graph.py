@@ -34,6 +34,7 @@ from cooking_plan_agent.workflow.routing import (
     route_after_safety,
     route_after_solve,
     route_after_verification,
+    route_on_workflow_error,
 )
 from cooking_plan_agent.workflow.state import PlanState
 
@@ -72,8 +73,28 @@ def build_cooking_plan_graph() -> CompiledStateGraph[PlanState, WorkflowContext]
     # 8.7 Fixed edges — linear pipeline sections
     # ------------------------------------------------------------------
     builder.add_edge(START, "validate_input")
-    builder.add_edge("validate_input", "parse_recipes")
-    builder.add_edge("parse_recipes", "detect_gaps")
+
+    # ------------------------------------------------------------------
+    # 8.6 P0-03 error short-circuit — every error-capable node routes to
+    # FAILED the moment a WorkflowError is written. __continue__ carries
+    # the happy path forward.
+    # ------------------------------------------------------------------
+    builder.add_conditional_edges(
+        "validate_input",
+        route_on_workflow_error,
+        {
+            "render_failed_response": "render_failed_response",
+            "__continue__": "parse_recipes",
+        },
+    )
+    builder.add_conditional_edges(
+        "parse_recipes",
+        route_on_workflow_error,
+        {
+            "render_failed_response": "render_failed_response",
+            "__continue__": "detect_gaps",
+        },
+    )
 
     # ------------------------------------------------------------------
     # 8.6 Conditional edges
@@ -103,7 +124,14 @@ def build_cooking_plan_graph() -> CompiledStateGraph[PlanState, WorkflowContext]
 
     # research_missing always converges back into the main validation pipeline
     builder.add_edge("research_missing", "validate_recipe_ir")
-    builder.add_edge("validate_recipe_ir", "validate_safety")
+    builder.add_conditional_edges(
+        "validate_recipe_ir",
+        route_on_workflow_error,
+        {
+            "render_failed_response": "render_failed_response",
+            "__continue__": "validate_safety",
+        },
+    )
 
     # validate_safety: unrepairable safety issue -> INFEASIBLE; else -> feasibility
     builder.add_conditional_edges(
@@ -132,7 +160,14 @@ def build_cooking_plan_graph() -> CompiledStateGraph[PlanState, WorkflowContext]
     # ------------------------------------------------------------------
     # Linear chain: merge -> task graph -> CP-SAT solve -> verify
     builder.add_edge("merge_preparation", "build_task_graph")
-    builder.add_edge("build_task_graph", "solve_schedule")
+    builder.add_conditional_edges(
+        "build_task_graph",
+        route_on_workflow_error,
+        {
+            "render_failed_response": "render_failed_response",
+            "__continue__": "solve_schedule",
+        },
+    )
 
     # solve_schedule: OPTIMAL/FEASIBLE -> verify; INFEASIBLE -> infeasible;
     #   MODEL_INVALID/error -> FAILED

@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     max_task_count: int = 100  # the maximum number of tasks to process
     web_research_enabled: bool = False  # whether to enable web research
 
+    # --- Request validation limits (P0-03) ---
+    # Hard caps applied at the workflow input boundary. All values are
+    # configurable via environment variables with the COOKING_PLAN_ prefix.
+    # Byte limits are measured on UTF-8 encoded payloads.
+    max_recipe_text_bytes: int = 50_000  # per-recipe raw text byte cap
+    max_request_bytes: int = 1_000_000  # total serialised request byte cap
+    supported_schema_versions: tuple[str, ...] = ("1.0",)  # accepted schema_version values
+
     # --- LLM integration (local Ollama via OpenAI-compatible API) ---
     # Provider-neutral: base_url + model are configurable so any OpenAI-
     # compatible endpoint (Ollama, localhost proxy, cloud) can be swapped in.

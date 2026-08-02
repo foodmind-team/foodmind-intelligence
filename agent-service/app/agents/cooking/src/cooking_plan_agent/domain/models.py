@@ -465,12 +465,25 @@ class WorkflowError(StrictModel):
 # ---------------------------------------------------------------------------
 
 
+class RecipeInput(StrictModel):
+    """Typed input for one recipe in a GeneratePlanRequest (P0-03).
+
+    Replaces the loose ``tuple[dict, ...]`` so structural constraints,
+    positive servings, and string bounds are enforced at the Pydantic
+    boundary instead of inside workflow nodes.
+    """
+
+    recipe_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=1_000_000)
+    target_servings: PositiveDecimal
+
+
 class GeneratePlanRequest(StrictModel):
     """Internal request from Spring Boot."""
 
     request_id: str
     user_id: str
-    recipes: tuple[dict[str, object], ...]  # Each: {recipe_id, text, target_servings}
+    recipes: tuple[RecipeInput, ...]  # Typed recipe inputs (P0-03)
     dietary_restrictions: tuple[str, ...] = ()
     user_allergens: tuple[str, ...] = ()
     time_limit_minutes: int | None = None
