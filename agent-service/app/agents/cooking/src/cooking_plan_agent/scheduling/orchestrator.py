@@ -122,9 +122,13 @@ class ScheduleOrchestrator:
         assert makespan is not None
 
         if optimization_level in ("phase12", "full"):
-            # Phase 2: minimise holding (fix makespan).
+            # Phase 2: minimise holding (fix makespan). A phase counts as
+            # applied ONLY when it produced its own objective value — a
+            # fallback to Phase 1 (timeout/UNKNOWN or infeasible) must not
+            # be recorded, or the verifier would report the objective as
+            # missing and reject a valid schedule (P3-03 regression).
             phase2 = self._phase_holding(problem, makespan, best)
-            if phase2.result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
+            if phase2.result.holding_objective is not None:
                 best = phase2.result
                 phases.append("holding")
 
@@ -132,7 +136,7 @@ class ScheduleOrchestrator:
             # Phase 3: minimise context switching (fix makespan + holding).
             holding_fixed = best.holding_objective
             phase3 = self._phase_context_switch(problem, makespan, holding_fixed, best)
-            if phase3.result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
+            if phase3.result.context_switch_objective is not None:
                 best = phase3.result
                 phases.append("context_switch")
 
@@ -140,7 +144,7 @@ class ScheduleOrchestrator:
             # modes exist; gated otherwise — P3-03 step 4).
             if self._has_equivalent_modes(problem):
                 phase4 = self._phase_active_labour(problem, makespan, best)
-                if phase4.result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
+                if phase4.result is not best and phase4.result.active_labour_objective is not None:
                     best = phase4.result
                     phases.append("active_labour")
 

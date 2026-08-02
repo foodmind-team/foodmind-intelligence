@@ -240,3 +240,62 @@ class TestPhaseFourGated:
         assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
         assert "active_labour" not in result.optimization_phases
         assert report.passed
+
+
+class TestFallbackPhasesNotRecorded:
+    """solve() must not record a phase that fell back (timeout/UNKNOWN).
+
+    Regression (menu e2e): when Phase 3 hit the solver time limit, the
+    fallback reused the Phase 2 result (status FEASIBLE) and solve() wrongly
+    appended "context_switch" to optimization_phases with a None objective,
+    which the verifier rejected — turning a valid READY schedule into FAILED.
+    """
+
+    def _problem_small(self) -> SchedulingProblem:
+        return _problem(
+            (
+                _task("A", dish_id="d1", duration=5, category="heating"),
+                _task("B", dish_id="d2", duration=3, category="cutting"),
+            )
+        )
+
+    def test_context_switch_fallback_not_recorded(self, monkeypatch) -> None:
+        from cooking_plan_agent.scheduling.orchestrator import _PhaseOutcome
+
+        def _fallback(self, problem, makespan, holding_fixed, phase2_result):
+            # 模拟超时回退：直接返回上一阶段结果，不产出 context_switch 目标值
+            return _PhaseOutcome(result=phase2_result)
+
+        monkeypatch.setattr(ScheduleOrchestrator, "_phase_context_switch", _fallback)
+        result, report = ScheduleOrchestrator().solve(self._problem_small(), optimization_level="full")
+        assert "context_switch" not in result.optimization_phases
+        assert result.context_switch_objective is None
+        assert report.passed  # 验证器不再因“声称阶段但缺目标值”误拒
+
+    def test_holding_fallback_not_recorded(self, monkeypatch) -> None:
+        from cooking_plan_agent.scheduling.orchestrator import _PhaseOutcome
+
+        def _fallback(self, problem, makespan, phase1_result):
+            return _PhaseOutcome(result=phase1_result)
+
+        monkeypatch.setattr(ScheduleOrchestrator, "_phase_holding", _fallback)
+        result, report = ScheduleOrchestrator().solve(self._problem_small(), optimization_level="full")
+        assert "holding" not in result.optimization_phases
+        assert result.holding_objective is None
+        assert report.passed
+
+    def test_phase_metadata_always_consistent_with_objectives(self) -> None:
+        """不变量：optimization_phases 中的每个阶段都必须有对应目标值。"""
+        problem = _problem(
+            (
+                _task("A", dish_id="d1", duration=5, category="heating"),
+                _task("B", dish_id="d2", duration=3, category="cutting"),
+            )
+        )
+        result, report = ScheduleOrchestrator().solve(problem, optimization_level="full")
+        assert report.passed
+        phases = result.optimization_phases
+        if "holding" in phases:
+            assert result.holding_objective is not None
+        if "context_switch" in phases:
+            assert result.context_switch_objective is not None
