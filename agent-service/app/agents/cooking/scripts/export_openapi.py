@@ -20,6 +20,14 @@ import json
 import sys
 from pathlib import Path
 
+# Allow running directly from a checkout: prepend the src/ directory so the
+# script works even when the package is not installed into the interpreter.
+# (uv installs the project editable in CI, but local interpreters — e.g. a
+# venv derived from a system Python — may not process the .pth file.)
+_SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
 
 def export_openapi_spec(output_path: str) -> dict:
     """Export the FastAPI OpenAPI spec from the application.
@@ -87,10 +95,7 @@ def validate_openapi_spec(spec: dict) -> list[str]:
 
         # Check for X-Internal-Token header parameter
         params = post_op.get("parameters", [])
-        has_auth_header = any(
-            p.get("name") == "x-internal-token" for p in params
-            if isinstance(p, dict)
-        )
+        has_auth_header = any(p.get("name") == "x-internal-token" for p in params if isinstance(p, dict))
         if not has_auth_header:
             issues.append(f"{generate_path} missing x-internal-token header parameter")
 
@@ -105,15 +110,20 @@ def validate_openapi_spec(spec: dict) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export and validate OpenAPI spec.")
     parser.add_argument(
-        "-o", "--output", default="openapi.json",
+        "-o",
+        "--output",
+        default="openapi.json",
         help="Output file path (default: openapi.json)",
     )
     parser.add_argument(
-        "--check", action="store_true",
+        "--check",
+        action="store_true",
         help="Run validation checks on the exported spec",
     )
     parser.add_argument(
-        "--pretty", action="store_true", default=True,
+        "--pretty",
+        action="store_true",
+        default=True,
         help="Pretty-print JSON (default: true)",
     )
     args = parser.parse_args()

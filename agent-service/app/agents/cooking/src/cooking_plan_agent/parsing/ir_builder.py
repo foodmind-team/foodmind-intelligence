@@ -73,10 +73,10 @@ def build_recipe_ir(candidate: ExtractedRecipeCandidate) -> RecipeIR:
     Raises:
         ValueError: If the candidate has no ingredients or no steps.
     """
-    ingredients = tuple(_build_ingredient_demand(ing) for ing in candidate.ingredients)
+    parsed_demands = tuple(_build_ingredient_demand(ing) for ing in candidate.ingredients)
 
     # Filter out ingredients without a valid name or quantity
-    ingredients = tuple(i for i in ingredients if i and i.canonical_name)
+    ingredients = tuple(i for i in parsed_demands if i and i.canonical_name)
 
     steps = tuple(_build_recipe_step(step, candidate.recipe_id) for step in candidate.steps)
 
@@ -186,63 +186,77 @@ def _validate_single_recipe(recipe: RecipeIR) -> list[SemanticIssue]:
 
     # Check: at least one ingredient
     if not recipe.ingredients:
-        issues.append(SemanticIssue(
-            code="NO_INGREDIENTS",
-            severity="error",
-            message=f"Recipe '{recipe.dish_name}' has no ingredients",
-        ))
+        issues.append(
+            SemanticIssue(
+                code="NO_INGREDIENTS",
+                severity="error",
+                message=f"Recipe '{recipe.dish_name}' has no ingredients",
+            )
+        )
 
     # Check: at least one step
     if not recipe.steps:
-        issues.append(SemanticIssue(
-            code="NO_STEPS",
-            severity="error",
-            message=f"Recipe '{recipe.dish_name}' has no steps",
-        ))
+        issues.append(
+            SemanticIssue(
+                code="NO_STEPS",
+                severity="error",
+                message=f"Recipe '{recipe.dish_name}' has no steps",
+            )
+        )
 
     # Check: no negative durations
     for step in recipe.steps:
         if step.active_duration_minutes is not None and step.active_duration_minutes <= 0:
-            issues.append(SemanticIssue(
-                code="NEGATIVE_DURATION",
-                severity="error",
-                message=f"Recipe '{recipe.dish_name}' step {step.step_number}: "
-                        f"active duration is {step.active_duration_minutes}",
-            ))
+            issues.append(
+                SemanticIssue(
+                    code="NEGATIVE_DURATION",
+                    severity="error",
+                    message=f"Recipe '{recipe.dish_name}' step {step.step_number}: "
+                    f"active duration is {step.active_duration_minutes}",
+                )
+            )
         if step.passive_duration_minutes is not None and step.passive_duration_minutes <= 0:
-            issues.append(SemanticIssue(
-                code="NEGATIVE_DURATION",
-                severity="error",
-                message=f"Recipe '{recipe.dish_name}' step {step.step_number}: "
-                        f"passive duration is {step.passive_duration_minutes}",
-            ))
+            issues.append(
+                SemanticIssue(
+                    code="NEGATIVE_DURATION",
+                    severity="error",
+                    message=f"Recipe '{recipe.dish_name}' step {step.step_number}: "
+                    f"passive duration is {step.passive_duration_minutes}",
+                )
+            )
 
     # Check: heating steps should have a heat level
     for step in recipe.steps:
         if step.category == "heating" and step.heat_level == HeatLevel.NONE:
-            issues.append(SemanticIssue(
-                code="MISSING_HEAT_LEVEL",
-                severity="warning",
-                message=f"Recipe '{recipe.dish_name}' step {step.step_number}: "
-                        f"heating step has no heat level specified",
-            ))
+            issues.append(
+                SemanticIssue(
+                    code="MISSING_HEAT_LEVEL",
+                    severity="warning",
+                    message=f"Recipe '{recipe.dish_name}' step {step.step_number}: "
+                    f"heating step has no heat level specified",
+                )
+            )
 
     # Check: ingredient names are non-empty
     for i, ingredient in enumerate(recipe.ingredients):
         if not ingredient.canonical_name.strip():
-            issues.append(SemanticIssue(
-                code="EMPTY_INGREDIENT_NAME",
-                severity="error",
-                message=f"Recipe '{recipe.dish_name}' ingredient {i + 1}: empty name",
-            ))
+            issues.append(
+                SemanticIssue(
+                    code="EMPTY_INGREDIENT_NAME",
+                    severity="error",
+                    message=f"Recipe '{recipe.dish_name}' ingredient {i + 1}: empty name",
+                )
+            )
 
     # Check: servings are positive
     if recipe.original_servings <= 0:
-        issues.append(SemanticIssue(
-            code="INVALID_SERVINGS",
-            severity="error",
-            message=f"Recipe '{recipe.dish_name}': servings must be > 0, got {recipe.original_servings}",
-        ))
+        issues.append(
+            SemanticIssue(
+                code="INVALID_SERVINGS",
+                severity="error",
+                message=f"Recipe '{recipe.dish_name}': servings must be > 0, got {recipe.original_servings}",
+            )
+        )
 
     return issues
 
@@ -268,16 +282,26 @@ def _normalise_ingredient_unit(ingredient: ExtractedIngredient) -> str:
 
     # Common normalisations
     alias_map = {
-        "tablespoon": "tbsp", "tablespoons": "tbsp",
-        "teaspoon": "tsp", "teaspoons": "tsp",
-        "cup": "cup", "cups": "cup",
-        "gram": "g", "grams": "g",
-        "kilogram": "kg", "kilograms": "kg",
-        "milliliter": "ml", "milliliters": "ml",
-        "litre": "l", "liter": "l",
-        "ounce": "oz", "ounces": "oz",
-        "pound": "lb", "pounds": "lb",
-        "cloves": "piece", "clove": "piece",
+        "tablespoon": "tbsp",
+        "tablespoons": "tbsp",
+        "teaspoon": "tsp",
+        "teaspoons": "tsp",
+        "cup": "cup",
+        "cups": "cup",
+        "gram": "g",
+        "grams": "g",
+        "kilogram": "kg",
+        "kilograms": "kg",
+        "milliliter": "ml",
+        "milliliters": "ml",
+        "litre": "l",
+        "liter": "l",
+        "ounce": "oz",
+        "ounces": "oz",
+        "pound": "lb",
+        "pounds": "lb",
+        "cloves": "piece",
+        "clove": "piece",
     }
     return alias_map.get(unit, unit)
 
@@ -348,7 +372,7 @@ def _collect_assumptions(candidate: ExtractedRecipeCandidate) -> tuple[Assumptio
         assumptions.append(
             Assumption(
                 text="Recipe extracted using rule-based parser (no LLM). "
-                     "Confidence may be lower than LLM-based extraction.",
+                "Confidence may be lower than LLM-based extraction.",
                 confidence=Decimal("0.8"),
             )
         )

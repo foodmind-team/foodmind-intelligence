@@ -165,6 +165,7 @@ def detect_cycle(graph: TaskGraph) -> CycleReport | None:
             successors[edge.predecessor_id].append(edge.successor_id)
 
     from collections import deque
+
     queue: deque[str] = deque(sorted(tid for tid, deg in indegree.items() if deg == 0))
 
     processed = 0

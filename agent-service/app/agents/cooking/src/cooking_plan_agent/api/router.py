@@ -47,7 +47,10 @@ def get_generate_service(request: Request) -> GenerateCookingPlanService:
 
     Raises AttributeError if the service was not initialised during startup.
     """
-    return request.app.state.generate_plan_service
+    service = request.app.state.generate_plan_service
+    if not isinstance(service, GenerateCookingPlanService):
+        raise AttributeError("generate_plan_service was not initialised during startup")
+    return service
 
 
 # ---------------------------------------------------------------------------

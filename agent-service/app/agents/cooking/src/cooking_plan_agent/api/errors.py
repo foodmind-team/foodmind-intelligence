@@ -34,7 +34,7 @@ def _build_error_body(
     error_code: DomainErrorCode,
     message: str,
     correlation_id: str,
-) -> dict:
+) -> dict[str, str]:
     """Build a stable error response dict matching the FailedPlanResponse shape.
 
     Never includes provider secrets, stack traces, or user recipe text.
@@ -54,9 +54,12 @@ def _build_error_body(
 
 async def workflow_exception_handler(
     request: Request,
-    exc: WorkflowException,
+    exc: Exception,
 ) -> JSONResponse:
     """Handle known domain exceptions with their mapped error code.
+
+    Registered only for WorkflowException — the assert narrows the type for
+    static analysis and always holds at runtime.
 
     Domain errors are business failures (infeasible schedule, safety violation,
     etc.) — return HTTP 200 with FAILED status per handbook 9.8 policy.
@@ -65,6 +68,7 @@ async def workflow_exception_handler(
     generated with the given inputs", which is a valid result, not a protocol
     failure.
     """
+    assert isinstance(exc, WorkflowException)
     correlation_id = getattr(request.state, "correlation_id", "unknown")
     logger.warning(
         "WorkflowException caught | code=%s | correlation_id=%s | message=%s",

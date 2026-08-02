@@ -1,4 +1,5 @@
 """Quick test: send user's 7 recipes to the cooking plan agent."""
+
 import json
 
 import httpx
@@ -251,8 +252,22 @@ FAKE_INVENTORY = [
     {"lot_id": "l082", "item_id": "i082", "canonical_name": "- 主料：", "on_hand": "99", "reserved": "0", "unit": "个"},
     {"lot_id": "l083", "item_id": "i083", "canonical_name": "- 辅料：", "on_hand": "99", "reserved": "0", "unit": "个"},
     {"lot_id": "l084", "item_id": "i084", "canonical_name": "- 调料：", "on_hand": "99", "reserved": "0", "unit": "个"},
-    {"lot_id": "l085", "item_id": "i085", "canonical_name": "一、食材准备", "on_hand": "99", "reserved": "0", "unit": "个"},
-    {"lot_id": "l086", "item_id": "i086", "canonical_name": "二、制作步骤", "on_hand": "99", "reserved": "0", "unit": "个"},
+    {
+        "lot_id": "l085",
+        "item_id": "i085",
+        "canonical_name": "一、食材准备",
+        "on_hand": "99",
+        "reserved": "0",
+        "unit": "个",
+    },
+    {
+        "lot_id": "l086",
+        "item_id": "i086",
+        "canonical_name": "二、制作步骤",
+        "on_hand": "99",
+        "reserved": "0",
+        "unit": "个",
+    },
     {"lot_id": "l087", "item_id": "i087", "canonical_name": "- 盐", "on_hand": "99", "reserved": "0", "unit": "个"},
     {"lot_id": "l088", "item_id": "i088", "canonical_name": "调料：", "on_hand": "99", "reserved": "0", "unit": "个"},
     {"lot_id": "l089", "item_id": "i089", "canonical_name": "腌料：", "on_hand": "99", "reserved": "0", "unit": "个"},
@@ -260,17 +275,94 @@ FAKE_INVENTORY = [
 ]
 
 FAKE_RESOURCES = [
-    {"resource_id": "r1", "resource_type": "stove", "capacity": "2", "capacity_unit": "burners", "capabilities": ["gas"], "available": True},
-    {"resource_id": "r2", "resource_type": "stove", "capacity": "2", "capacity_unit": "burners", "capabilities": ["gas"], "available": True},
-    {"resource_id": "r3", "resource_type": "oven", "capacity": "1", "capacity_unit": "racks", "capabilities": ["convection"], "available": True},
-    {"resource_id": "r4", "resource_type": "sink", "capacity": "2", "capacity_unit": "basins", "capabilities": [], "available": True},
-    {"resource_id": "r5", "resource_type": "rice_cooker", "capacity": "1", "capacity_unit": "pots", "capabilities": ["stew"], "available": True},
-    {"resource_id": "r6", "resource_type": "knife", "capacity": "3", "capacity_unit": "pieces", "capabilities": ["cutting", "chopping"], "available": True},
-    {"resource_id": "r7", "resource_type": "pot", "capacity": "4", "capacity_unit": "pieces", "capabilities": ["boiling", "stewing", "stir_frying"], "available": True},
-    {"resource_id": "r8", "resource_type": "cutting_board", "capacity": "2", "capacity_unit": "pieces", "capabilities": ["cutting"], "available": True},
-    {"resource_id": "r9", "resource_type": "wok", "capacity": "2", "capacity_unit": "pieces", "capabilities": ["stir_frying", "deep_frying"], "available": True},
-    {"resource_id": "r10", "resource_type": "spatula", "capacity": "3", "capacity_unit": "pieces", "capabilities": ["stirring", "flipping"], "available": True},
-    {"resource_id": "r11", "resource_type": "mixing_bowl", "capacity": "3", "capacity_unit": "pieces", "capabilities": ["mixing", "marinating"], "available": True},
+    {
+        "resource_id": "r1",
+        "resource_type": "stove",
+        "capacity": "2",
+        "capacity_unit": "burners",
+        "capabilities": ["gas"],
+        "available": True,
+    },
+    {
+        "resource_id": "r2",
+        "resource_type": "stove",
+        "capacity": "2",
+        "capacity_unit": "burners",
+        "capabilities": ["gas"],
+        "available": True,
+    },
+    {
+        "resource_id": "r3",
+        "resource_type": "oven",
+        "capacity": "1",
+        "capacity_unit": "racks",
+        "capabilities": ["convection"],
+        "available": True,
+    },
+    {
+        "resource_id": "r4",
+        "resource_type": "sink",
+        "capacity": "2",
+        "capacity_unit": "basins",
+        "capabilities": [],
+        "available": True,
+    },
+    {
+        "resource_id": "r5",
+        "resource_type": "rice_cooker",
+        "capacity": "1",
+        "capacity_unit": "pots",
+        "capabilities": ["stew"],
+        "available": True,
+    },
+    {
+        "resource_id": "r6",
+        "resource_type": "knife",
+        "capacity": "3",
+        "capacity_unit": "pieces",
+        "capabilities": ["cutting", "chopping"],
+        "available": True,
+    },
+    {
+        "resource_id": "r7",
+        "resource_type": "pot",
+        "capacity": "4",
+        "capacity_unit": "pieces",
+        "capabilities": ["boiling", "stewing", "stir_frying"],
+        "available": True,
+    },
+    {
+        "resource_id": "r8",
+        "resource_type": "cutting_board",
+        "capacity": "2",
+        "capacity_unit": "pieces",
+        "capabilities": ["cutting"],
+        "available": True,
+    },
+    {
+        "resource_id": "r9",
+        "resource_type": "wok",
+        "capacity": "2",
+        "capacity_unit": "pieces",
+        "capabilities": ["stir_frying", "deep_frying"],
+        "available": True,
+    },
+    {
+        "resource_id": "r10",
+        "resource_type": "spatula",
+        "capacity": "3",
+        "capacity_unit": "pieces",
+        "capabilities": ["stirring", "flipping"],
+        "available": True,
+    },
+    {
+        "resource_id": "r11",
+        "resource_type": "mixing_bowl",
+        "capacity": "3",
+        "capacity_unit": "pieces",
+        "capabilities": ["mixing", "marinating"],
+        "available": True,
+    },
 ]
 
 PAYLOAD = {

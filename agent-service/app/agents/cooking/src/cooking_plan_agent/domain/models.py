@@ -470,7 +470,7 @@ class GeneratePlanRequest(StrictModel):
 
     request_id: str
     user_id: str
-    recipes: tuple[dict, ...]  # Each: {recipe_id, text, target_servings}
+    recipes: tuple[dict[str, object], ...]  # Each: {recipe_id, text, target_servings}
     dietary_restrictions: tuple[str, ...] = ()
     user_allergens: tuple[str, ...] = ()
     time_limit_minutes: int | None = None
@@ -488,10 +488,10 @@ class ReadyPlanResponse(StrictModel):
     status: str = "READY"
     solver_status: str
     makespan_minutes: int
-    timeline: tuple[dict, ...]
+    timeline: tuple[dict[str, object], ...]
     completion_checklist: tuple["CompletionItem", ...]
-    mise_en_place: tuple[dict, ...]
-    dish_completions: tuple[dict, ...]
+    mise_en_place: tuple[dict[str, object], ...]
+    dish_completions: tuple[dict[str, object], ...]
 
 
 class ConfirmationPlanResponse(StrictModel):

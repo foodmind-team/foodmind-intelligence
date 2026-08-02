@@ -220,9 +220,25 @@ def _heat_gap_class(step: ExtractedStep) -> str:
 def _is_time_sensitive_step(step: ExtractedStep) -> bool:
     """Check if a step is time-sensitive (boiling, baking, roasting, etc.)."""
     time_sensitive_keywords = (
-        "boil", "simmer", "bake", "roast", "grill", "steam",
-        "fry", "marinate", "stew", "braise", "poach",
-        "煮", "焖", "炖", "烤", "蒸", "炸", "煎", "腌",
+        "boil",
+        "simmer",
+        "bake",
+        "roast",
+        "grill",
+        "steam",
+        "fry",
+        "marinate",
+        "stew",
+        "braise",
+        "poach",
+        "煮",
+        "焖",
+        "炖",
+        "烤",
+        "蒸",
+        "炸",
+        "煎",
+        "腌",
     )
     lower = step.instruction.lower()
     return any(kw in lower for kw in time_sensitive_keywords)
@@ -238,9 +254,25 @@ def _needs_temperature(step: ExtractedStep) -> bool:
 def _involves_protein(step: ExtractedStep) -> bool:
     """Check if a step likely involves raw protein (safety-critical temperature)."""
     protein_keywords = (
-        "chicken", "beef", "pork", "fish", "shrimp", "meat", "poultry",
-        "seafood", "lamb", "turkey", "duck",
-        "鸡肉", "牛肉", "猪肉", "鱼肉", "虾", "肉", "羊肉", "鸭",
+        "chicken",
+        "beef",
+        "pork",
+        "fish",
+        "shrimp",
+        "meat",
+        "poultry",
+        "seafood",
+        "lamb",
+        "turkey",
+        "duck",
+        "鸡肉",
+        "牛肉",
+        "猪肉",
+        "鱼肉",
+        "虾",
+        "肉",
+        "羊肉",
+        "鸭",
     )
     lower = step.instruction.lower()
     return any(kw in lower for kw in protein_keywords)

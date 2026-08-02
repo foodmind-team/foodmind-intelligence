@@ -123,7 +123,9 @@ _RE_STRIP_QUANTITY = re.compile(
     r"^\s*\d+(?:\.\d+)?\s*(?:g|kg|ml|l|tbsp|tsp|cup|cups|oz|lb|piece|pc|pcs)\s+",
     re.IGNORECASE,
 )
-_RE_STRIP_PREP = re.compile(r"\s*[，,]\s*(?:diced|minced|chopped|sliced|julienned|crushed|peeled|grated|cut).*$", re.IGNORECASE)
+_RE_STRIP_PREP = re.compile(
+    r"\s*[，,]\s*(?:diced|minced|chopped|sliced|julienned|crushed|peeled|grated|cut).*$", re.IGNORECASE
+)
 _RE_STRIP_PAREN = re.compile(r"\s*[（(][^)）]*[)）]\s*")
 _RE_MULTI_SPACE = re.compile(r"\s{2,}")
 
@@ -194,7 +196,7 @@ def normalise_ingredient_name(raw_name: str) -> str:
 
 class CanonicalIngredientMatch(NamedTuple):
     """Result of matching a raw ingredient name against a catalogue.
-    
+
     Attributes:
         canonical_name: The matched catalogue entry's canonical name.
         catalogue_id: Identifier of the matched catalogue entry (empty if no match).

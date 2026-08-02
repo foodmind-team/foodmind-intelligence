@@ -24,9 +24,10 @@ from cooking_plan_agent.scheduling.extractor import ScheduleExtractor
 from cooking_plan_agent.scheduling.models import (
     ScheduleResult,
     SchedulingProblem,
+    VerificationReport,
 )
 from cooking_plan_agent.scheduling.solver import ScheduleSolver, SolverRun
-from cooking_plan_agent.scheduling.verifier import ScheduleVerifier, VerificationReport
+from cooking_plan_agent.scheduling.verifier import ScheduleVerifier
 
 # ============================================================================
 # Top-level schedule() — convenience function for the full pipeline
@@ -165,7 +166,7 @@ class ScheduleOrchestrator:
 
         # Compute horizon and build constraints (Stages A–D) on the new model.
         horizon = self._builder.compute_horizon(problem.tasks)
-        starts, ends, intervals = self._builder.build_constraints(model, problem, horizon)
+        starts, ends, interval_vars = self._builder.build_constraints(model, problem, horizon)
 
         # Fix makespan to Phase 1's optimal value
         final_task_ids = self._final_task_ids(problem)
@@ -226,7 +227,7 @@ class ScheduleOrchestrator:
                     model=model,
                     starts=starts,
                     ends=ends,
-                    intervals={tid: intervals[tid] for tid in intervals},
+                    intervals={tid: interval_vars[tid] for tid in interval_vars},
                     horizon=horizon,
                     makespan_var=makespan_var,
                 ),

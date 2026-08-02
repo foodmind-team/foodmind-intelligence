@@ -104,9 +104,7 @@ def allocate_fefo(
 
     # Step 1–2: filter matching + usable lots
     matching = [
-        lot for lot in lots
-        if lot.canonical_name.lower().strip() == required_name
-        and is_lot_usable(lot, cooking_date)
+        lot for lot in lots if lot.canonical_name.lower().strip() == required_name and is_lot_usable(lot, cooking_date)
     ]
 
     # Step 3: sort by expiry (earliest first, None last)
@@ -278,11 +276,7 @@ def find_compatible_resources(
     Returns:
         Tuple of resource_id strings (may be empty if no compatible resource).
     """
-    return tuple(
-        r.resource_id
-        for r in resources
-        if resource_is_compatible(need, r)
-    )
+    return tuple(r.resource_id for r in resources if resource_is_compatible(need, r))
 
 
 def check_required_resources(

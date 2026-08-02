@@ -86,13 +86,40 @@ _RE_NO_QUANTITY = re.compile(
 _RE_NAME_PREP_SPLIT = re.compile(r"\s*[，,]\s*(.+)$")
 
 # Preparation keywords for detection
-_PREP_KEYWORDS = frozenset({
-    "diced", "dice", "minced", "mince", "chopped", "chop",
-    "sliced", "slice", "julienned", "julienne", "grated", "grate",
-    "crushed", "crush", "peeled", "peel", "washed", "wash",
-    "切丁", "切块", "切片", "切丝", "剁碎", "切末", "打散",
-    "去皮", "洗净", "泡发", "切段", "切圈",
-})
+_PREP_KEYWORDS = frozenset(
+    {
+        "diced",
+        "dice",
+        "minced",
+        "mince",
+        "chopped",
+        "chop",
+        "sliced",
+        "slice",
+        "julienned",
+        "julienne",
+        "grated",
+        "grate",
+        "crushed",
+        "crush",
+        "peeled",
+        "peel",
+        "washed",
+        "wash",
+        "切丁",
+        "切块",
+        "切片",
+        "切丝",
+        "剁碎",
+        "切末",
+        "打散",
+        "去皮",
+        "洗净",
+        "泡发",
+        "切段",
+        "切圈",
+    }
+)
 
 
 # =============================================================================
@@ -101,10 +128,15 @@ _PREP_KEYWORDS = frozenset({
 
 # Section headers that indicate ingredient/step boundaries
 _STEP_HEADER_PATTERNS = [
-    re.compile(r"^(?:steps?|directions?|instructions?|method|做法|步骤|制作方法|制作步骤|烹饪步骤)\s*[：:]*\s*$", re.IGNORECASE),
+    re.compile(
+        r"^(?:steps?|directions?|instructions?|method|做法|步骤|制作方法|制作步骤|烹饪步骤)\s*[：:]*\s*$", re.IGNORECASE
+    ),
 ]
 _INGREDIENT_HEADER_PATTERNS = [
-    re.compile(r"^(?:ingredients?|what\s+you(?:'ll)?\s+need|食材|食材准备|原料|配料|用料|材料|主料|辅料|调料)\s*[：:]*\s*$", re.IGNORECASE),
+    re.compile(
+        r"^(?:ingredients?|what\s+you(?:'ll)?\s+need|食材|食材准备|原料|配料|用料|材料|主料|辅料|调料)\s*[：:]*\s*$",
+        re.IGNORECASE,
+    ),
 ]
 
 # Step number patterns
@@ -207,8 +239,8 @@ class RecipeExtractor:
         ingredient_lines, step_lines = self._split_sections(lines)
 
         # Parse each section
-        ingredients = tuple(self._parse_ingredient(line) for line in ingredient_lines)
-        ingredients = tuple(i for i in ingredients if i is not None)
+        parsed_ingredients = tuple(self._parse_ingredient(line) for line in ingredient_lines)
+        ingredients = tuple(i for i in parsed_ingredients if i is not None)
 
         steps = tuple(self._parse_step(i + 1, line) for i, line in enumerate(step_lines))
 
@@ -413,8 +445,22 @@ class RecipeExtractor:
         if len(stripped) < 60 and not _RE_STEP_NUMBER.match(stripped):
             # Skip lines with step-like language
             step_indicators = (
-                "heat", "add", "mix", "stir", "cook", "bake", "boil", "fry",
-                "热", "加", "放", "炒", "煮", "烤", "蒸", "拌",
+                "heat",
+                "add",
+                "mix",
+                "stir",
+                "cook",
+                "bake",
+                "boil",
+                "fry",
+                "热",
+                "加",
+                "放",
+                "炒",
+                "煮",
+                "烤",
+                "蒸",
+                "拌",
             )
             lower = stripped.lower()
             if any(ind in lower for ind in step_indicators):
@@ -436,7 +482,7 @@ class RecipeExtractor:
         if not match:
             return text.strip(), None
 
-        name_part = text[:match.start()].strip()
+        name_part = text[: match.start()].strip()
         prep_part = match.group(1).strip()
 
         # Only treat as preparation if it contains a known prep keyword
@@ -500,9 +546,21 @@ class RecipeExtractor:
     @staticmethod
     def _infer_category(technique: str) -> str:
         """Map technique to step category."""
-        heating_techniques = {"stir_fry", "deep_fry", "boil", "simmer", "steam",
-                              "bake", "roast", "grill", "sauté", "sear", "braise", "poach",
-                              "heat"}
+        heating_techniques = {
+            "stir_fry",
+            "deep_fry",
+            "boil",
+            "simmer",
+            "steam",
+            "bake",
+            "roast",
+            "grill",
+            "sauté",
+            "sear",
+            "braise",
+            "poach",
+            "heat",
+        }
         prep_techniques = {"marinate"}
 
         if technique in heating_techniques:
@@ -619,21 +677,21 @@ class RecipeExtractor:
         return "eng"
 
     @staticmethod
-    def _extract_servings(text: str) -> int:
+    def _extract_servings(text: str) -> Decimal:
         """Extract serving count from recipe text. Defaults to 2."""
         # "Serves 4", "4 servings", "2人份", "4人"
         match = re.search(r"(?:serves?|servings?|yields?|makes?)\s+(\d+)", text, re.IGNORECASE)
         if match:
-            return int(match.group(1))
+            return Decimal(match.group(1))
         match = re.search(r"(\d+)\s*(?:人份|人份量| servings?)", text)
         if match:
-            return int(match.group(1))
+            return Decimal(match.group(1))
         # "2-4 servings" — take the middle
         match = re.search(r"(\d+)\s*[-–—]\s*(\d+)\s*(?:servings?|人份?)", text, re.IGNORECASE)
         if match:
             lo, hi = int(match.group(1)), int(match.group(2))
-            return (lo + hi) // 2
-        return 2
+            return Decimal((lo + hi) // 2)
+        return Decimal(2)
 
 
 # =============================================================================
@@ -648,14 +706,25 @@ def _normalise_unit(unit: str) -> str:
         return _CHINESE_UNIT_MAP[unit_lower]
     # Common English abbreviations
     unit_map = {
-        "tablespoon": "tbsp", "tablespoons": "tbsp",
-        "teaspoon": "tsp", "teaspoons": "tsp",
-        "cup": "cup", "cups": "cup",
-        "ounce": "oz", "ounces": "oz",
-        "pound": "lb", "pounds": "lb",
-        "gram": "g", "grams": "g",
-        "kilogram": "kg", "kilograms": "kg",
-        "milliliter": "ml", "milliliters": "ml",
-        "litre": "l", "liter": "l", "litres": "l", "liters": "l",
+        "tablespoon": "tbsp",
+        "tablespoons": "tbsp",
+        "teaspoon": "tsp",
+        "teaspoons": "tsp",
+        "cup": "cup",
+        "cups": "cup",
+        "ounce": "oz",
+        "ounces": "oz",
+        "pound": "lb",
+        "pounds": "lb",
+        "gram": "g",
+        "grams": "g",
+        "kilogram": "kg",
+        "kilograms": "kg",
+        "milliliter": "ml",
+        "milliliters": "ml",
+        "litre": "l",
+        "liter": "l",
+        "litres": "l",
+        "liters": "l",
     }
     return unit_map.get(unit_lower, unit_lower)

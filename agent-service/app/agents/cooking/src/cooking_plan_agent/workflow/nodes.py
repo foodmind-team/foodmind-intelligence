@@ -15,6 +15,7 @@ from cooking_plan_agent.domain.models import (
     IngredientDemand,
     RecipeGap,
     RecipeIR,
+    RepairOption,
     SafetyContext,
     SafetyReport,
     WorkflowError,
@@ -30,7 +31,7 @@ from cooking_plan_agent.workflow.state import PlanState
 async def validate_input_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Validate the incoming GeneratePlanRequest.
 
     Checks: non-empty recipes, reasonable serving/task counts, schema version.
@@ -56,7 +57,7 @@ async def validate_input_node(
 async def parse_recipes_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Extract structured candidates from each recipe's raw text.
 
     Uses the RecipeExtractor from WorkflowContext (rule-based or LLM-backed).
@@ -73,7 +74,7 @@ async def parse_recipes_node(
         for recipe in request.recipes:
             try:
                 text = recipe.get("text", "")
-                if text:
+                if isinstance(text, str) and text:
                     candidate = await extractor.extract(text)
                     candidates.append(candidate)
             except Exception as exc:  # noqa: BLE001 — per-node error → error state
@@ -92,7 +93,7 @@ async def parse_recipes_node(
         rule_extractor = RuleExtractor()
         for recipe in request.recipes:
             text = recipe.get("text", "")
-            if text:
+            if isinstance(text, str) and text:
                 candidate = await rule_extractor.extract(text)
                 candidates.append(candidate)
 
@@ -102,7 +103,7 @@ async def parse_recipes_node(
 async def detect_gaps_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Identify missing/inferred fields in extracted candidates.
 
     Runs gap detection (find_recipe_gaps + classify_recipe_gap) on every
@@ -125,7 +126,7 @@ async def detect_gaps_node(
 async def infer_local_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Apply local cooking rules to fill detected gaps.
 
     Runs infer_local on each candidate with its gaps, then merges inference
@@ -171,7 +172,7 @@ async def infer_local_node(
 async def research_missing_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Query web research for low-confidence critical gaps (handbook 10).
 
     For each critical gap in state, query the RecipeResearcher from
@@ -264,7 +265,7 @@ async def research_missing_node(
 async def validate_recipe_ir_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Build validated RecipeIR objects from candidates.
 
     Converts each ExtractedRecipeCandidate → RecipeIR via build_recipe_ir,
@@ -330,7 +331,7 @@ async def validate_recipe_ir_node(
 async def validate_safety_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Evaluate all safety rules against the recipe set.
 
     Builds a SafetyContext from request + parsed_recipes, then delegates
@@ -370,7 +371,7 @@ async def validate_safety_node(
 async def check_feasibility_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Check inventory sufficiency and resource compatibility.
 
     Ingredient check: aggregates all RecipeIR.ingredients then runs FEFO
@@ -400,11 +401,7 @@ async def check_feasibility_node(
     # --- Resource pre-check (from step hints, pre-decomposition) ---
     missing_resources: list[str] = []
     if request.kitchen_resources:
-        available_types = {
-            r.resource_type.lower()
-            for r in request.kitchen_resources
-            if r.available
-        }
+        available_types = {r.resource_type.lower() for r in request.kitchen_resources if r.available}
         for recipe in parsed_recipes:
             for step in recipe.steps:
                 for hint in step.resources_hint:
@@ -415,7 +412,7 @@ async def check_feasibility_node(
     is_feasible = ingredient_report.is_feasible and len(missing_resources) == 0
 
     # --- Generate repair options when infeasible ---
-    repair_options: tuple = ()
+    repair_options: tuple[RepairOption, ...] = ()
     if not is_feasible:
         from cooking_plan_agent.repair.options import (
             propose_dish_replacements,
@@ -427,18 +424,10 @@ async def check_feasibility_node(
 
         recipe_names = tuple(r.dish_name for r in parsed_recipes)
 
-        opts = list(
-            propose_ingredient_substitutions(ingredient_report.ingredient_shortages)
-        )
-        opts.extend(
-            propose_portion_adjustments(ingredient_report.ingredient_shortages)
-        )
-        opts.extend(
-            propose_equipment_alternatives(tuple(missing_resources))
-        )
-        opts.extend(
-            propose_dish_replacements(ingredient_report.ingredient_shortages, recipe_names)
-        )
+        opts = list(propose_ingredient_substitutions(ingredient_report.ingredient_shortages))
+        opts.extend(propose_portion_adjustments(ingredient_report.ingredient_shortages))
+        opts.extend(propose_equipment_alternatives(tuple(missing_resources)))
+        opts.extend(propose_dish_replacements(ingredient_report.ingredient_shortages, recipe_names))
         repair_options = rank_repair_options(tuple(opts))
 
     return {
@@ -455,7 +444,7 @@ async def check_feasibility_node(
 async def build_confirmation_response_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Render NEEDS_CONFIRMATION response with assumptions and repair options.
 
     Delegates to rendering.responses.render_confirmation_response.
@@ -474,7 +463,7 @@ async def build_confirmation_response_node(
 async def merge_preparation_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Decompose recipe steps + merge shared preparation into CookingTasks.
 
     Iterates over validated RecipeIR steps, calls decompose_step for each,
@@ -507,11 +496,7 @@ async def merge_preparation_node(
             if last_task_id is not None and tasks:
                 first = tasks[0]
                 dep = TaskDependency(predecessor_id=last_task_id)
-                tasks = (
-                    first.model_copy(
-                        update={"dependencies": first.dependencies + (dep,)}
-                    ),
-                ) + tasks[1:]
+                tasks = (first.model_copy(update={"dependencies": first.dependencies + (dep,)}),) + tasks[1:]
 
             all_recipe_tasks.extend(tasks)
             last_task_id = tasks[-1].task_id
@@ -544,7 +529,7 @@ async def merge_preparation_node(
 async def build_task_graph_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Build the task DAG from recipe, prep, and safety tasks.
 
     Wired to existing preparation/task_graph.py.
@@ -584,7 +569,7 @@ async def build_task_graph_node(
 async def solve_schedule_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Solve the CP-SAT scheduling problem.
 
     Wired to existing scheduling/orchestrator.py.
@@ -631,7 +616,7 @@ async def solve_schedule_node(
 async def verify_schedule_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Independent verification of solver output.
 
     Wired to existing scheduling/verifier.py.
@@ -694,7 +679,7 @@ async def verify_schedule_node(
 async def render_ready_response_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Render READY response with verified schedule, mise en place, and checklist.
 
     Delegates to rendering.responses.render_ready_response.
@@ -708,7 +693,7 @@ async def render_ready_response_node(
 async def render_infeasible_response_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Render INFEASIBLE response with ordered reasons from all sources.
 
     Delegates to rendering.responses.render_infeasible_response.
@@ -722,7 +707,7 @@ async def render_infeasible_response_node(
 async def render_failed_response_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
-) -> dict:
+) -> dict[str, object]:
     """Render FAILED response with stable error code and correlation ID.
 
     Delegates to rendering.responses.render_failed_response.

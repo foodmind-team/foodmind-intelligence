@@ -61,7 +61,7 @@ class ScheduleSolver:
             model_info=model_info,
         )
 
-    def map_status(self, cp_status: int) -> SolverStatus:
+    def map_status(self, cp_status: cp_model.CpSolverStatus) -> SolverStatus:
         """Map CP-SAT's CpSolverStatus enum to domain SolverStatus.
 
         Note:
@@ -128,7 +128,7 @@ class SolverRun:
     def __init__(
         self,
         solver: cp_model.CpSolver,
-        cp_status: int,
+        cp_status: cp_model.CpSolverStatus,
         wall_time_seconds: float,
         model_info: ModelInfo,
     ) -> None:

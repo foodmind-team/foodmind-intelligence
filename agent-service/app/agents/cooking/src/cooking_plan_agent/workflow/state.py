@@ -42,7 +42,7 @@ class PlanState(TypedDict, total=False):
     extracted_candidates: tuple[ExtractedRecipeCandidate, ...]
     gaps: tuple[RecipeGap, ...]
     # Evidence stored as plain dicts to keep state serialisable (no dataclass coupling)
-    evidence: tuple[dict, ...]
+    evidence: tuple[dict[str, object], ...]
     # Per-gap reconciled research results (keyed by gap_id for traceability)
     research_evidence: dict[str, ReconciledEvidence]
 

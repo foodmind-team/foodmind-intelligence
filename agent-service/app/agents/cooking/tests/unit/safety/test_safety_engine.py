@@ -365,9 +365,7 @@ class TestProteinSafetyTemperatureRule:
             "r1",
             "Stir-Fried Vegetables",
             ingredients=(_make_ingredient("broccoli"), _make_ingredient("carrot")),
-            steps=(
-                _make_step(1, "Stir-fry vegetables", heat_level=HeatLevel.HIGH),
-            ),
+            steps=(_make_step(1, "Stir-fry vegetables", heat_level=HeatLevel.HIGH),),
         )
         ctx = _make_context(recipes=(recipe,))
 
@@ -446,7 +444,10 @@ class TestDietaryCompatibilityRule:
         recipe = _make_recipe(
             "r1",
             "Halal Chicken Rice",
-            ingredients=(_make_ingredient("chicken breast"), _make_ingredient("rice"),),
+            ingredients=(
+                _make_ingredient("chicken breast"),
+                _make_ingredient("rice"),
+            ),
         )
         ctx = _make_context(recipes=(recipe,), dietary_restrictions=("halal",))
 
@@ -610,7 +611,8 @@ class TestExpiredIngredientRule:
         """Without inventory lots, no expiry to check → None."""
         rule = ExpiredIngredientRule()
         recipe = _make_recipe(
-            "r1", "Chicken Soup",
+            "r1",
+            "Chicken Soup",
             ingredients=(_make_ingredient("chicken breast", input_state="raw"),),
         )
         ctx = SafetyContext(recipes=(recipe,), cooking_date=date(2026, 8, 15))
@@ -620,7 +622,8 @@ class TestExpiredIngredientRule:
         """Lot with expiry_date after cooking_date → no finding."""
         rule = ExpiredIngredientRule()
         recipe = _make_recipe(
-            "r1", "Chicken Soup",
+            "r1",
+            "Chicken Soup",
             ingredients=(_make_ingredient("chicken breast"),),
         )
         lot = _make_lot("L1", "chicken breast", expiry_date=date(2026, 8, 20))
@@ -635,7 +638,8 @@ class TestExpiredIngredientRule:
         """Lot 1 day past expiry → hard_repairable (can inspect)."""
         rule = ExpiredIngredientRule()
         recipe = _make_recipe(
-            "r1", "Chicken Soup",
+            "r1",
+            "Chicken Soup",
             ingredients=(_make_ingredient("chicken breast"),),
         )
         lot = _make_lot("L1", "chicken breast", expiry_date=date(2026, 8, 14))
@@ -653,7 +657,8 @@ class TestExpiredIngredientRule:
         """Lot 5 days past expiry → hard_unrepairable (likely spoiled)."""
         rule = ExpiredIngredientRule()
         recipe = _make_recipe(
-            "r1", "Beef Stew",
+            "r1",
+            "Beef Stew",
             ingredients=(_make_ingredient("beef chuck"),),
         )
         lot = _make_lot("L1", "beef chuck", expiry_date=date(2026, 8, 10))
@@ -670,7 +675,8 @@ class TestExpiredIngredientRule:
         """Expired rice (non-perishable) → no finding."""
         rule = ExpiredIngredientRule()
         recipe = _make_recipe(
-            "r1", "Fried Rice",
+            "r1",
+            "Fried Rice",
             ingredients=(_make_ingredient("rice"),),
         )
         lot = _make_lot("L1", "rice", expiry_date=date(2025, 1, 1))
@@ -685,7 +691,8 @@ class TestExpiredIngredientRule:
         """Lot for unused ingredient → skipped, no false positive."""
         rule = ExpiredIngredientRule()
         recipe = _make_recipe(
-            "r1", "Vegetable Soup",
+            "r1",
+            "Vegetable Soup",
             ingredients=(_make_ingredient("carrot"),),
         )
         lot = _make_lot("L1", "chicken breast", expiry_date=date(2026, 8, 10))
@@ -709,7 +716,8 @@ class TestHoldingTimeRule:
         """Vegetarian dish → no holding-time risk."""
         rule = HoldingTimeRule()
         recipe = _make_recipe(
-            "r1", "Vegetable Soup",
+            "r1",
+            "Vegetable Soup",
             ingredients=(_make_ingredient("carrot"), _make_ingredient("broccoli")),
             steps=(_make_step(1, "Boil vegetables", passive_duration_minutes=180),),
         )
@@ -720,7 +728,8 @@ class TestHoldingTimeRule:
         """Perishable protein but passive time ≤ 120 min → no finding."""
         rule = HoldingTimeRule()
         recipe = _make_recipe(
-            "r1", "Quick Chicken",
+            "r1",
+            "Quick Chicken",
             ingredients=(_make_ingredient("chicken breast"),),
             steps=(_make_step(1, "Boil chicken", passive_duration_minutes=60),),
         )
@@ -731,11 +740,10 @@ class TestHoldingTimeRule:
         """Perishable protein + passive > 120 min → holding-time risk."""
         rule = HoldingTimeRule()
         recipe = _make_recipe(
-            "r1", "Slow-Cooked Beef",
+            "r1",
+            "Slow-Cooked Beef",
             ingredients=(_make_ingredient("beef chuck"),),
-            steps=(
-                _make_step(1, "Simmer beef", passive_duration_minutes=180),
-            ),
+            steps=(_make_step(1, "Simmer beef", passive_duration_minutes=180),),
         )
         ctx = _make_context(recipes=(recipe,))
         result = rule.evaluate(ctx)
@@ -748,12 +756,14 @@ class TestHoldingTimeRule:
         """One risky dish among several → finding includes only the risky one."""
         rule = HoldingTimeRule()
         risky = _make_recipe(
-            "r1", "Brisket",
+            "r1",
+            "Brisket",
             ingredients=(_make_ingredient("beef brisket"),),
             steps=(_make_step(1, "Simmer brisket", passive_duration_minutes=240),),
         )
         safe = _make_recipe(
-            "r2", "Salad",
+            "r2",
+            "Salad",
             ingredients=(_make_ingredient("lettuce"), _make_ingredient("tomato")),
             steps=(_make_step(1, "Toss salad", passive_duration_minutes=0),),
         )
@@ -766,7 +776,8 @@ class TestHoldingTimeRule:
         """Passive == 120 min (boundary) → no finding (strict > check)."""
         rule = HoldingTimeRule()
         recipe = _make_recipe(
-            "r1", "Roast Chicken",
+            "r1",
+            "Roast Chicken",
             ingredients=(_make_ingredient("chicken"),),
             steps=(_make_step(1, "Roast chicken", passive_duration_minutes=120),),
         )

@@ -358,10 +358,12 @@ def _infer_heat(
     heat, explanation = _TECHNIQUE_HEAT_MAP[technique]
     confidence = Decimal("0.7")  # Moderate — technique-level inference
 
-    filled_gap = gap.model_copy(update={
-        "current_value": heat.value,
-        "confidence": confidence,
-    })
+    filled_gap = gap.model_copy(
+        update={
+            "current_value": heat.value,
+            "confidence": confidence,
+        }
+    )
     assumption = Assumption(
         text=f"Assuming {heat.value} heat for {technique}: {explanation}",
         confidence=confidence,
@@ -382,10 +384,12 @@ def _infer_duration(
     inferred = (dur_min + dur_max) // 2
     confidence = Decimal("0.5")  # Low confidence — duration varies a lot
 
-    filled_gap = gap.model_copy(update={
-        "current_value": str(inferred),
-        "confidence": confidence,
-    })
+    filled_gap = gap.model_copy(
+        update={
+            "current_value": str(inferred),
+            "confidence": confidence,
+        }
+    )
     assumption = Assumption(
         text=f"Assuming ~{inferred} minutes for {technique}: {explanation}",
         confidence=confidence,
@@ -404,10 +408,12 @@ def _infer_temperature(
     temp, explanation = _TECHNIQUE_TEMPERATURE_MAP[technique]
     confidence = Decimal("0.6")
 
-    filled_gap = gap.model_copy(update={
-        "current_value": str(temp),
-        "confidence": confidence,
-    })
+    filled_gap = gap.model_copy(
+        update={
+            "current_value": str(temp),
+            "confidence": confidence,
+        }
+    )
     assumption = Assumption(
         text=f"Assuming {temp}°C for {technique}: {explanation}",
         confidence=confidence,
@@ -426,10 +432,12 @@ def _infer_resources(
     resources = _TECHNIQUE_RESOURCES[technique]
     confidence = Decimal("0.75")
 
-    filled_gap = gap.model_copy(update={
-        "current_value": ", ".join(resources),
-        "confidence": confidence,
-    })
+    filled_gap = gap.model_copy(
+        update={
+            "current_value": ", ".join(resources),
+            "confidence": confidence,
+        }
+    )
     assumption = Assumption(
         text=f"Assuming required equipment for {technique}: {', '.join(resources)}",
         confidence=confidence,
@@ -440,6 +448,7 @@ def _infer_resources(
 def _extract_step_index(field_path: str) -> int | None:
     """Extract step index from field path like 'steps[2].heat_level'."""
     import re
+
     match = re.search(r"steps\[(\d+)\]", field_path)
     if match:
         return int(match.group(1))

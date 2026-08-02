@@ -10,6 +10,8 @@ from __future__ import annotations
 from uuid import uuid4
 
 from cooking_plan_agent.domain.models import (
+    Assumption,
+    CompletionItem,
     ConfirmationPlanResponse,
     FailedPlanResponse,
     InfeasiblePlanResponse,
@@ -49,7 +51,7 @@ def render_ready_response(state: PlanState) -> ReadyPlanResponse:
     all_tasks = task_graph.tasks if task_graph else ()
 
     # Build timeline
-    timeline: tuple[dict, ...] = ()
+    timeline: tuple[dict[str, object], ...] = ()
     makespan = 0
     solver_status = "UNKNOWN"
     if schedule:
@@ -65,16 +67,17 @@ def render_ready_response(state: PlanState) -> ReadyPlanResponse:
     mise_en_place = build_mise_en_place(combined) if combined else ()
 
     # Build dish completion summary
-    dish_completions: tuple[dict, ...] = ()
+    dish_completions: tuple[dict[str, object], ...] = ()
     if schedule:
         dish_completions = build_dish_completion_summary(schedule, all_tasks)
 
     # Build completion checklist from feasibility report allocations
     # (deferred to when reservation_proposal is wired)
-    completion_checklist: tuple = ()
+    completion_checklist: tuple[CompletionItem, ...] = ()
     feasibility = state.get("feasibility_report")
     if feasibility and feasibility.ingredient_shortages:
         from cooking_plan_agent.inventory.feasibility import build_reservation_proposal
+
         proposal = build_reservation_proposal(feasibility)
         completion_checklist = proposal.items
 
@@ -111,7 +114,7 @@ def render_confirmation_response(state: PlanState) -> ConfirmationPlanResponse:
 
     # Collect assumptions from parsed recipes
     parsed = state.get("parsed_recipes", ())
-    assumptions = []
+    assumptions: list[Assumption] = []
     for recipe in parsed:
         assumptions.extend(recipe.assumptions)
 
@@ -259,32 +262,28 @@ def validate_terminal_response(response: PlanResponse) -> PlanResponse:
     status = getattr(response, "status", None)
 
     if status == "READY":
-        r = response  # type: ReadyPlanResponse  # noqa: F841
-        if isinstance(r, ReadyPlanResponse):
-            if not r.solver_status:
+        if isinstance(response, ReadyPlanResponse):
+            if not response.solver_status:
                 raise ValueError("READY response: solver_status is empty")
-            if r.makespan_minutes <= 0:
-                raise ValueError(f"READY response: makespan must be > 0, got {r.makespan_minutes}")
+            if response.makespan_minutes <= 0:
+                raise ValueError(f"READY response: makespan must be > 0, got {response.makespan_minutes}")
 
     elif status == "NEEDS_CONFIRMATION":
-        r = response  # noqa: F841
-        if isinstance(r, ConfirmationPlanResponse):
-            has_content = bool(r.assumptions or r.repair_options or r.questions)
+        if isinstance(response, ConfirmationPlanResponse):
+            has_content = bool(response.assumptions or response.repair_options or response.questions)
             if not has_content:
                 raise ValueError("CONFIRMATION response: must have at least one assumption, repair_option, or question")
 
     elif status == "INFEASIBLE":
-        r = response  # noqa: F841
-        if isinstance(r, InfeasiblePlanResponse):
-            if not r.reasons:
+        if isinstance(response, InfeasiblePlanResponse):
+            if not response.reasons:
                 raise ValueError("INFEASIBLE response: must have at least one reason")
 
     elif status == "FAILED":
-        r = response  # noqa: F841
-        if isinstance(r, FailedPlanResponse):
-            if not r.error_code.strip():
+        if isinstance(response, FailedPlanResponse):
+            if not response.error_code.strip():
                 raise ValueError("FAILED response: error_code is empty")
-            if not r.correlation_id.strip():
+            if not response.correlation_id.strip():
                 raise ValueError("FAILED response: correlation_id is empty")
 
     else:

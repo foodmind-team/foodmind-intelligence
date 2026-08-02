@@ -121,7 +121,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run contract tests
-        run: uv run pytest tests/test_api_contract.py tests/test_dependencies.py -v
+        run: uv run pytest tests/contract tests/security -v
 
   # ------------------------------------------------------------------
   # Job 5: Export OpenAPI schema and verify it (handbook 9.12)

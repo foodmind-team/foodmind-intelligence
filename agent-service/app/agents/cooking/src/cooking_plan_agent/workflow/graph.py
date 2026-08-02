@@ -6,6 +6,7 @@ exactly one valid response status.
 """
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.nodes import (
@@ -37,7 +38,7 @@ from cooking_plan_agent.workflow.routing import (
 from cooking_plan_agent.workflow.state import PlanState
 
 
-def build_cooking_plan_graph():
+def build_cooking_plan_graph() -> CompiledStateGraph[PlanState, WorkflowContext]:
     """Build and compile the cooking-plan generation workflow graph.
 
     Returns a compiled graph ready for ainvoke() with PlanState input

@@ -11,6 +11,7 @@ prep_trie.py : Ingredient preparation merging via prefix tree
 task_graph.py : Task DAG construction, cycle detection, critical path
 """
 
+from collections.abc import Callable
 from decimal import Decimal
 from typing import ClassVar
 
@@ -175,7 +176,10 @@ def decompose_step(
         return _decompose_simple(recipe_id, step, policy)
 
     # Dispatch to the appropriate decomposition helper.
-    dispatcher: dict = {
+    dispatcher: dict[
+        str,
+        Callable[[str, RecipeStep, DecompositionPolicy], tuple[CookingTask, ...]],
+    ] = {
         "boil": _decompose_boil,
         "marinate": _decompose_marinate,
         "bake": _decompose_bake,

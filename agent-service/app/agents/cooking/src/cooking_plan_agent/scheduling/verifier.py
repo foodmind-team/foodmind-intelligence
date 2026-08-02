@@ -8,6 +8,7 @@ All checks are deterministic and purely based on the domain input/output.
 """
 
 from cooking_plan_agent.domain.enums import SolverStatus, WorkMode
+from cooking_plan_agent.domain.models import CookingTask
 from cooking_plan_agent.scheduling.models import (
     ScheduledInterval,
     ScheduleResult,
@@ -103,7 +104,7 @@ class ScheduleVerifier:
 
     def _check_task_presence(
         self,
-        task_map: dict[str, object],
+        task_map: dict[str, CookingTask],
         interval_map: dict[str, ScheduledInterval],
     ) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
@@ -133,14 +134,13 @@ class ScheduleVerifier:
 
         return issues
 
-
     # ------------------------------------------------------------------
     # Check 9: safety-tagged tasks
     # ------------------------------------------------------------------
 
     def _check_safety_tasks(
         self,
-        task_map: dict[str, object],
+        task_map: dict[str, CookingTask],
         interval_map: dict[str, ScheduledInterval],
     ) -> list[VerificationIssue]:
         """Verify that every safety-tagged task has a scheduled interval.
@@ -156,16 +156,13 @@ class ScheduleVerifier:
         issues: list[VerificationIssue] = []
 
         for task_id, task in task_map.items():
-            if not hasattr(task, "safety_tags") or not task.safety_tags:  # type: ignore[union-attr]
+            if not task.safety_tags:
                 continue
             if task_id not in interval_map:
                 issues.append(
                     VerificationIssue(
                         code="SAFETY_TASK_MISSING",
-                        message=(
-                            f"Safety-tagged task '{task_id}' "
-                            f"(tags: {task.safety_tags}) is missing from schedule"
-                        ),
+                        message=(f"Safety-tagged task '{task_id}' (tags: {task.safety_tags}) is missing from schedule"),
                         task_ids=(task_id,),
                     )
                 )
@@ -178,7 +175,7 @@ class ScheduleVerifier:
 
     def _check_durations(
         self,
-        task_map: dict[str, object],
+        task_map: dict[str, CookingTask],
         interval_map: dict[str, ScheduledInterval],
     ) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
@@ -188,7 +185,7 @@ class ScheduleVerifier:
             if task is None:
                 continue
             actual_duration = interval.end_minute - interval.start_minute
-            expected_duration = task.duration_minutes  # type: ignore[union-attr]
+            expected_duration = task.duration_minutes
             if actual_duration != expected_duration:
                 issues.append(
                     VerificationIssue(
@@ -206,7 +203,7 @@ class ScheduleVerifier:
 
     def _check_lags(
         self,
-        task_map: dict[str, object],
+        task_map: dict[str, CookingTask],
         interval_map: dict[str, ScheduledInterval],
     ) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
@@ -216,7 +213,7 @@ class ScheduleVerifier:
             if interval is None:
                 continue
 
-            for dep in task.dependencies:  # type: ignore[union-attr]
+            for dep in task.dependencies:
                 pred_interval = interval_map.get(dep.predecessor_id)
                 if pred_interval is None:
                     continue
@@ -262,7 +259,7 @@ class ScheduleVerifier:
 
     def _check_active_no_overlap(
         self,
-        task_map: dict[str, object],
+        task_map: dict[str, CookingTask],
         interval_map: dict[str, ScheduledInterval],
     ) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
@@ -273,7 +270,7 @@ class ScheduleVerifier:
             task = task_map.get(task_id)
             if task is None:
                 continue
-            if task.work_mode == WorkMode.ACTIVE:  # type: ignore[union-attr]
+            if task.work_mode == WorkMode.ACTIVE:
                 active_intervals.append((interval.start_minute, interval.end_minute, task_id))
 
         # Sort by start time, then by end time.
@@ -304,7 +301,7 @@ class ScheduleVerifier:
 
     def _check_resource_compatibility(
         self,
-        task_map: dict[str, object],
+        task_map: dict[str, CookingTask],
         problem: SchedulingProblem,
     ) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
@@ -330,7 +327,7 @@ class ScheduleVerifier:
 
     def _check_resource_capacity(
         self,
-        task_map: dict[str, object],
+        task_map: dict[str, CookingTask],
         interval_map: dict[str, ScheduledInterval],
         problem: SchedulingProblem,
     ) -> list[VerificationIssue]:
@@ -355,7 +352,7 @@ class ScheduleVerifier:
                 task = task_map.get(task_id)
                 if task is None:
                     continue
-                for need in task.resources:  # type: ignore[union-attr]
+                for need in task.resources:
                     if need.resource_type == res_type:
                         events.append((interval.start_minute, True, task_id, need.quantity))
                         events.append((interval.end_minute, False, task_id, need.quantity))

@@ -19,6 +19,7 @@ from typing import Protocol
 
 from cooking_plan_agent.domain.enums import HeatLevel
 from cooking_plan_agent.domain.models import (
+    InventoryLotSnapshot,
     RecipeIR,
     RecipeStep,
     SafetyContext,
@@ -36,9 +37,13 @@ class SafetyRule(Protocol):
     Each rule receives the full SafetyContext and returns either a
     SafetyFinding (violation detected) or None (rule satisfied).
     Rules MUST NOT mutate the context or have side effects.
+
+    rule_id is declared read-only because every concrete rule is a
+    frozen dataclass — instance attributes are never settable.
     """
 
-    rule_id: str
+    @property
+    def rule_id(self) -> str: ...
 
     def evaluate(self, context: SafetyContext) -> SafetyFinding | None: ...
 
@@ -111,27 +116,90 @@ _PROTEIN_KEYWORDS: dict[str, str] = {
 # Ingredients prohibited per dietary restriction
 _DIETARY_PROHIBITED: dict[str, tuple[str, ...]] = {
     "halal": (
-        "pork", "bacon", "ham", "lard", "sausage",
-        "alcohol", "wine", "beer", "sake", "mirin", "rum",
+        "pork",
+        "bacon",
+        "ham",
+        "lard",
+        "sausage",
+        "alcohol",
+        "wine",
+        "beer",
+        "sake",
+        "mirin",
+        "rum",
         "gelatin",  # unless halal-certified
     ),
     "vegetarian": (
-        "chicken", "beef", "pork", "lamb", "mutton", "veal",
-        "fish", "salmon", "tuna", "shrimp", "prawn", "crab",
-        "lobster", "mussel", "clam", "oyster", "squid", "octopus",
-        "bacon", "ham", "sausage", "meat",
+        "chicken",
+        "beef",
+        "pork",
+        "lamb",
+        "mutton",
+        "veal",
+        "fish",
+        "salmon",
+        "tuna",
+        "shrimp",
+        "prawn",
+        "crab",
+        "lobster",
+        "mussel",
+        "clam",
+        "oyster",
+        "squid",
+        "octopus",
+        "bacon",
+        "ham",
+        "sausage",
+        "meat",
     ),
     "vegan": (
-        "chicken", "beef", "pork", "lamb", "mutton", "veal",
-        "fish", "salmon", "tuna", "shrimp", "prawn", "crab",
-        "lobster", "mussel", "clam", "oyster", "squid", "octopus",
-        "egg", "milk", "cheese", "butter", "cream", "yogurt",
-        "honey", "gelatin", "bacon", "ham", "sausage", "meat",
+        "chicken",
+        "beef",
+        "pork",
+        "lamb",
+        "mutton",
+        "veal",
+        "fish",
+        "salmon",
+        "tuna",
+        "shrimp",
+        "prawn",
+        "crab",
+        "lobster",
+        "mussel",
+        "clam",
+        "oyster",
+        "squid",
+        "octopus",
+        "egg",
+        "milk",
+        "cheese",
+        "butter",
+        "cream",
+        "yogurt",
+        "honey",
+        "gelatin",
+        "bacon",
+        "ham",
+        "sausage",
+        "meat",
     ),
     "kosher": (
-        "pork", "bacon", "ham", "lard",
-        "shellfish", "shrimp", "prawn", "crab", "lobster",
-        "mussel", "clam", "oyster", "squid", "octopus",
+        "pork",
+        "bacon",
+        "ham",
+        "lard",
+        "shellfish",
+        "shrimp",
+        "prawn",
+        "crab",
+        "lobster",
+        "mussel",
+        "clam",
+        "oyster",
+        "squid",
+        "octopus",
         # Meat + dairy mixing is complex; flag for now
     ),
 }
@@ -158,15 +226,36 @@ class CrossContaminationRule:
 
     # Ingredients considered "raw protein" — matched against canonical_name
     _raw_protein_keywords: tuple[str, ...] = (
-        "chicken", "beef", "pork", "lamb", "mutton", "veal",
-        "fish", "salmon", "tuna", "shrimp", "prawn", "crab",
-        "lobster", "mussel", "clam", "oyster", "squid", "octopus",
-        "egg", "meat", "poultry", "seafood",
+        "chicken",
+        "beef",
+        "pork",
+        "lamb",
+        "mutton",
+        "veal",
+        "fish",
+        "salmon",
+        "tuna",
+        "shrimp",
+        "prawn",
+        "crab",
+        "lobster",
+        "mussel",
+        "clam",
+        "oyster",
+        "squid",
+        "octopus",
+        "egg",
+        "meat",
+        "poultry",
+        "seafood",
     )
 
     # Step categories that imply ready-to-eat handling
     _rte_categories: tuple[str, ...] = (
-        "plating", "garnishing", "dressing", "mixing",
+        "plating",
+        "garnishing",
+        "dressing",
+        "mixing",
     )
 
     def evaluate(self, context: SafetyContext) -> SafetyFinding | None:
@@ -227,30 +316,58 @@ class AllergenDetectionRule:
 
     # Big 9 priority allergens (FAO/WHO) — hard_unrepairable
     _priority_allergens: tuple[str, ...] = (
-        "peanut", "tree nut", "milk", "egg",
-        "fish", "shellfish", "soy", "wheat", "sesame",
+        "peanut",
+        "tree nut",
+        "milk",
+        "egg",
+        "fish",
+        "shellfish",
+        "soy",
+        "wheat",
+        "sesame",
     )
 
     # Keyword mapping for ingredient name → allergen type
-    _allergen_keywords: dict[str, str] = field(default_factory=lambda: {
-        "peanut": "peanut",
-        "almond": "tree nut", "walnut": "tree nut",
-        "cashew": "tree nut", "pecan": "tree nut",
-        "pistachio": "tree nut", "hazelnut": "tree nut",
-        "milk": "milk", "cream": "milk", "butter": "milk",
-        "cheese": "milk", "yogurt": "milk", "whey": "milk",
-        "egg": "egg",
-        "fish": "fish", "salmon": "fish", "tuna": "fish",
-        "shrimp": "shellfish", "prawn": "shellfish",
-        "crab": "shellfish", "lobster": "shellfish",
-        "mussel": "shellfish", "clam": "shellfish",
-        "oyster": "shellfish", "squid": "shellfish",
-        "soy": "soy", "soybean": "soy", "tofu": "soy",
-        "wheat": "wheat", "flour": "wheat", "bread": "wheat",
-        "pasta": "wheat", "noodle": "wheat",
-        "sesame": "sesame", "tahini": "sesame",
-        "gluten": "wheat",
-    })
+    _allergen_keywords: dict[str, str] = field(
+        default_factory=lambda: {
+            "peanut": "peanut",
+            "almond": "tree nut",
+            "walnut": "tree nut",
+            "cashew": "tree nut",
+            "pecan": "tree nut",
+            "pistachio": "tree nut",
+            "hazelnut": "tree nut",
+            "milk": "milk",
+            "cream": "milk",
+            "butter": "milk",
+            "cheese": "milk",
+            "yogurt": "milk",
+            "whey": "milk",
+            "egg": "egg",
+            "fish": "fish",
+            "salmon": "fish",
+            "tuna": "fish",
+            "shrimp": "shellfish",
+            "prawn": "shellfish",
+            "crab": "shellfish",
+            "lobster": "shellfish",
+            "mussel": "shellfish",
+            "clam": "shellfish",
+            "oyster": "shellfish",
+            "squid": "shellfish",
+            "soy": "soy",
+            "soybean": "soy",
+            "tofu": "soy",
+            "wheat": "wheat",
+            "flour": "wheat",
+            "bread": "wheat",
+            "pasta": "wheat",
+            "noodle": "wheat",
+            "sesame": "sesame",
+            "tahini": "sesame",
+            "gluten": "wheat",
+        }
+    )
 
     def evaluate(self, context: SafetyContext) -> SafetyFinding | None:
         """Check all ingredients against user allergens."""
@@ -309,8 +426,7 @@ class AllergenDetectionRule:
             rule_id=self.rule_id,
             severity="hard_repairable",
             description=(
-                f"Allergen detected (non-priority): {', '.join(matches_other)}. "
-                f"User is sensitive to these ingredients."
+                f"Allergen detected (non-priority): {', '.join(matches_other)}. User is sensitive to these ingredients."
             ),
             affected_ingredient_names=tuple(affected_ingredients),
             recommended_action="Substitute flagged ingredients with safe alternatives.",
@@ -371,9 +487,7 @@ class ProteinSafetyTemperatureRule:
         return SafetyFinding(
             rule_id=self.rule_id,
             severity="hard_repairable",
-            description=(
-                f"Protein cooking temperature below USDA safe minimum: {detail}"
-            ),
+            description=(f"Protein cooking temperature below USDA safe minimum: {detail}"),
             recommended_action=(
                 "Set target temperatures to at or above USDA safe minima: "
                 "poultry 74°C, ground meat 71°C, beef/pork/lamb/fish 63°C, eggs 71°C."
@@ -418,8 +532,7 @@ class DietaryCompatibilityRule:
                     for prohibited_kw in prohibited:
                         if prohibited_kw in name_lower:
                             violations.append(
-                                f"'{ingredient.raw_name}' in '{recipe.dish_name}' "
-                                f"(violates {restriction})"
+                                f"'{ingredient.raw_name}' in '{recipe.dish_name}' (violates {restriction})"
                             )
                             if ingredient.raw_name not in affected_ingredients:
                                 affected_ingredients.append(ingredient.raw_name)
@@ -432,10 +545,7 @@ class DietaryCompatibilityRule:
         return SafetyFinding(
             rule_id=self.rule_id,
             severity="hard_unrepairable",
-            description=(
-                f"Dietary restriction violation ({restriction_list}): "
-                f"{violation_detail}"
-            ),
+            description=(f"Dietary restriction violation ({restriction_list}): {violation_detail}"),
             affected_ingredient_names=tuple(affected_ingredients),
             recommended_action=(
                 "Remove or substitute flagged ingredients to comply with "
@@ -467,11 +577,34 @@ class ExpiredIngredientRule:
     rule_id: str = "SAFETY_EXPIRED_INGREDIENT"
 
     _perishable_keywords: tuple[str, ...] = (
-        "chicken", "beef", "pork", "lamb", "mutton", "veal",
-        "fish", "salmon", "tuna", "shrimp", "prawn", "crab",
-        "lobster", "mussel", "clam", "oyster", "squid", "octopus",
-        "egg", "milk", "cream", "yogurt", "cheese", "butter",
-        "meat", "poultry", "seafood", "dairy",
+        "chicken",
+        "beef",
+        "pork",
+        "lamb",
+        "mutton",
+        "veal",
+        "fish",
+        "salmon",
+        "tuna",
+        "shrimp",
+        "prawn",
+        "crab",
+        "lobster",
+        "mussel",
+        "clam",
+        "oyster",
+        "squid",
+        "octopus",
+        "egg",
+        "milk",
+        "cream",
+        "yogurt",
+        "cheese",
+        "butter",
+        "meat",
+        "poultry",
+        "seafood",
+        "dairy",
     )
 
     def evaluate(self, context: SafetyContext) -> SafetyFinding | None:
@@ -495,10 +628,7 @@ class ExpiredIngredientRule:
                 continue
 
             days_past = (context.cooking_date - lot.expiry_date).days
-            label = (
-                f"'{lot.canonical_name}' (lot {lot.lot_id}, "
-                f"expired {lot.expiry_date}, {days_past}d past)"
-            )
+            label = f"'{lot.canonical_name}' (lot {lot.lot_id}, expired {lot.expiry_date}, {days_past}d past)"
             if lot.canonical_name not in affected_names:
                 affected_names.append(lot.canonical_name)
             if days_past <= 3:
@@ -514,10 +644,7 @@ class ExpiredIngredientRule:
             return SafetyFinding(
                 rule_id=self.rule_id,
                 severity="hard_unrepairable",
-                description=(
-                    f"Expired perishable ingredients (likely spoiled): "
-                    f"{'; '.join(all_expired)}"
-                ),
+                description=(f"Expired perishable ingredients (likely spoiled): {'; '.join(all_expired)}"),
                 affected_ingredient_names=tuple(affected_names),
                 recommended_action=(
                     "Discard expired perishable items. Purchase fresh "
@@ -529,10 +656,7 @@ class ExpiredIngredientRule:
         return SafetyFinding(
             rule_id=self.rule_id,
             severity="hard_repairable",
-            description=(
-                f"Recently expired ingredients (inspect before use): "
-                f"{'; '.join(expired_repairable)}"
-            ),
+            description=(f"Recently expired ingredients (inspect before use): {'; '.join(expired_repairable)}"),
             affected_ingredient_names=tuple(affected_names),
             recommended_action=(
                 "Inspect each flagged item for spoilage signs (odour, "
@@ -540,15 +664,12 @@ class ExpiredIngredientRule:
             ),
         )
 
-    def _lots_used_in_recipes(self, context: SafetyContext) -> list:
+    def _lots_used_in_recipes(self, context: SafetyContext) -> list[InventoryLotSnapshot]:
         used_names: set[str] = set()
         for recipe in context.recipes:
             for ing in recipe.ingredients:
                 used_names.add(ing.canonical_name.lower().strip())
-        return [
-            lot for lot in context.inventory_lots
-            if lot.canonical_name.lower().strip() in used_names
-        ]
+        return [lot for lot in context.inventory_lots if lot.canonical_name.lower().strip() in used_names]
 
     def _is_perishable(self, name: str) -> bool:
         name_lower = name.lower()
@@ -563,11 +684,34 @@ class ExpiredIngredientRule:
 _MAX_HOLDING_MINUTES_ROOM_TEMP = 120
 
 _PERISHABLE_FOOD_KEYWORDS: tuple[str, ...] = (
-    "chicken", "beef", "pork", "lamb", "mutton", "veal", "meat",
-    "fish", "salmon", "tuna", "shrimp", "prawn", "crab",
-    "lobster", "mussel", "clam", "oyster", "squid", "octopus",
-    "egg", "milk", "cream", "yogurt", "cheese", "butter",
-    "seafood", "poultry", "dairy",
+    "chicken",
+    "beef",
+    "pork",
+    "lamb",
+    "mutton",
+    "veal",
+    "meat",
+    "fish",
+    "salmon",
+    "tuna",
+    "shrimp",
+    "prawn",
+    "crab",
+    "lobster",
+    "mussel",
+    "clam",
+    "oyster",
+    "squid",
+    "octopus",
+    "egg",
+    "milk",
+    "cream",
+    "yogurt",
+    "cheese",
+    "butter",
+    "seafood",
+    "poultry",
+    "dairy",
 )
 
 
@@ -592,17 +736,12 @@ class HoldingTimeRule:
             if not self._has_perishable_protein(recipe):
                 continue
 
-            total_passive = sum(
-                (s.passive_duration_minutes or 0) for s in recipe.steps
-            )
-            total_active = sum(
-                (s.active_duration_minutes or 5) for s in recipe.steps
-            )
+            total_passive = sum((s.passive_duration_minutes or 0) for s in recipe.steps)
+            total_active = sum((s.active_duration_minutes or 5) for s in recipe.steps)
 
             if total_passive > _MAX_HOLDING_MINUTES_ROOM_TEMP:
                 risky.append(
-                    f"'{recipe.dish_name}' (~{total_passive + total_active}min total, "
-                    f"{total_passive}min passive)"
+                    f"'{recipe.dish_name}' (~{total_passive + total_active}min total, {total_passive}min passive)"
                 )
 
         if not risky:
@@ -636,7 +775,15 @@ class HoldingTimeRule:
 # Default rule set — composed by SafetyEngine
 # =============================================================================
 
-default_rules: tuple[SafetyRule, ...] = (
+default_rules: tuple[
+    CrossContaminationRule
+    | AllergenDetectionRule
+    | ProteinSafetyTemperatureRule
+    | DietaryCompatibilityRule
+    | ExpiredIngredientRule
+    | HoldingTimeRule,
+    ...,
+] = (
     CrossContaminationRule(),
     AllergenDetectionRule(),
     ProteinSafetyTemperatureRule(),

@@ -7,6 +7,8 @@ with the ReadyPlanResponse model fields (timeline, mise_en_place, dish_completio
 
 from __future__ import annotations
 
+from typing import Any
+
 from cooking_plan_agent.domain.models import (
     CompletionItem,
     CookingTask,
@@ -24,7 +26,7 @@ from cooking_plan_agent.scheduling.models import (
 
 def build_mise_en_place(
     tasks: tuple[CookingTask, ...],
-) -> tuple[dict, ...]:
+) -> tuple[dict[str, object], ...]:
     """Build the mise en place (prep-ahead) list from preparation tasks.
 
     Groups preparation tasks by instruction prefix [Prep] and deduplicates
@@ -42,7 +44,7 @@ def build_mise_en_place(
     if not prep_tasks:
         return ()
 
-    items: list[dict] = []
+    items: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     for task in prep_tasks:
@@ -72,14 +74,16 @@ def build_mise_en_place(
         elif task.produces_states:
             when = task.produces_states[0]
 
-        items.append({
-            "instruction": f"{operation}: {ingredient}",
-            "ingredient": ingredient,
-            "operation": operation,
-            "duration_minutes": task.duration_minutes,
-            "resources": [r.resource_type for r in task.resources] if task.resources else [],
-            "when_needed": when,
-        })
+        items.append(
+            {
+                "instruction": f"{operation}: {ingredient}",
+                "ingredient": ingredient,
+                "operation": operation,
+                "duration_minutes": task.duration_minutes,
+                "resources": [r.resource_type for r in task.resources] if task.resources else [],
+                "when_needed": when,
+            }
+        )
 
     # Sort by duration descending (longer prep tasks first)
     items.sort(key=lambda i: i["duration_minutes"], reverse=True)
@@ -95,7 +99,7 @@ def build_mise_en_place(
 def build_timeline(
     schedule: ScheduleResult,
     tasks: tuple[CookingTask, ...],
-) -> tuple[dict, ...]:
+) -> tuple[dict[str, object], ...]:
     """Build a sorted timeline from scheduled intervals and task details.
 
     Each timeline entry includes the task instruction, time window,
@@ -114,25 +118,27 @@ def build_timeline(
     # Build task lookup
     task_map: dict[str, CookingTask] = {t.task_id: t for t in tasks}
 
-    items: list[dict] = []
+    items: list[dict[str, Any]] = []
 
     for interval in schedule.intervals:
         task = task_map.get(interval.task_id)
         if task is None:
             continue
 
-        items.append({
-            "task_id": interval.task_id,
-            "start_minute": interval.start_minute,
-            "end_minute": interval.end_minute,
-            "duration_minutes": interval.end_minute - interval.start_minute,
-            "instruction": task.instruction,
-            "dish_id": task.dish_id,
-            "work_mode": task.work_mode.value,
-            "category": task.category,
-            "heat_level": task.heat_level.value if task.heat_level else None,
-            "resources": [r.resource_type for r in task.resources] if task.resources else [],
-        })
+        items.append(
+            {
+                "task_id": interval.task_id,
+                "start_minute": interval.start_minute,
+                "end_minute": interval.end_minute,
+                "duration_minutes": interval.end_minute - interval.start_minute,
+                "instruction": task.instruction,
+                "dish_id": task.dish_id,
+                "work_mode": task.work_mode.value,
+                "category": task.category,
+                "heat_level": task.heat_level.value if task.heat_level else None,
+                "resources": [r.resource_type for r in task.resources] if task.resources else [],
+            }
+        )
 
     # Sort by start time, then by end time
     items.sort(key=lambda i: (i["start_minute"], i["end_minute"]))
@@ -148,7 +154,7 @@ def build_timeline(
 def build_dish_completion_summary(
     schedule: ScheduleResult,
     tasks: tuple[CookingTask, ...],
-) -> tuple[dict, ...]:
+) -> tuple[dict[str, object], ...]:
     """Calculate when each dish completes cooking.
 
     A dish is "complete" when its last task finishes. For each dish,
@@ -168,7 +174,7 @@ def build_dish_completion_summary(
     task_map: dict[str, CookingTask] = {t.task_id: t for t in tasks}
 
     # Group intervals by dish_id, track max end time
-    dish_ends: dict[str, dict] = {}
+    dish_ends: dict[str, dict[str, Any]] = {}
 
     for interval in schedule.intervals:
         task = task_map.get(interval.task_id)
@@ -238,49 +244,58 @@ def validate_completion_checklist(
     issues: list[VerificationIssue] = []
 
     if not checklist and proposal.items:
-        issues.append(VerificationIssue(
-            code="EMPTY_CHECKLIST",
-            message="Checklist is empty but proposal contains items",
-        ))
+        issues.append(
+            VerificationIssue(
+                code="EMPTY_CHECKLIST",
+                message="Checklist is empty but proposal contains items",
+            )
+        )
         return tuple(issues)
 
     seen_lot_ids: set[str] = set()
 
     for item in checklist:
         if not item.completion_item_id:
-            issues.append(VerificationIssue(
-                code="MISSING_ITEM_ID",
-                message=f"CompletionItem for '{item.ingredient_name}' has no ID",
-            ))
+            issues.append(
+                VerificationIssue(
+                    code="MISSING_ITEM_ID",
+                    message=f"CompletionItem for '{item.ingredient_name}' has no ID",
+                )
+            )
 
         for alloc in item.allocations:
             # Check lot_id
             if not alloc.inventory_lot_id.strip():
-                issues.append(VerificationIssue(
-                    code="MISSING_LOT_ID",
-                    message=f"Allocation in '{item.ingredient_name}' has empty lot_id",
-                ))
+                issues.append(
+                    VerificationIssue(
+                        code="MISSING_LOT_ID",
+                        message=f"Allocation in '{item.ingredient_name}' has empty lot_id",
+                    )
+                )
 
             # Check for duplicate lot allocations
             lot_key = f"{alloc.inventory_lot_id}:{item.ingredient_name}"
             if lot_key in seen_lot_ids:
-                issues.append(VerificationIssue(
-                    code="DUPLICATE_LOT_ALLOCATION",
-                    message=(
-                        f"Lot '{alloc.inventory_lot_id}' allocated multiple times "
-                        f"for '{item.ingredient_name}'"
-                    ),
-                ))
+                issues.append(
+                    VerificationIssue(
+                        code="DUPLICATE_LOT_ALLOCATION",
+                        message=(
+                            f"Lot '{alloc.inventory_lot_id}' allocated multiple times for '{item.ingredient_name}'"
+                        ),
+                    )
+                )
             seen_lot_ids.add(lot_key)
 
             # Check positive quantity
             if alloc.quantity <= 0:
-                issues.append(VerificationIssue(
-                    code="NON_POSITIVE_ALLOCATION",
-                    message=(
-                        f"Allocation from lot '{alloc.inventory_lot_id}' "
-                        f"for '{item.ingredient_name}' has non-positive quantity: {alloc.quantity}"
-                    ),
-                ))
+                issues.append(
+                    VerificationIssue(
+                        code="NON_POSITIVE_ALLOCATION",
+                        message=(
+                            f"Allocation from lot '{alloc.inventory_lot_id}' "
+                            f"for '{item.ingredient_name}' has non-positive quantity: {alloc.quantity}"
+                        ),
+                    )
+                )
 
     return tuple(issues)
