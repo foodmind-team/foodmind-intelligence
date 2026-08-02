@@ -276,9 +276,16 @@ def propose_ingredient_substitutions(
 # =============================================================================
 
 
+def _fmt_servings(value: Decimal) -> str:
+    """份量显示：整数值不带小数点，小数保留（保证与决策正则可解析）。"""
+    if value == value.to_integral_value():
+        return str(int(value))
+    return format(value, "f")
+
+
 def propose_portion_adjustments(
     shortages: tuple[IngredientFeasibility, ...],
-    original_servings: int = 2,
+    original_servings: Decimal | int = 2,
 ) -> tuple[RepairOption, ...]:
     """Propose reducing target servings to match available ingredients.
 
@@ -290,13 +297,17 @@ def propose_portion_adjustments(
 
     Args:
         shortages: Ingredient shortages from FeasibilityReport.
-        original_servings: The requested serving count.
+        original_servings: The requested serving count (per-recipe target
+            servings). Accepts Decimal so callers pass the user's actual
+            serving size instead of a fixed default.
 
     Returns:
         RepairOption if a reduction is meaningful, empty tuple otherwise.
     """
     if not shortages or original_servings <= 1:
         return ()
+
+    original = Decimal(str(original_servings))
 
     # Find the limiting ingredient: min(available / required)
     min_ratio = Decimal(1)
@@ -308,23 +319,26 @@ def propose_portion_adjustments(
     if min_ratio >= Decimal(1):
         return ()  # No reduction needed (should not happen with shortages)
 
-    new_servings = max(1, int((Decimal(original_servings) * min_ratio).to_integral_value()))
+    new_servings = max(Decimal(1), (original * min_ratio).to_integral_value())
 
-    if new_servings >= original_servings:
+    if new_servings >= original:
         return ()
 
     description = (
-        f"Reduce servings from {original_servings} to {new_servings} "
+        f"Reduce servings from {_fmt_servings(original)} to {_fmt_servings(new_servings)} "
         f"(available ingredients support ~{min_ratio:.0%} of original portions)"
     )
 
     return (
         RepairOption(
-            option_id=f"repair_servings_{new_servings}_{uuid4().hex[:6]}",
+            option_id=f"repair_servings_{_fmt_servings(new_servings)}_{uuid4().hex[:6]}",
             option_type="reduce_servings",
             description=description,
-            changes=(f"Scale all ingredient quantities to {new_servings} servings (was {original_servings})",),
-            effects=(f"All ingredient shortages resolved by scaling down to {new_servings} servings",),
+            changes=(
+                f"Scale all ingredient quantities to {_fmt_servings(new_servings)} servings "
+                f"(was {_fmt_servings(original)})",
+            ),
+            effects=(f"All ingredient shortages resolved by scaling down to {_fmt_servings(new_servings)} servings",),
             revalidation_status="validated",
         ),
     )
@@ -699,9 +713,9 @@ def apply_approved_decisions(
         elif opt.option_type == "reduce_servings":
             import re
 
-            match = re.search(r"from \d+ to (\d+)", opt.description)
+            match = re.search(r"from ([\d.]+) to ([\d.]+)", opt.description)
             if match:
-                modifications["target_servings"] = int(match.group(1))
+                modifications["target_servings"] = Decimal(match.group(2))
 
         # Other option types (substitute, equipment, dish replacement, purchase)
         # are deferred to rendering layer for now.
@@ -751,9 +765,10 @@ def build_approved_decisions(
             if match:
                 payload["time_limit_minutes"] = int(match.group(1))
         elif option.option_type == "reduce_servings":
-            match = _re.search(r"from \d+ to (\d+)", option.description)
+            match = _re.search(r"from ([\d.]+) to ([\d.]+)", option.description)
             if match:
-                payload["servings"] = int(match.group(1))
+                # 削减后的新份量始终为整数（to_integral_value），故保留 int 语义
+                payload["servings"] = int(Decimal(match.group(2)))
         decisions.append(
             ApprovedDecision(
                 option_id=option.option_id,
@@ -830,7 +845,7 @@ def apply_approved_decisions_structured(
     for decision in decisions:
         payload = decision.payload
         if decision.option_type == "reduce_servings" and payload.get("servings") is not None:
-            servings = int(str(payload["servings"]))
+            servings = Decimal(str(payload["servings"]))
             new_recipes = tuple(
                 r.model_copy(update={"target_servings": servings}) if r.target_servings != servings else r
                 for r in new_request.recipes
