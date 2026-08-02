@@ -433,6 +433,9 @@ class SafetyReport(StrictModel):
     required_safety_task_ids: tuple[str, ...] = ()
     # P0-07: structured insertions anchored between recipe steps.
     insertions: tuple[SafetyInsertion, ...] = ()
+    # P3-04: the regional policy pack that produced this report (None when a
+    # legacy engine without a bound policy ran — never blocks evaluation).
+    safety_policy: "SafetyPolicyRecord | None" = None
 
 
 class SafetyContext(StrictModel):
@@ -443,6 +446,34 @@ class SafetyContext(StrictModel):
     user_allergens: tuple[str, ...] = ()
     inventory_lots: tuple["InventoryLotSnapshot", ...] = ()
     cooking_date: date | None = None
+
+
+# ---------------------------------------------------------------------------
+# 3.11b  Regional safety policy records (P3-04)
+# ---------------------------------------------------------------------------
+
+
+class PolicySourceRef(StrictModel):
+    """Serialisable reference to an official safety-policy source (D7)."""
+
+    source_id: str
+    title: str
+    url: str
+
+
+class SafetyPolicyRecord(StrictModel):
+    """Policy provenance attached to plans (P3-04).
+
+    Recorded on READY/CONFIRMATION responses and retained in state so every
+    plan carries the region, version, and official sources that produced its
+    safety constraints — the basis for threshold traceability and audit of
+    historical checkpoints (old versions remain registered for that purpose).
+    """
+
+    region: str
+    version: str
+    effective_at: date
+    sources: tuple[PolicySourceRef, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +592,11 @@ class GeneratePlanRequest(StrictModel):
     # extractor (P0-02 rule 4). Kept optional so native requests are
     # unaffected.
     preparsed_candidates: tuple["ExtractedRecipeCandidate", ...] = ()
+    # P3-04: explicit regional food-safety policy selection (ISO alpha-2,
+    # e.g. "US"/"SG"). When unset, the deployment default
+    # (Settings.safety_policy_region) applies. An unknown region is rejected —
+    # never silently falls back (D6).
+    region: str | None = None
 
 
 class ReadyPlanResponse(StrictModel):
@@ -574,6 +610,8 @@ class ReadyPlanResponse(StrictModel):
     completion_checklist: tuple["CompletionItem", ...]
     mise_en_place: tuple[dict[str, object], ...]
     dish_completions: tuple[dict[str, object], ...]
+    # P3-04: policy provenance (region/version/sources) that produced the plan.
+    safety_policy: "SafetyPolicyRecord | None" = None
 
 
 class ConfirmationPlanResponse(StrictModel):
@@ -591,6 +629,8 @@ class ConfirmationPlanResponse(StrictModel):
     questions: tuple[str, ...] = ()
     decisions: tuple["ApprovedDecision", ...] = ()
     plan_revision: str | None = None
+    # P3-04: policy provenance (region/version/sources) that produced the plan.
+    safety_policy: "SafetyPolicyRecord | None" = None
 
 
 class InfeasiblePlanResponse(StrictModel):
@@ -609,6 +649,41 @@ class FailedPlanResponse(StrictModel):
     error_code: str
     correlation_id: str
     message: str
+
+
+class ErrorEnvelope(StrictModel):
+    """Unified protocol-error envelope (P3-05).
+
+    Every managed endpoint returns this shape for protocol/HTTP-level
+    failures — Pydantic validation (422), auth (401/403), not-found (404),
+    idempotency conflict (409), backpressure (429/503), and unexpected
+    internal errors (500). Legal business outcomes (READY / NEEDS_
+    CONFIRMATION / INFEASIBLE / FAILED) keep their own response models and
+    are never disguised as protocol errors.
+
+    ``retryable`` is decided by the error catalog (domain/errors.py), never
+    inferred from the message text, so clients can programmatically decide
+    whether to retry. ``details`` carries only field-level, safe
+    information — never raw input, stack traces, or provider payloads.
+    """
+
+    status: int
+    """HTTP status code (4xx/5xx) of the failing response."""
+
+    error_code: str
+    """Stable machine-readable code from the error catalog."""
+
+    message: str
+    """Short, human-readable, non-sensitive description."""
+
+    correlation_id: str
+    """Same value echoed in the X-Request-ID response header."""
+
+    details: dict[str, object] | list[dict[str, object]] | None = None
+    """Field-level diagnostics only (validation loc/type, retry hint)."""
+
+    retryable: bool = False
+    """Whether clients may retry; decided by the error catalog."""
 
 
 # ---------------------------------------------------------------------------

@@ -279,8 +279,13 @@ class TestErrorStability:
         )
         assert response.status_code == 422
         body = response.json()
-        # FastAPI validation errors have a standard 'detail' field.
-        assert "detail" in body
+        # P3-05: native endpoints return the unified ErrorEnvelope, never
+        # the legacy FastAPI 'detail' shape.
+        assert body["status"] == 422
+        assert body["error_code"] == "REQUEST_VALIDATION_ERROR"
+        assert body["retryable"] is False
+        assert body["correlation_id"]
+        assert isinstance(body["details"], list)
 
     def test_auth_error_body_is_stable(self, client: TestClient) -> None:
         response = client.post(
@@ -290,7 +295,12 @@ class TestErrorStability:
         )
         assert response.status_code == 401
         body = response.json()
-        assert body == {"detail": {"code": "INVALID_INTERNAL_CREDENTIAL"}}
+        # P3-05: unified ErrorEnvelope keeps the stable error code and the
+        # correlation ID echoed in both header and body.
+        assert body["status"] == 401
+        assert body["error_code"] == "INVALID_INTERNAL_CREDENTIAL"
+        assert body["retryable"] is False
+        assert body["correlation_id"] == response.headers.get("X-Request-ID")
 
 
 # ---------------------------------------------------------------------------

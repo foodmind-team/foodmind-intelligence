@@ -299,7 +299,12 @@ class TestDependenciesViaHttp:
                 headers={"X-Internal-Token": "bad-token"},
             )
             assert resp.status_code == 401
-            assert resp.json() == {"detail": {"code": "INVALID_INTERNAL_CREDENTIAL"}}
+            body = resp.json()
+            # P3-05: native endpoints return the unified ErrorEnvelope.
+            assert body["status"] == 401
+            assert body["error_code"] == "INVALID_INTERNAL_CREDENTIAL"
+            assert body["retryable"] is False
+            assert body["correlation_id"]
 
     def test_request_id_echoed_in_response_header(self) -> None:
         with TestClient(create_app()) as client:

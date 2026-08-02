@@ -14,6 +14,7 @@ CPU-bound solver concern (handbook 9.7):
 
 import logging
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
 from cooking_plan_agent.domain.errors import DomainErrorCode
@@ -54,12 +55,20 @@ class GenerateCookingPlanService:
         self._graph = graph
         self._context = context
 
-    async def execute(self, request: GeneratePlanRequest) -> PlanResponse:
+    async def execute(
+        self,
+        request: GeneratePlanRequest,
+        thread_id: str | None = None,
+    ) -> PlanResponse:
         """Run the cooking plan generation workflow for the given request.
 
         Args:
             request: A validated GeneratePlanRequest from the Spring Boot
                      internal endpoint.
+            thread_id: Optional LangGraph thread ID for checkpoint persistence
+                (P2-06). When provided, node-boundary state is stored under
+                this thread so a restarted process can resume it. When None,
+                the graph runs stateless.
 
         Returns:
             PlanResponse: One of ReadyPlanResponse, ConfirmationPlanResponse,
@@ -72,10 +81,14 @@ class GenerateCookingPlanService:
         """
         initial_state: PlanState = {"request": request}
 
+        invoke_config: RunnableConfig = {"recursion_limit": 30}
+        if thread_id is not None:
+            invoke_config["configurable"] = {"thread_id": thread_id}
+
         result = await self._graph.ainvoke(
             initial_state,
             context=self._context,
-            config={"recursion_limit": 30},
+            config=invoke_config,
         )
 
         response = result.get("response")

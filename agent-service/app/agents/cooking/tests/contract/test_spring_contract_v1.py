@@ -97,9 +97,7 @@ def _compat_body(overrides: dict | None = None) -> dict:
         "deadlineAt": (datetime.now(UTC) + timedelta(seconds=10)).isoformat(),
         "request": {
             "contractVersion": "cooking-public-v1",
-            "ingredients": (
-                {"ingredientName": "Firm tofu", "quantity": "300", "unit": "g", "source": "MANUAL"},
-            ),
+            "ingredients": ({"ingredientName": "Firm tofu", "quantity": "300", "unit": "g", "source": "MANUAL"},),
             "servings": 2,
             "maxMinutes": 60,
             "maxBudget": "20.00",
@@ -338,9 +336,7 @@ class TestJavaFixtureEquivalence:
             "deadlineAt": (datetime.now(UTC) + timedelta(seconds=10)).isoformat(),
             "request": {
                 "contractVersion": "cooking-public-v1",
-                "ingredients": (
-                    {"ingredientName": "Firm tofu", "quantity": "300", "unit": "g", "source": "MANUAL"},
-                ),
+                "ingredients": ({"ingredientName": "Firm tofu", "quantity": "300", "unit": "g", "source": "MANUAL"},),
                 "servings": 2,
                 "maxMinutes": 60,
                 "maxBudget": "20.00",
@@ -362,7 +358,13 @@ class TestJavaFixtureEquivalence:
                         "dietaryTagCodes": ["VEGETARIAN"],
                         "allergenCodes": ["SOY"],
                         "ingredients": (
-                            {"sequenceNo": 1, "ingredientName": "Firm tofu", "quantity": "300", "unit": "g", "optional": False},
+                            {
+                                "sequenceNo": 1,
+                                "ingredientName": "Firm tofu",
+                                "quantity": "300",
+                                "unit": "g",
+                                "optional": False,
+                            },
                         ),
                         "steps": (
                             {"stepNo": 1, "instruction": "Cook the jasmine rice according to its package directions."},

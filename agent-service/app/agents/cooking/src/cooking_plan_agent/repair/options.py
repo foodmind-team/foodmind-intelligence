@@ -790,8 +790,7 @@ def validate_approved_decisions(
 
         if decision.option_type not in SUPPORTED_DECISION_TYPES:
             issues.append(
-                f"unsupported option_type {decision.option_type!r}; "
-                f"supported: {sorted(SUPPORTED_DECISION_TYPES)}"
+                f"unsupported option_type {decision.option_type!r}; supported: {sorted(SUPPORTED_DECISION_TYPES)}"
             )
         else:
             # Conflicting decisions: e.g. reduce_servings + replace_dish both
@@ -802,10 +801,7 @@ def validate_approved_decisions(
 
         if decision.plan_revision is not None and current_plan_revision is not None:
             if decision.plan_revision != current_plan_revision:
-                issues.append(
-                    f"stale plan_revision {decision.plan_revision!r}, "
-                    f"current is {current_plan_revision!r}"
-                )
+                issues.append(f"stale plan_revision {decision.plan_revision!r}, current is {current_plan_revision!r}")
 
     return tuple(issues)
 
@@ -833,20 +829,15 @@ def apply_approved_decisions_structured(
         if decision.option_type == "reduce_servings" and payload.get("servings") is not None:
             servings = int(str(payload["servings"]))
             new_recipes = tuple(
-                r.model_copy(update={"target_servings": servings})
-                if r.target_servings != servings
-                else r
+                r.model_copy(update={"target_servings": servings}) if r.target_servings != servings else r
                 for r in new_request.recipes
             )
             new_request = new_request.model_copy(update={"recipes": new_recipes})
 
         elif decision.option_type == "extend_time" and payload.get("time_limit_minutes") is not None:
-            new_request = new_request.model_copy(
-                update={"time_limit_minutes": int(str(payload["time_limit_minutes"]))}
-            )
+            new_request = new_request.model_copy(update={"time_limit_minutes": int(str(payload["time_limit_minutes"]))})
 
         elif decision.option_type == "replace_dish" and payload.get("recipe_id"):
-
             target = str(payload["recipe_id"])
             new_recipes = tuple(r for r in new_request.recipes if r.recipe_id != target)
             if len(new_recipes) == len(new_request.recipes):

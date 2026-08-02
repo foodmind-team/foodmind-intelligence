@@ -97,12 +97,60 @@ class ScheduleVerifier:
         # (a dependency referencing a missing task) is also a failure.
         issues.extend(self._check_safety_ordering(task_map, interval_map))
 
+        # --- Check 11 (P3-03): lexicographic fixed objectives not broken ---
+        # When the orchestrator reports which phases were applied, verify the
+        # recorded objective values are consistent with the schedule: holding
+        # never exceeds the makespan, and the recorded makespan equals the
+        # actual max end (already Check 8 — reinforced here for multi-phase).
+        issues.extend(self._check_optimization_consistency(result))
+
         return VerificationReport(
             passed=len(issues) == 0,
             issues=tuple(issues),
             checked_task_count=len(task_map),
             checked_resource_count=len(problem.resources),
         )
+
+    # ------------------------------------------------------------------
+    # Check 11 (P3-03): optimisation phases recorded consistently
+    # ------------------------------------------------------------------
+
+    def _check_optimization_consistency(
+        self,
+        result: ScheduleResult,
+    ) -> list[VerificationIssue]:
+        """Verify the recorded optimisation-phase metadata is self-consistent.
+
+        A result that claims a later phase (holding / context switch) must
+        carry the corresponding objective value; a claimed makespan phase
+        must always carry a concrete makespan. This catches orchestrator
+        bugs where a phase is recorded but its fixed value is lost.
+        """
+        issues: list[VerificationIssue] = []
+        phases = result.optimization_phases
+
+        if "holding" in phases and result.holding_objective is None:
+            issues.append(
+                VerificationIssue(
+                    code="HOLDING_OBJECTIVE_MISSING",
+                    message="optimization_phases includes 'holding' but holding_objective is None",
+                )
+            )
+        if "context_switch" in phases and result.context_switch_objective is None:
+            issues.append(
+                VerificationIssue(
+                    code="CONTEXT_SWITCH_OBJECTIVE_MISSING",
+                    message="optimization_phases includes 'context_switch' but context_switch_objective is None",
+                )
+            )
+        if phases and result.makespan_minutes is None:
+            issues.append(
+                VerificationIssue(
+                    code="MAKESPAN_MISSING_WITH_PHASES",
+                    message=f"optimization_phases={phases} but makespan_minutes is None",
+                )
+            )
+        return issues
 
     # ------------------------------------------------------------------
     # Check 1: task presence

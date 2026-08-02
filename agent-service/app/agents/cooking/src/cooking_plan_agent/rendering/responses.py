@@ -106,6 +106,8 @@ def render_ready_response(state: PlanState) -> ReadyPlanResponse:
         completion_checklist=completion_checklist,
         mise_en_place=mise_en_place,
         dish_completions=dish_completions,
+        # P3-04: regional safety-policy provenance (region/version/sources).
+        safety_policy=state.get("safety_policy"),
     )
 
 
@@ -170,6 +172,8 @@ def render_confirmation_response(state: PlanState) -> ConfirmationPlanResponse:
         questions=tuple(questions),
         decisions=decisions,
         plan_revision=plan_revision,
+        # P3-04: regional safety-policy provenance (region/version/sources).
+        safety_policy=state.get("safety_policy"),
     )
 
 

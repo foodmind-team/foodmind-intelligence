@@ -3,6 +3,9 @@
 SCHEDULE_INFEASIBLE means ONLY that the solver proved no solution exists for
 a VALID model. Model bugs, undetermined timeouts, and internal invariant
 breaks each carry a distinct code and terminate at FAILED — never INFEASIBLE.
+
+P3-03: solve_schedule_node uses ScheduleOrchestrator.solve; the tests patch
+that method (not the legacy schedule() convenience function).
 """
 
 from decimal import Decimal
@@ -57,6 +60,23 @@ def _state(task_graph=None) -> dict[str, object]:
     return {"request": _request(), "task_graph": task_graph}
 
 
+def _patch_solver(monkeypatch, status, raises: type[Exception] | None = None) -> None:
+    """Patch ScheduleOrchestrator.solve to return the given status.
+
+    Returns (ScheduleResult, None) so nodes only see the status mapping.
+    """
+
+    def _solve(problem, optimization_level: str = "full"):  # noqa: ANN001
+        if raises is not None:
+            raise raises("injected solver failure")
+        return ScheduleResult(status=status), None
+
+    monkeypatch.setattr(
+        "cooking_plan_agent.scheduling.orchestrator.ScheduleOrchestrator",
+        type("_FakeOrchestrator", (), {"solve": staticmethod(_solve)}),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Node-level: solver status mapping
 # ---------------------------------------------------------------------------
@@ -65,10 +85,7 @@ def _state(task_graph=None) -> dict[str, object]:
 @pytest.mark.asyncio
 async def test_infeasible_status_is_business_outcome(monkeypatch) -> None:
     """INFEASIBLE → schedule_result kept, no error → INFEASIBLE terminal."""
-    monkeypatch.setattr(
-        "cooking_plan_agent.scheduling.orchestrator.schedule",
-        lambda problem: (ScheduleResult(status=SolverStatus.INFEASIBLE), None),
-    )
+    _patch_solver(monkeypatch, SolverStatus.INFEASIBLE)
     result = await solve_schedule_node(_state(_task_graph()), _FakeRuntime())
 
     assert "schedule_result" in result
@@ -79,10 +96,7 @@ async def test_infeasible_status_is_business_outcome(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_unknown_status_maps_to_schedule_unknown(monkeypatch) -> None:
     """UNKNOWN (timeout, undetermined) → SCHEDULE_UNKNOWN → FAILED."""
-    monkeypatch.setattr(
-        "cooking_plan_agent.scheduling.orchestrator.schedule",
-        lambda problem: (ScheduleResult(status=SolverStatus.UNKNOWN), None),
-    )
+    _patch_solver(monkeypatch, SolverStatus.UNKNOWN)
     result = await solve_schedule_node(_state(_task_graph()), _FakeRuntime())
 
     error = result.get("error")
@@ -94,10 +108,7 @@ async def test_unknown_status_maps_to_schedule_unknown(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_model_invalid_status_maps_to_schedule_model_invalid(monkeypatch) -> None:
     """MODEL_INVALID → SCHEDULE_MODEL_INVALID → FAILED (never INFEASIBLE)."""
-    monkeypatch.setattr(
-        "cooking_plan_agent.scheduling.orchestrator.schedule",
-        lambda problem: (ScheduleResult(status=SolverStatus.MODEL_INVALID), None),
-    )
+    _patch_solver(monkeypatch, SolverStatus.MODEL_INVALID)
     result = await solve_schedule_node(_state(_task_graph()), _FakeRuntime())
 
     error = result.get("error")
@@ -109,10 +120,7 @@ async def test_model_invalid_status_maps_to_schedule_model_invalid(monkeypatch) 
 @pytest.mark.asyncio
 async def test_value_error_maps_to_model_invalid(monkeypatch) -> None:
     """Model-construction failure (ValueError/TypeError) → SCHEDULE_MODEL_INVALID."""
-    monkeypatch.setattr(
-        "cooking_plan_agent.scheduling.orchestrator.schedule",
-        lambda problem: (_ for _ in ()).throw(ValueError("bad constraint")),
-    )
+    _patch_solver(monkeypatch, SolverStatus.OPTIMAL, raises=ValueError)
     result = await solve_schedule_node(_state(_task_graph()), _FakeRuntime())
 
     error = result.get("error")
@@ -124,10 +132,7 @@ async def test_value_error_maps_to_model_invalid(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_runtime_error_maps_to_internal_error(monkeypatch) -> None:
     """Solver-internal RuntimeError → INTERNAL_ERROR → FAILED."""
-    monkeypatch.setattr(
-        "cooking_plan_agent.scheduling.orchestrator.schedule",
-        lambda problem: (_ for _ in ()).throw(RuntimeError("solver crashed")),
-    )
+    _patch_solver(monkeypatch, SolverStatus.OPTIMAL, raises=RuntimeError)
     result = await solve_schedule_node(_state(_task_graph()), _FakeRuntime())
 
     error = result.get("error")

@@ -140,9 +140,13 @@ def test_solver_maps_cpu_solve_to_thread(monkeypatch) -> None:
         return fn(*args, **kwargs)
 
     monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    def _solve(problem, optimization_level: str = "full"):  # noqa: ANN001
+        return ScheduleResult(status=SolverStatus.INFEASIBLE), None
+
     monkeypatch.setattr(
-        "cooking_plan_agent.scheduling.orchestrator.schedule",
-        lambda problem: (ScheduleResult(status=SolverStatus.INFEASIBLE), None),
+        "cooking_plan_agent.scheduling.orchestrator.ScheduleOrchestrator",
+        type("_FakeOrchestrator", (), {"solve": staticmethod(_solve)}),
     )
 
     async def _run() -> None:
@@ -160,12 +164,15 @@ async def test_event_loop_heartbeat_runs_during_solve(monkeypatch) -> None:
     release = threading.Event()
     heartbeats: list[int] = []
 
-    def blocking_solve(problem):  # noqa: ANN001
+    def blocking_solve(problem, optimization_level: str = "full"):  # noqa: ANN001
         started.set()
         release.wait(timeout=5)
         return ScheduleResult(status=SolverStatus.INFEASIBLE), None
 
-    monkeypatch.setattr("cooking_plan_agent.scheduling.orchestrator.schedule", blocking_solve)
+    monkeypatch.setattr(
+        "cooking_plan_agent.scheduling.orchestrator.ScheduleOrchestrator",
+        type("_FakeOrchestrator", (), {"solve": staticmethod(blocking_solve)}),
+    )
     state = {"request": _request(1), "task_graph": _task_graph()}
 
     async def heartbeat() -> None:

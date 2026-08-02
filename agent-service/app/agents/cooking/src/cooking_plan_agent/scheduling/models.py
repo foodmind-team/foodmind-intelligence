@@ -86,6 +86,19 @@ class ScheduleResult(StrictModel):
     best_objective_bound: int | None = None
     """Lower bound on the objective (makespan).  Only meaningful for FEASIBLE/OPTIMAL."""
 
+    # --- Multi-objective extension (P3-03) ---
+    optimization_phases: tuple[str, ...] = ()
+    """Phases actually applied, in priority order (e.g. ("makespan", "holding", "context_switch"))."""
+
+    holding_objective: int | None = None
+    """Weighted holding-time value from Phase 2 (None when not run)."""
+
+    context_switch_objective: int | None = None
+    """Context-switch cost value from Phase 3 (None when not run)."""
+
+    active_labour_objective: int | None = None
+    """Active-labour value from Phase 4 (None when not run / no equivalent modes)."""
+
 
 # ============================================================================
 # 7.13  VerificationReport — independent correctness check

@@ -1,7 +1,7 @@
 # Cooking Plan Agent — Operations Runbook
 
 > Handbook 12.10: operational steps for 8 failure scenarios.
-> Version: 1.0 | Last updated: 2026-07-31
+> Version: 1.1 | Last updated: 2026-08-02
 
 ---
 
@@ -245,3 +245,41 @@ curl -s localhost:8000/health/load | jq .
 
 **Rollback**: reducing limits is a config change (`docker compose` env) — no
 image rollback required.
+
+---
+
+## Scenario 10: Regional Safety Policy Unavailable (P3-04)
+
+**Symptom**: requests FAIL with error code `SAFETY_POLICY_UNAVAILABLE`.
+
+**Diagnosis**:
+
+```bash
+# Check which region/version triggered the rejection
+docker logs cooking-plan-agent | jq 'select(.error_code == "SAFETY_POLICY_UNAVAILABLE") | {request_id, message}'
+
+# Show registered policy packs
+uv run python -c "from cooking_plan_agent.safety.policies import *; from cooking_plan_agent.safety.policy import supported_regions, latest_version; print('regions:', supported_regions()); print({r: latest_version(r) for r in supported_regions()})"
+```
+
+**Response** — the rejection is deliberate (D6: no silent fallback). Fix the
+caller, never "relax" the policy:
+
+| Trigger | Action |
+|---------|--------|
+| Unknown region in request `region` | Client must send a supported code (`US`/`SG`). Unknown regions never fall back to another pack. |
+| Unknown `COOKING_PLAN_SAFETY_POLICY_VERSION` | Set the version to a registered one (or remove it to use the latest). |
+| Policy not yet effective (`effective_at` in the future) | Either the pack is pre-release (do not use) or the environment clock is wrong. |
+| Missing sources | A pack with no official sources is a packaging defect — it must not ship; fix in a code review, not at runtime. |
+
+**Config reference**:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `COOKING_PLAN_SAFETY_POLICY_REGION` | `US` | Deployment-level default region; request `region` overrides it |
+| `COOKING_PLAN_SAFETY_POLICY_VERSION` | (latest) | Explicit policy version; old versions stay registered for audit |
+
+**Rollback / policy update**: a threshold change ships as a NEW policy version
+(never mutating an existing one) so historical plans and checkpoints remain
+auditable. Rolling back the service image must not delete any policy version
+already used by historical plans.

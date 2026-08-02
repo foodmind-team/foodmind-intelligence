@@ -23,7 +23,7 @@ from cooking_plan_agent.api.dependencies import (
     require_internal_service,
 )
 from cooking_plan_agent.application import GenerateCookingPlanService
-from cooking_plan_agent.domain.models import GeneratePlanRequest, PlanResponse
+from cooking_plan_agent.domain.models import ErrorEnvelope, GeneratePlanRequest, PlanResponse
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,16 @@ def get_generate_service(request: Request) -> GenerateCookingPlanService:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/generate", response_model=PlanResponse)
+@router.post(
+    "/generate",
+    response_model=PlanResponse,
+    responses={
+        401: {"model": ErrorEnvelope, "description": "Authentication failed."},
+        422: {"model": ErrorEnvelope, "description": "Request validation failed."},
+        503: {"model": ErrorEnvelope, "description": "Overloaded or shutting down."},
+        500: {"model": ErrorEnvelope, "description": "Unexpected internal error."},
+    },
+)
 async def generate_plan(
     body: GeneratePlanRequest,
     service: Annotated[GenerateCookingPlanService, Depends(get_generate_service)],
@@ -86,4 +95,9 @@ async def generate_plan(
         len(body.recipes),
         body.time_limit_minutes,
     )
-    return await service.execute(body)
+    # P2-06: thread_id namespaces checkpoint state per request attempt
+    # (request_id + plan_revision), enabling resume after process restart.
+    from cooking_plan_agent.infrastructure.checkpointer import build_thread_id
+
+    thread_id = build_thread_id(body.request_id, body.plan_revision)
+    return await service.execute(body, thread_id=thread_id)

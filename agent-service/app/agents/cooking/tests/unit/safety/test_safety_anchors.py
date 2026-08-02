@@ -50,9 +50,7 @@ def _recipe_with_ingredients(
     steps = tuple(
         RecipeStep(
             step_number=i + 1,
-            instruction=(
-                "Cut the raw chicken." if i + 1 == raw_step else "Cook the dish."
-            ),
+            instruction=("Cut the raw chicken." if i + 1 == raw_step else "Cook the dish."),
             category=("heating", "heating", "plating")[i],
             active_duration_minutes=10,
             heat_level=HeatLevel.HIGH if i < 2 else HeatLevel.NONE,
@@ -194,11 +192,7 @@ class TestRuleAnchors:
     def test_no_rte_step_no_insertion(self) -> None:
         recipe = _recipe_with_ingredients("r1")
         recipe = recipe.model_copy(
-            update={
-                "steps": tuple(
-                    s.model_copy(update={"category": "heating"}) for s in recipe.steps
-                )
-            }
+            update={"steps": tuple(s.model_copy(update={"category": "heating"}) for s in recipe.steps)}
         )
         finding = CrossContaminationRule().evaluate(SafetyContext(recipes=(recipe,)))
         assert finding is None
@@ -316,8 +310,12 @@ class TestVerifierAnchors:
 
     def test_well_ordered_sanitise_passes(self) -> None:
         raw = CookingTask(
-            task_id="raw", dish_id="r1", instruction="Cut", duration_minutes=5,
-            work_mode=WorkMode.ACTIVE, category="cutting",
+            task_id="raw",
+            dish_id="r1",
+            instruction="Cut",
+            duration_minutes=5,
+            work_mode=WorkMode.ACTIVE,
+            category="cutting",
         )
         sanitise = self._sanitise_task("san", pred_id="raw")
         verifier = ScheduleVerifier()
@@ -329,8 +327,12 @@ class TestVerifierAnchors:
 
     def test_misplaced_sanitise_fails(self) -> None:
         raw = CookingTask(
-            task_id="raw", dish_id="r1", instruction="Cut", duration_minutes=5,
-            work_mode=WorkMode.ACTIVE, category="cutting",
+            task_id="raw",
+            dish_id="r1",
+            instruction="Cut",
+            duration_minutes=5,
+            work_mode=WorkMode.ACTIVE,
+            category="cutting",
         )
         sanitise = self._sanitise_task("san", pred_id="raw")
         verifier = ScheduleVerifier()
@@ -344,8 +346,12 @@ class TestVerifierAnchors:
 
     def test_missing_sanitise_fails(self) -> None:
         raw = CookingTask(
-            task_id="raw", dish_id="r1", instruction="Cut", duration_minutes=5,
-            work_mode=WorkMode.ACTIVE, category="cutting",
+            task_id="raw",
+            dish_id="r1",
+            instruction="Cut",
+            duration_minutes=5,
+            work_mode=WorkMode.ACTIVE,
+            category="cutting",
         )
         sanitise = self._sanitise_task("san", pred_id="raw")
         verifier = ScheduleVerifier()
@@ -373,12 +379,20 @@ class TestVerifierAnchors:
         Each recipe's sanitise task anchors to ITS OWN raw/RTE steps.
         """
         raw_a = CookingTask(
-            task_id="a_raw", dish_id="a", instruction="Cut chicken", duration_minutes=5,
-            work_mode=WorkMode.ACTIVE, category="cutting",
+            task_id="a_raw",
+            dish_id="a",
+            instruction="Cut chicken",
+            duration_minutes=5,
+            work_mode=WorkMode.ACTIVE,
+            category="cutting",
         )
         raw_b = CookingTask(
-            task_id="b_raw", dish_id="b", instruction="Cut pork", duration_minutes=5,
-            work_mode=WorkMode.ACTIVE, category="cutting",
+            task_id="b_raw",
+            dish_id="b",
+            instruction="Cut pork",
+            duration_minutes=5,
+            work_mode=WorkMode.ACTIVE,
+            category="cutting",
         )
         san_a = self._sanitise_task("a_san", pred_id="a_raw")
         san_b = self._sanitise_task("b_san", pred_id="b_raw")

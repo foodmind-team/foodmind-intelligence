@@ -105,6 +105,28 @@ def validate_openapi_spec(spec: dict) -> list[str]:
         responses = post_op.get("responses", {})
         if "200" not in responses:
             issues.append(f"{generate_path} missing 200 response definition")
+        # P3-05: unified error envelope must be documented on managed endpoints
+        for code in ("401", "422", "500"):
+            if code not in responses:
+                issues.append(f"{generate_path} missing {code} response definition")
+
+    # P3-05: ErrorEnvelope schema must be present for the unified error contract
+    schemas = spec.get("components", {}).get("schemas", {})
+    if "ErrorEnvelope" not in schemas:
+        issues.append("Missing ErrorEnvelope schema (P3-05 unified error contract)")
+
+    # P3-01: async task API endpoints (present regardless of the runtime flag —
+    # the router is always registered, auth guards every route).
+    task_path = "/internal/v2/cooking-plan/tasks"
+    if task_path not in paths:
+        issues.append(f"Missing {task_path} endpoint (P3-01 async task API)")
+    else:
+        post_op = paths[task_path].get("post", {})
+        if "202" not in post_op.get("responses", {}):
+            issues.append(f"{task_path} missing 202 response definition (P3-01)")
+    task_get = "/internal/v2/cooking-plan/tasks/{task_id}"
+    if task_get not in paths:
+        issues.append(f"Missing {task_get} endpoint (P3-01 task query)")
 
     # v1 compat endpoint
     compat_path = "/internal/v1/cooking-plans/generate"
