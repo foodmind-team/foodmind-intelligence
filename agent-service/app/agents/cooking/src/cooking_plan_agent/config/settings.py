@@ -1,7 +1,29 @@
 # import the required modules
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BeforeValidator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+def _parse_comma_separated_list(value: object) -> list[str]:
+    """Parse a comma-separated env string into a list of stripped items.
+
+    Env sources deliver tuples as a single comma-joined string (e.g.
+    COOKING_PLAN_CORS_ALLOW_ORIGINS=http://a,https://b). This validator
+    splits on commas; a pre-parsed list passes through unchanged.
+    """
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    return []
+
+
+# Comma-separated list setting (used for CORS allow-list, P0-08).
+# NoDecode stops pydantic-settings from JSON-decoding the env value first
+# (tuple is treated as a complex type); the raw string reaches the validator.
+CommaSeparatedList = Annotated[tuple[str, ...], NoDecode, BeforeValidator(_parse_comma_separated_list)]
 
 
 # define the settings model
@@ -14,6 +36,15 @@ class Settings(BaseSettings):
     max_recipe_count: int = 6  # the maximum number of recipes to return
     max_task_count: int = 100  # the maximum number of tasks to process
     web_research_enabled: bool = False  # whether to enable web research
+
+    # --- Internal API security (P0-08) ---
+    # CORS is DISABLED by default for internal APIs. If a caller genuinely
+    # needs browser cross-origin access, list explicit origins here —
+    # wildcards are rejected at startup (credentials + "*" is prohibited).
+    cors_allow_origins: CommaSeparatedList = ()
+    # Minimum length required for the internal service token in non-local
+    # environments (P0-08 rule 4). local/CI may use short test tokens.
+    min_service_token_length: int = 16
 
     # --- Request validation limits (P0-03) ---
     # Hard caps applied at the workflow input boundary. All values are

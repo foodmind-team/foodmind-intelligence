@@ -33,6 +33,11 @@ _TEST_TOKEN = "test-internal-token-abc123"
 
 @pytest.fixture(autouse=True)
 def _set_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purge the settings lru_cache so the monkeypatched token is actually
+    # read on the next get_settings() call (workflow nodes read Settings).
+    from cooking_plan_agent.config.settings import get_settings
+
+    get_settings.cache_clear()
     monkeypatch.setenv("COOKING_PLAN_INTERNAL_SERVICE_TOKEN", _TEST_TOKEN)
 
 

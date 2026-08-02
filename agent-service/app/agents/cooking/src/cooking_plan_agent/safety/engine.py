@@ -12,7 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from cooking_plan_agent.domain.models import SafetyContext, SafetyFinding, SafetyReport
+from cooking_plan_agent.domain.models import (
+    SafetyContext,
+    SafetyFinding,
+    SafetyInsertion,
+    SafetyReport,
+)
 from cooking_plan_agent.safety.rules import SafetyRule, default_rules
 
 
@@ -44,6 +49,7 @@ class SafetyEngine:
         """
         findings: list[SafetyFinding] = []
         safety_task_ids: list[str] = []
+        insertions: list[SafetyInsertion] = []
 
         for rule in self.rules:
             finding = rule.evaluate(context)
@@ -56,6 +62,10 @@ class SafetyEngine:
                 if finding.severity == "hard_repairable":
                     task_id = f"safety_{finding.rule_id.lower()}_{uuid4().hex[:8]}"
                     safety_task_ids.append(task_id)
+                    # P0-07: carry the structured insertion (with anchors)
+                    # so merge_preparation can build the dependency chain.
+                    if finding.insertion is not None:
+                        insertions.append(finding.insertion)
 
         has_unrepairable = any(f.severity == "hard_unrepairable" for f in findings)
         # A plan is safe if no hard-level findings exist (repairable or not).
@@ -68,4 +78,5 @@ class SafetyEngine:
             is_safe=is_safe,
             has_unrepairable=has_unrepairable,
             required_safety_task_ids=tuple(safety_task_ids),
+            insertions=tuple(insertions),
         )

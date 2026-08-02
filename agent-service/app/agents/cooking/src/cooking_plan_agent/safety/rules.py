@@ -24,7 +24,19 @@ from cooking_plan_agent.domain.models import (
     RecipeStep,
     SafetyContext,
     SafetyFinding,
+    SafetyInsertion,
 )
+
+# =============================================================================
+# P0-07 safety-task policy — durations and resources for inserted safety tasks
+# =============================================================================
+
+# Sanitisation task default duration.  Replaces the old hard-coded 1-minute
+# placeholder: the inserted task must occupy a realistic window so the
+# verifier can check raw→sanitise→RTE ordering meaningfully.
+_SANITISE_DURATION_MINUTES = 3
+# Resources a sanitisation task requires (Policy 6.1: sink).
+_SANITISE_REQUIRED_RESOURCES = ("sink",)
 
 # =============================================================================
 # SafetyRule protocol — contract for all rule implementations
@@ -259,41 +271,67 @@ class CrossContaminationRule:
     )
 
     def evaluate(self, context: SafetyContext) -> SafetyFinding | None:
-        """Check each recipe for raw-protein / RTE co-existence."""
-        affected_recipes: list[str] = []
-        affected_ingredients: list[str] = []
+        """Check each recipe for raw-protein / RTE co-existence.
 
+        When both exist in the SAME recipe, locate the anchor steps:
+          - after_step_number: last step that handles raw protein
+          - before_step_number: first step that is RTE/plating
+        The finding carries a structured SafetyInsertion so merge_preparation
+        can build the raw → sanitise → RTE dependency chain (P0-07).
+        """
         for recipe in context.recipes:
-            has_raw = _recipe_has_raw_protein(recipe, self._raw_protein_keywords)
-            has_rte = _recipe_has_rte_step(recipe, self._rte_categories)
+            raw_steps = _raw_protein_steps(recipe, self._raw_protein_keywords)
+            rte_steps = _rte_steps(recipe, self._rte_categories)
 
-            if has_raw and has_rte:
-                affected_recipes.append(recipe.dish_name)
-                raw_ingredients = [
-                    ing.raw_name
-                    for ing in recipe.ingredients
-                    if _matches_keywords(ing.canonical_name.lower(), self._raw_protein_keywords)
-                ]
-                affected_ingredients.extend(raw_ingredients)
+            if not raw_steps or not rte_steps:
+                continue
 
-        if not affected_recipes:
-            return None
+            # Anchors: last raw step → sanitise → first RTE step.
+            after_step = raw_steps[-1].step_number
+            before_step = rte_steps[0].step_number
+            if after_step >= before_step:
+                # Raw handling already precedes RTE within the same recipe
+                # with no interleaving — still insert between them.
+                pass
 
-        dish_list = ", ".join(affected_recipes)
-        return SafetyFinding(
-            rule_id=self.rule_id,
-            severity="hard_repairable",
-            description=(
-                f"Cross-contamination risk: raw protein and ready-to-eat "
-                f"handling coexist in dish(es): {dish_list}. "
-                f"A sanitisation task must be inserted between raw and RTE steps."
-            ),
-            affected_ingredient_names=tuple(affected_ingredients),
-            recommended_action=(
-                "Insert a 'Sanitise cutting board and utensils' task between "
-                "raw protein handling and ready-to-eat assembly."
-            ),
-        )
+            raw_ingredients = [
+                ing.raw_name
+                for ing in recipe.ingredients
+                if _matches_keywords(ing.canonical_name.lower(), self._raw_protein_keywords)
+            ]
+
+            insertion = SafetyInsertion(
+                insertion_id=f"{self.rule_id.lower()}_{recipe.recipe_id}",
+                rule_id=self.rule_id,
+                recipe_id=recipe.recipe_id,
+                after_step_number=after_step,
+                before_step_number=before_step,
+                task_instruction=(
+                    "Sanitise cutting board and utensils after raw protein "
+                    "handling and before ready-to-eat assembly."
+                ),
+                duration_minutes=_SANITISE_DURATION_MINUTES,
+                required_resources=_SANITISE_REQUIRED_RESOURCES,
+            )
+
+            return SafetyFinding(
+                rule_id=self.rule_id,
+                severity="hard_repairable",
+                description=(
+                    f"Cross-contamination risk: raw protein and ready-to-eat "
+                    f"handling coexist in dish '{recipe.dish_name}' (steps "
+                    f"{after_step} → {before_step}). A sanitisation task must "
+                    f"be inserted between raw and RTE steps."
+                ),
+                affected_ingredient_names=tuple(raw_ingredients),
+                recommended_action=(
+                    "Insert a 'Sanitise cutting board and utensils' task between "
+                    "raw protein handling and ready-to-eat assembly."
+                ),
+                insertion=insertion,
+            )
+
+        return None
 
 
 # =============================================================================
@@ -811,6 +849,26 @@ def _recipe_has_raw_protein(
     return False
 
 
+def _raw_protein_steps(
+    recipe: RecipeIR,
+    raw_protein_keywords: tuple[str, ...],
+) -> tuple[RecipeStep, ...]:
+    """Return steps that handle raw protein (P0-07 anchor detection).
+
+    A step is considered raw-protein handling when the recipe contains a
+    raw protein ingredient AND the step's instruction references it. Falls
+    back to the first steps that mention raw keywords in their text.
+    """
+    if not _recipe_has_raw_protein(recipe, raw_protein_keywords):
+        return ()
+    matches = [s for s in recipe.steps if _matches_keywords(s.instruction.lower(), raw_protein_keywords)]
+    if matches:
+        return tuple(matches)
+    # No explicit keyword in step text — assume the protein-handling step is
+    # the earliest heating/mixing step, so we still anchor the insertion.
+    return tuple(recipe.steps[:1])
+
+
 def _recipe_has_rte_step(
     recipe: RecipeIR,
     rte_categories: tuple[str, ...],
@@ -820,6 +878,14 @@ def _recipe_has_rte_step(
         if step.category.lower() in rte_categories:
             return True
     return False
+
+
+def _rte_steps(
+    recipe: RecipeIR,
+    rte_categories: tuple[str, ...],
+) -> tuple[RecipeStep, ...]:
+    """Return ready-to-eat steps in order (P0-07 anchor detection)."""
+    return tuple(s for s in recipe.steps if s.category.lower() in rte_categories)
 
 
 def _matches_keywords(name: str, keywords: tuple[str, ...]) -> bool:

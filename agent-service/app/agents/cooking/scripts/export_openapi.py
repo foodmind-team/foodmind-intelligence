@@ -53,7 +53,9 @@ def validate_openapi_spec(spec: dict) -> list[str]:
       - At least one path is defined
       - /health/live and /health/ready exist
       - POST /internal/v1/agents/cooking-plan/generate exists
-      - Internal endpoint requires X-Internal-Token header
+      - POST /internal/v1/cooking-plans/generate (v1 compat) exists
+      - Native endpoint requires X-Internal-Token header
+      - Compat endpoint requires Authorization header
 
     Returns:
         List of issue strings. Empty = valid.
@@ -103,6 +105,25 @@ def validate_openapi_spec(spec: dict) -> list[str]:
         responses = post_op.get("responses", {})
         if "200" not in responses:
             issues.append(f"{generate_path} missing 200 response definition")
+
+    # v1 compat endpoint
+    compat_path = "/internal/v1/cooking-plans/generate"
+    if compat_path not in paths:
+        issues.append(f"Missing {compat_path} endpoint")
+    else:
+        compat_post = paths[compat_path].get("post", {})
+        if not compat_post:
+            issues.append(f"{compat_path} must be POST")
+
+        # Check for Authorization header parameter
+        params = compat_post.get("parameters", [])
+        has_auth_header = any(p.get("name") == "authorization" for p in params if isinstance(p, dict))
+        if not has_auth_header:
+            issues.append(f"{compat_path} missing authorization header parameter")
+
+        # Compat response schema must exist
+        if "CompatCookingResponse" not in spec.get("components", {}).get("schemas", {}):
+            issues.append("Missing CompatCookingResponse schema")
 
     return issues
 
