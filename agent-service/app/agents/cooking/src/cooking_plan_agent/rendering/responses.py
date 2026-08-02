@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from cooking_plan_agent.domain.errors import (
+    DomainErrorCode,
+    is_known_error_code,
+    public_message_for,
+)
 from cooking_plan_agent.domain.models import (
     Assumption,
     CompletionItem,
@@ -246,7 +251,11 @@ def render_infeasible_response(state: PlanState) -> InfeasiblePlanResponse:
 
 
 def render_failed_response(state: PlanState) -> FailedPlanResponse:
-    """Build a FAILED response with stable error code and correlation ID.
+    """Build a FAILED response from the public message catalog (P2-03).
+
+    Client-facing text always comes from the catalog — never from the node's
+    internal ``message``. An error code without a catalog row fails closed to
+    INTERNAL_ERROR instead of echoing raw exception text.
 
     Graceful fallback: if no error is in state, returns INTERNAL_ERROR.
 
@@ -254,19 +263,30 @@ def render_failed_response(state: PlanState) -> FailedPlanResponse:
         state: Workflow state at any FAILED transition.
 
     Returns:
-        FailedPlanResponse with correlation ID for support traceability.
+        FailedPlanResponse with stable error code, public message and
+        correlation ID for support traceability.
     """
     request = state["request"]
     error = state.get("error")
 
-    error_code = error.error_code if error else "INTERNAL_ERROR"
-    correlation_id = error.correlation_id if error else request.request_id if request else str(uuid4().hex[:8])
-    message = error.message if error else "An unexpected internal error occurred."
+    if error is None:
+        correlation_id = request.request_id if request else str(uuid4().hex[:8])
+        return FailedPlanResponse(
+            status="FAILED",
+            error_code=DomainErrorCode.INTERNAL_ERROR.value,
+            correlation_id=correlation_id,
+            message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
+        )
+
+    # Missing catalog row is an invariant break — fail closed to
+    # INTERNAL_ERROR (P2-03), never echo the node's raw message.
+    error_code = error.error_code if is_known_error_code(error.error_code) else DomainErrorCode.INTERNAL_ERROR.value
+    message = error.public_message or public_message_for(error_code)
 
     return FailedPlanResponse(
         status="FAILED",
         error_code=error_code,
-        correlation_id=correlation_id,
+        correlation_id=error.correlation_id,
         message=message,
     )
 

@@ -17,7 +17,7 @@ import logging
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
-from cooking_plan_agent.domain.errors import DomainErrorCode
+from cooking_plan_agent.domain.errors import DomainErrorCode, public_message_for
 from cooking_plan_agent.domain.models import (
     FailedPlanResponse,
     GeneratePlanRequest,
@@ -103,7 +103,8 @@ class GenerateCookingPlanService:
                 status="FAILED",
                 error_code=DomainErrorCode.INTERNAL_ERROR.value,
                 correlation_id=request.request_id,
-                message="Workflow completed without producing a terminal response.",
+                # P2-03: public text resolves through the message catalog.
+                message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
             )
 
         return response

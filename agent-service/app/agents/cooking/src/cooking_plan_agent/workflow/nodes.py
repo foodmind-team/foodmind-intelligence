@@ -6,6 +6,8 @@ No broad exception catching that masks errors as partial success.
 """
 
 # LangGraph runtime type — context is injected by the framework
+import logging
+
 from langgraph.runtime import Runtime
 
 from cooking_plan_agent.domain.errors import DomainErrorCode
@@ -23,6 +25,8 @@ from cooking_plan_agent.domain.models import (
 )
 from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.state import PlanState
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Input & parsing nodes
@@ -169,7 +173,7 @@ async def validate_input_node(
         if not valid:
             return {
                 "error": WorkflowError(
-                    error_code="INVALID_SERVING_TIME",
+                    error_code=DomainErrorCode.INVALID_SERVING_TIME.value,
                     message=f"serving_time must be HH:MM, got {request.serving_time!r}",
                     correlation_id=request.request_id,
                     node_name="validate_input",
@@ -181,7 +185,7 @@ async def validate_input_node(
         if request.serving_at.tzinfo is None or request.serving_at.utcoffset() is None:
             return {
                 "error": WorkflowError(
-                    error_code="INVALID_SERVING_TIME",
+                    error_code=DomainErrorCode.INVALID_SERVING_TIME.value,
                     message="serving_at must include a timezone offset",
                     correlation_id=request.request_id,
                     node_name="validate_input",
@@ -288,12 +292,15 @@ async def parse_recipes_node(
             )
             candidates = list(extracted)
         except Exception as exc:  # noqa: BLE001 — per-node error → error state
+            # P2-03: public text comes from the catalog; keep only the
+            # exception type as controlled diagnostic context.
             return {
                 "error": WorkflowError(
                     error_code=DomainErrorCode.EXTERNAL_PROVIDER_UNAVAILABLE.value,
-                    message=f"Recipe extraction failed: {exc}",
+                    message="Recipe extraction failed",
                     correlation_id=request.request_id,
                     node_name="parse_recipes",
+                    diagnostics={"exception_type": type(exc).__name__},
                 )
             }
     else:
@@ -618,9 +625,10 @@ async def validate_recipe_ir_node(
             return {
                 "error": WorkflowError(
                     error_code=DomainErrorCode.INVALID_RECIPE_TEXT.value,
-                    message=f"Failed to build RecipeIR: {exc}",
+                    message="Failed to build RecipeIR",
                     correlation_id=state["request"].request_id,
                     node_name="validate_recipe_ir",
+                    diagnostics={"exception_type": type(exc).__name__},
                 )
             }
 
@@ -687,12 +695,14 @@ async def validate_safety_node(
     try:
         policy = resolve_policy(region, settings.safety_policy_version)
     except PolicyResolutionError as exc:
+        # P2-03: only the exception type is retained as diagnostic context.
         return {
             "error": WorkflowError(
                 error_code=DomainErrorCode.SAFETY_POLICY_UNAVAILABLE.value,
-                message=str(exc),
+                message="Safety policy resolution failed",
                 correlation_id=request.request_id,
                 node_name="validate_safety",
+                diagnostics={"exception_type": type(exc).__name__},
             )
         }
 
@@ -910,13 +920,15 @@ async def merge_preparation_node(
             shared = build_shared_prep_tasks(demands)
         except InvalidQuantityError as exc:
             # D1: conservation failure must never produce a half-built task
-            # graph — terminate to FAILED via INTERNAL_ERROR.
+            # graph — terminate to FAILED via INTERNAL_ERROR. P2-03: keep
+            # only the exception type as diagnostic context.
             return {
                 "error": WorkflowError(
                     error_code=DomainErrorCode.INTERNAL_ERROR.value,
-                    message=f"Preparation quantity conservation failed: {exc}",
+                    message="Preparation quantity conservation failed",
                     correlation_id=state["request"].request_id,
                     node_name="merge_preparation",
+                    diagnostics={"exception_type": type(exc).__name__},
                 )
             }
         prep_tasks = shared.tasks
@@ -1022,13 +1034,15 @@ async def build_task_graph_node(
         )
         return {"task_graph": graph}
     except (ValueError, TypeError, RuntimeError) as exc:
-        # Cycle detection or invalid dependencies -> workflow error
+        # Cycle detection or invalid dependencies -> workflow error. P2-03:
+        # only the exception type is retained as diagnostic context.
         return {
             "error": WorkflowError(
                 error_code=DomainErrorCode.TASK_GRAPH_CYCLE.value,
-                message=str(exc),
+                message="Task graph construction failed",
                 correlation_id=state["request"].request_id,
                 node_name="build_task_graph",
+                diagnostics={"exception_type": type(exc).__name__},
             )
         }
 
@@ -1096,13 +1110,15 @@ async def solve_schedule_node(
         )
     except (ValueError, TypeError) as exc:
         # Model-construction phase: bad variable shapes, contradictory
-        # constraints → the model was never valid.
+        # constraints → the model was never valid. P2-03: keep only the
+        # exception type as diagnostic context.
         return {
             "error": WorkflowError(
                 error_code=DomainErrorCode.SCHEDULE_MODEL_INVALID.value,
-                message=f"Scheduling model construction failed: {exc}",
+                message="Scheduling model construction failed",
                 correlation_id=request.request_id,
                 node_name="solve_schedule",
+                diagnostics={"exception_type": type(exc).__name__},
             )
         }
     except RuntimeError as exc:
@@ -1110,9 +1126,10 @@ async def solve_schedule_node(
         return {
             "error": WorkflowError(
                 error_code=DomainErrorCode.INTERNAL_ERROR.value,
-                message=f"Scheduling solver failed: {exc}",
+                message="Scheduling solver failed",
                 correlation_id=request.request_id,
                 node_name="solve_schedule",
+                diagnostics={"exception_type": type(exc).__name__},
             )
         }
 
@@ -1192,12 +1209,16 @@ async def verify_schedule_node(
         report = verifier.verify(problem, schedule_result)
         return {"verification_report": report}
     except (ValueError, TypeError, RuntimeError) as exc:
+        # Verification failure is an invariant break — the solver output
+        # must never reach the client. P2-03: public text comes from the
+        # catalog; keep only the exception type as diagnostic context.
         return {
             "error": WorkflowError(
                 error_code=DomainErrorCode.SCHEDULE_VERIFICATION_FAILED.value,
-                message=str(exc),
+                message="Schedule verification failed",
                 correlation_id=state["request"].request_id,
                 node_name="verify_schedule",
+                diagnostics={"exception_type": type(exc).__name__},
             )
         }
 
@@ -1242,8 +1263,23 @@ async def render_failed_response_node(
     """Render FAILED response with stable error code and correlation ID.
 
     Delegates to rendering.responses.render_failed_response.
+
+    P2-03: emits a structured diagnostic log line (error code, node,
+    correlation ID, controlled diagnostics) so failures can be traced via
+    correlation ID without writing the raw internal message to the log.
     """
     from cooking_plan_agent.rendering.responses import render_failed_response
+
+    error = state.get("error")
+    if error is not None:
+        logger.warning(
+            "Workflow FAILED | error_code=%s | node=%s | correlation_id=%s | recoverable=%s | diagnostics=%s",
+            error.error_code,
+            error.node_name,
+            error.correlation_id,
+            error.recoverable,
+            error.diagnostics,
+        )
 
     response = render_failed_response(state)
     return {"response": response}
