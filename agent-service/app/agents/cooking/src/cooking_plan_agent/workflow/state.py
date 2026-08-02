@@ -18,6 +18,7 @@ from cooking_plan_agent.domain.models import (
     RecipeIR,
     ReconciledEvidence,
     RepairOption,
+    SafetyPolicyRecord,
     SafetyReport,
     WorkflowError,
 )
@@ -53,6 +54,9 @@ class PlanState(TypedDict, total=False):
     # --- Validation ---
     parsed_recipes: tuple[RecipeIR, ...]
     safety_report: SafetyReport
+    # P3-04: resolved regional policy provenance, recorded on terminal
+    # responses and retained in state so historical plans stay auditable.
+    safety_policy: SafetyPolicyRecord
     feasibility_report: FeasibilityReport
     # Repair options injected by check_feasibility when infeasible but fixable
     repair_options: tuple[RepairOption, ...]

@@ -18,7 +18,6 @@ from cooking_plan_agent.domain.models import (
     RecipeIR,
     RepairOption,
     SafetyContext,
-    SafetyReport,
     WorkflowError,
 )
 from cooking_plan_agent.workflow.context import WorkflowContext
@@ -661,29 +660,49 @@ async def validate_safety_node(
     state: PlanState,
     runtime: Runtime[WorkflowContext],
 ) -> dict[str, object]:
-    """Evaluate all safety rules against the recipe set.
+    """Evaluate all safety rules against the recipe set under a regional policy.
 
-    Builds a SafetyContext from request + parsed_recipes, then delegates
-    to the SafetyRuleEngine from WorkflowContext. When no engine is
-    configured (backwards-compat), returns a pass-through safe report.
+    P3-04:
+      1. Resolve the regional food-safety policy — the request's explicit
+         ``region`` wins over the deployment default. An unknown region,
+         unknown version, not-yet-effective policy, or source-less policy is a
+         hard error (D6) routed to FAILED — never a silent fallback.
+      2. Build the rule set from the resolved policy's thresholds.
+      3. Evaluate and return the SafetyReport plus the policy record so
+         terminal responses can carry region/version/sources.
 
     Handbook 5.7: safety_validator node — first hard gate after parsing.
     """
-    safety_engine = runtime.context.safety_engine
-    if safety_engine is None:
-        # No engine wired — pass-through safe (MVP backwards-compat)
+    from cooking_plan_agent.config.settings import get_settings
+    from cooking_plan_agent.safety.engine import SafetyEngine
+    from cooking_plan_agent.safety.policy import PolicyResolutionError, resolve_policy
+    from cooking_plan_agent.safety.rules import build_rules
+
+    request = state["request"]
+    settings = get_settings()
+    # Explicit selection: request region overrides the deployment default.
+    region = request.region or settings.safety_policy_region
+
+    try:
+        policy = resolve_policy(region, settings.safety_policy_version)
+    except PolicyResolutionError as exc:
         return {
-            "safety_report": SafetyReport(
-                report_id="stub-safety",
-                findings=(),
-                is_safe=True,
-                has_unrepairable=False,
-                required_safety_task_ids=(),
+            "error": WorkflowError(
+                error_code=DomainErrorCode.SAFETY_POLICY_UNAVAILABLE.value,
+                message=str(exc),
+                correlation_id=request.request_id,
+                node_name="validate_safety",
             )
         }
 
+    # Rules are bound to the resolved policy so thresholds always match the
+    # region recorded on the plan. A context engine already bound to the same
+    # policy is reused (DI); otherwise one is built for the policy.
+    engine = runtime.context.safety_engine
+    if engine is None or getattr(engine, "policy", None) != policy:
+        engine = SafetyEngine(rules=build_rules(policy), policy=policy)
+
     parsed_recipes = state.get("parsed_recipes", ())
-    request = state["request"]
 
     context = SafetyContext(
         recipes=parsed_recipes,
@@ -693,8 +712,8 @@ async def validate_safety_node(
         cooking_date=request.cooking_date,
     )
 
-    report = safety_engine.evaluate(context)
-    return {"safety_report": report}
+    report = engine.evaluate(context)
+    return {"safety_report": report, "safety_policy": policy.to_record()}
 
 
 async def check_feasibility_node(
@@ -973,7 +992,7 @@ async def solve_schedule_node(
 
     from cooking_plan_agent.domain.enums import SolverStatus
     from cooking_plan_agent.scheduling.models import SchedulingProblem
-    from cooking_plan_agent.scheduling.orchestrator import schedule as solve_schedule_fn
+    from cooking_plan_agent.scheduling.orchestrator import ScheduleOrchestrator
 
     task_graph = state.get("task_graph")
     request = state["request"]
@@ -1000,7 +1019,17 @@ async def solve_schedule_node(
         # CP-SAT solving is CPU-bound — run it in a worker thread so the
         # event loop stays responsive (P1-02). The verifier is synchronous
         # and stays inside the solve call; it is not moved to a thread.
-        result, _ = await asyncio.to_thread(solve_schedule_fn, problem)
+        # P3-03: ScheduleOrchestrator runs the lexicographic phases
+        # (makespan → holding → context switch); Phase 4 stays gated.
+        # The depth is configurable for rollback (solver_optimization_level).
+        from cooking_plan_agent.config.settings import get_settings
+
+        orchestrator = ScheduleOrchestrator()
+        result, _ = await asyncio.to_thread(
+            orchestrator.solve,
+            problem,
+            get_settings().solver_optimization_level,
+        )
     except (ValueError, TypeError) as exc:
         # Model-construction phase: bad variable shapes, contradictory
         # constraints → the model was never valid.

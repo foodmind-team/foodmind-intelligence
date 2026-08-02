@@ -36,6 +36,22 @@ class Settings(BaseSettings):
     max_recipe_count: int = 6  # the maximum number of recipes to return
     max_task_count: int = 100  # the maximum number of tasks to process
     web_research_enabled: bool = False  # whether to enable web research
+    # P3-03: solver optimisation depth. "makespan" keeps the legacy Phase-1
+    # only solve; "phase12" adds holding minimisation; "full" (default) runs
+    # makespan → holding → context-switch. Phase 4 (active labour) stays
+    # gated until equivalent execution modes exist in the model.
+    solver_optimization_level: str = "full"
+
+    # --- Regional food-safety policy (P3-04) ---
+    # Deployment-level default region when the request does not explicitly
+    # select one. An unknown region (here or in the request) is a hard error —
+    # the service never silently falls back (D6). Supported regions are
+    # defined by the registered packs in safety/policies/.
+    safety_policy_region: str = "US"
+    # Optional explicit policy version. None resolves the latest registered
+    # version of the region; older versions remain queryable for audit but are
+    # not selected by default.
+    safety_policy_version: str | None = None
 
     # --- Internal API security (P0-08) ---
     # CORS is DISABLED by default for internal APIs. If a caller genuinely
@@ -126,6 +142,31 @@ class Settings(BaseSettings):
     cache_max_entries: int = 1000
     # Oversized artifacts are skipped rather than cached (memory bound).
     cache_max_item_bytes: int = 100_000
+
+    # --- Workflow checkpoint persistence (P2-06) ---
+    # Persists PlanState at node boundaries via a LangGraph checkpointer so
+    # long tasks, human confirmation, and async execution (P3-01) can resume
+    # after a process restart. Disabled by default — the existing stateless
+    # execution mode is preserved exactly.
+    checkpoint_enabled: bool = False
+    # Backend selection: "memory" (InMemorySaver, tests/CI) or "sqlite"
+    # (AsyncSqliteSaver, local dev + MVP). Postgres saver is a P3-02 concern.
+    checkpoint_backend: str = "sqlite"
+    # SQLite file for AsyncSqliteSaver when checkpoint_backend="sqlite".
+    checkpoint_sqlite_path: str = "data/checkpoints.sqlite"
+    # Retention window for checkpoint rows (operational cleanup / audit).
+    checkpoint_ttl_days: int = 30
+
+    # --- Async task API (P3-01) ---
+    # Long-running generation is submitted as a task and executed by the
+    # in-process worker; the synchronous v1/native endpoints are preserved.
+    task_api_enabled: bool = False
+    # SQLite file backing the task repository (P3-01 MVP storage).
+    task_db_path: str = "data/tasks.sqlite"
+    # Default task TTL; tasks exceeding it move to EXPIRED.
+    task_default_ttl_seconds: int = 3600
+    # Max tasks the in-process worker executes concurrently.
+    task_worker_concurrency: int = 2
 
     # define the model config
     model_config = SettingsConfigDict(

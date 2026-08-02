@@ -46,9 +46,7 @@ def _minimal_body() -> dict:
     return {
         "request_id": str(uuid.uuid4()),
         "user_id": "test-user",
-        "recipes": (
-            {"recipe_id": "r1", "text": "Boil water.", "target_servings": "2"},
-        ),
+        "recipes": ({"recipe_id": "r1", "text": "Boil water.", "target_servings": "2"},),
         "dietary_restrictions": (),
         "user_allergens": (),
         "inventory_lots": (),

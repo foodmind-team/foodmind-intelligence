@@ -121,12 +121,19 @@ def route_after_research(
 
 def route_after_safety(
     state: PlanState,
-) -> Literal["check_feasibility", "render_infeasible_response"]:
+) -> Literal["check_feasibility", "render_infeasible_response", "render_failed_response"]:
     """Hard unrepairable safety findings -> INFEASIBLE.
+
+    P3-04: a policy-resolution failure (unknown region, unknown version,
+    not-yet-effective, or missing-source policy) set by validate_safety_node
+    short-circuits to FAILED — a plan must never proceed — let alone reach
+    READY — under an unverifiable policy.
 
     Otherwise, proceed to feasibility check.
     Safety findings that ARE repairable are injected as safety_tasks in merge_preparation.
     """
+    if state.get("error") is not None:
+        return "render_failed_response"
     safety_report = state.get("safety_report")
     if safety_report is not None and safety_report.has_unrepairable:
         return "render_infeasible_response"

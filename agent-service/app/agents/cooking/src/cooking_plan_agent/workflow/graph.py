@@ -5,6 +5,7 @@ Keep terminal response construction explicit — the graph must end with
 exactly one valid response status.
 """
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -41,11 +42,20 @@ from cooking_plan_agent.workflow.routing import (
 from cooking_plan_agent.workflow.state import PlanState
 
 
-def build_cooking_plan_graph() -> CompiledStateGraph[PlanState, WorkflowContext]:
+def build_cooking_plan_graph(
+    checkpointer: BaseCheckpointSaver[str] | None = None,
+) -> CompiledStateGraph[PlanState, WorkflowContext]:
     """Build and compile the cooking-plan generation workflow graph.
 
-    Returns a compiled graph ready for ainvoke() with PlanState input
-    and WorkflowContext as runtime context.
+    Args:
+        checkpointer: Optional LangGraph saver for node-boundary persistence
+            (P2-06). When None the graph runs stateless — the pre-P2-06
+            behaviour. Injected at startup so no connection is created at
+            module import time.
+
+    Returns:
+        A compiled graph ready for ainvoke() with PlanState input
+        and WorkflowContext as runtime context.
     """
     builder = StateGraph(PlanState, context_schema=WorkflowContext)
 
@@ -146,13 +156,15 @@ def build_cooking_plan_graph() -> CompiledStateGraph[PlanState, WorkflowContext]
         },
     )
 
-    # validate_safety: unrepairable safety issue -> INFEASIBLE; else -> feasibility
+    # validate_safety: policy-resolution error -> FAILED (P3-04);
+    # unrepairable safety issue -> INFEASIBLE; else -> feasibility
     builder.add_conditional_edges(
         "validate_safety",
         route_after_safety,
         {
             "check_feasibility": "check_feasibility",
             "render_infeasible_response": "render_infeasible_response",
+            "render_failed_response": "render_failed_response",
         },
     )
 
@@ -212,4 +224,4 @@ def build_cooking_plan_graph() -> CompiledStateGraph[PlanState, WorkflowContext]
     builder.add_edge("render_infeasible_response", END)
     builder.add_edge("render_failed_response", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

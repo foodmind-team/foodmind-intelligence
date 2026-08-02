@@ -177,6 +177,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         _provider_clients.append(cache)  # closed (cleared) on shutdown
 
+    # P2-06: workflow checkpointer (node-boundary persistence). Created in
+    # the lifespan so no connection is opened at import time; closed on
+    # shutdown. None keeps the graph stateless (pre-P2-06 behaviour).
+    from cooking_plan_agent.infrastructure.checkpointer import (
+        CheckpointProvider,
+        create_checkpoint_provider,
+    )
+
+    checkpoint_provider: CheckpointProvider | None = create_checkpoint_provider(settings)
+    if checkpoint_provider is not None:
+        try:
+            await checkpoint_provider.astart()
+            app.state.checkpoint_enabled = True
+            logger.info(
+                "Checkpoint persistence enabled | backend=%s",
+                settings.checkpoint_backend,
+            )
+        except Exception as exc:  # noqa: BLE001 — startup must not hang on storage failure
+            logger.error(
+                "Failed to start checkpointer — running stateless",
+                extra={"error": str(exc)},
+            )
+            checkpoint_provider = None
+    else:
+        app.state.checkpoint_enabled = False
+
     # Reset shutdown flag on startup (critical for tests: module-level
     # global persists across TestClient instances and must be reset).
     _shutting_down = False
@@ -274,7 +300,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Build and compile the LangGraph workflow graph once at startup.
     try:
-        graph = build_cooking_plan_graph()
+        # P2-06: inject the checkpointer when persistence is enabled so
+        # node-boundary state survives process restart.
+        graph = build_cooking_plan_graph(checkpointer=checkpoint_provider.checkpointer if checkpoint_provider else None)
         app.state.graph_compiled = True
     except Exception as exc:  # noqa: BLE001 — lifespan must catch all to prevent hung startup
         logger.error("Failed to compile workflow graph", extra={"error": str(exc)})
@@ -285,6 +313,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         graph=graph,
         context=workflow_context,
     )
+
+    # P3-01: async task API — in-process worker + SQLite task store. The
+    # synchronous endpoints remain; this service only runs when enabled.
+    app.state.task_service = None
+    task_service: object | None = None
+    if settings.task_api_enabled:
+        from cooking_plan_agent.tasks.repository import SQLiteTaskRepository
+        from cooking_plan_agent.tasks.service import AsyncTaskService
+
+        task_repo = SQLiteTaskRepository(settings.task_db_path)
+        try:
+            await task_repo.astart()
+            task_service = AsyncTaskService(
+                repository=task_repo,
+                generation_service=app.state.generate_plan_service,
+                default_ttl_seconds=settings.task_default_ttl_seconds,
+                worker_concurrency=settings.task_worker_concurrency,
+            )
+            await task_service.astart()
+            app.state.task_service = task_service
+            logger.info(
+                "Async task API enabled | db=%s | worker_concurrency=%d",
+                settings.task_db_path,
+                settings.task_worker_concurrency,
+            )
+        except Exception as exc:  # noqa: BLE001 — startup must not hang on storage failure
+            logger.error(
+                "Failed to start async task service — task API disabled",
+                extra={"error": str(exc)},
+            )
+            await task_repo.close()
 
     logger.info("Cooking Plan Agent ready")
 
@@ -317,6 +376,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 client.close()
         except Exception as exc:  # noqa: BLE001 — client.close() may raise from any provider
             logger.warning("Error closing provider client", extra={"error": str(exc)})
+
+    # P2-06: close the checkpointer connection so the SQLite file is
+    # flushed and no file handle leaks across restarts.
+    if checkpoint_provider is not None:
+        try:
+            await checkpoint_provider.aclose()
+        except Exception as exc:  # noqa: BLE001 — shutdown must not raise
+            logger.warning("Error closing checkpointer", extra={"error": str(exc)})
+
+    # P3-01: stop the async task worker (bounded drain) and close the store.
+    if task_service is not None:
+        try:
+            await task_service.aclose()  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — shutdown must not raise
+            logger.warning("Error closing task service", extra={"error": str(exc)})
 
     # Flush structured logs/metrics.
     for handler in logging.getLogger().handlers:
@@ -375,17 +449,23 @@ async def _shutdown_middleware(
 
     Handbook 12.5: stop accepting new requests; allow bounded in-flight
     work to finish or cancel cleanly.
+
+    P3-05: the 503 body uses the unified ErrorEnvelope so shutdown is
+    indistinguishable (structurally) from backpressure overload.
     """
     global _active_request_count
     if _shutting_down:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "FAILED",
-                "error_code": "SHUTTING_DOWN",
-                "message": "Service is shutting down. Please retry.",
-            },
+        from cooking_plan_agent.domain.models import ErrorEnvelope
+
+        correlation_id = str(getattr(request.state, "correlation_id", "unknown"))
+        envelope = ErrorEnvelope(
+            status=503,
+            error_code="SHUTTING_DOWN",
+            message="Service is shutting down. Please retry.",
+            correlation_id=correlation_id,
+            retryable=True,
         )
+        return JSONResponse(status_code=503, content=envelope.model_dump())
     _active_request_count += 1
     try:
         response = await call_next(request)
@@ -409,6 +489,11 @@ def create_app() -> FastAPI:
 
     application.include_router(agent_router)
     application.include_router(compat_router)
+    # P3-01: async task API (registered only when enabled; the router is
+    # harmless to include — auth guards every route).
+    from cooking_plan_agent.api.task_router import router as task_router
+
+    application.include_router(task_router)
     register_exception_handlers(application)
 
     # Shutdown middleware: must be outermost so it runs first on every request.

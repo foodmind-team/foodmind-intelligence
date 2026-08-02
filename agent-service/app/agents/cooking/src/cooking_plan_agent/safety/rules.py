@@ -26,6 +26,8 @@ from cooking_plan_agent.domain.models import (
     SafetyFinding,
     SafetyInsertion,
 )
+from cooking_plan_agent.safety.policies.usda import USDA_SAFE_MINIMUM_TEMPERATURES_C
+from cooking_plan_agent.safety.policy import SafetyPolicy
 
 # =============================================================================
 # P0-07 safety-task policy — durations and resources for inserted safety tasks
@@ -61,35 +63,14 @@ class SafetyRule(Protocol):
 
 
 # =============================================================================
-# USDA safe minimum internal temperatures (°C) — handbook 5.8 reference
+# Safe minimum internal temperatures (P3-04)
 # =============================================================================
 
-# Source: USDA FSIS Safe Minimum Internal Temperature Chart
-_USDA_SAFE_TEMPERATURES_C: dict[str, Decimal] = {
-    # Poultry (whole, parts, ground) — all must reach 74°C
-    "chicken": Decimal(74),
-    "turkey": Decimal(74),
-    "duck": Decimal(74),
-    "goose": Decimal(74),
-    "poultry": Decimal(74),
-    # Ground meats (except poultry)
-    "ground_beef": Decimal(71),
-    "ground_pork": Decimal(71),
-    "ground_lamb": Decimal(71),
-    "ground_meat": Decimal(71),
-    # Beef, pork, lamb (steaks, chops, roasts)
-    "beef": Decimal(63),
-    "pork": Decimal(63),
-    "lamb": Decimal(63),
-    "veal": Decimal(63),
-    # Fish & shellfish
-    "fish": Decimal(63),
-    "salmon": Decimal(63),
-    "shrimp": Decimal(63),
-    "shellfish": Decimal(63),
-    # Eggs
-    "egg": Decimal(71),
-}
+# Protein internal-temperature thresholds are no longer hard-coded here — they
+# live in versioned, source-backed regional policy packs (safety/policies/).
+# The USDA table is imported only as the backward-compatible default so rules
+# constructed without an explicit policy keep their historical behaviour.
+# Production wiring binds rules to a resolved policy via build_rules(policy).
 
 # Protein keywords for matching ingredient names to protein categories
 _PROTEIN_KEYWORDS: dict[str, str] = {
@@ -307,8 +288,7 @@ class CrossContaminationRule:
                 after_step_number=after_step,
                 before_step_number=before_step,
                 task_instruction=(
-                    "Sanitise cutting board and utensils after raw protein "
-                    "handling and before ready-to-eat assembly."
+                    "Sanitise cutting board and utensils after raw protein handling and before ready-to-eat assembly."
                 ),
                 duration_minutes=_SANITISE_DURATION_MINUTES,
                 required_resources=_SANITISE_REQUIRED_RESOURCES,
@@ -478,16 +458,22 @@ class AllergenDetectionRule:
 
 @dataclass(frozen=True)
 class ProteinSafetyTemperatureRule:
-    """Verify that protein cooking steps reach USDA safe internal temperatures.
+    """Verify that protein cooking steps reach the region's safe internal temperatures.
 
     For each recipe step that involves heating a protein, check that
-    target_temperature_c is at or above the safe minimum. Steps without
-    a specified temperature are flagged with the recommended safe temp.
+    target_temperature_c is at or above the safe minimum defined by the
+    active regional policy (P3-04). Steps without a specified temperature are
+    flagged with the recommended safe temp. Protein categories the policy does
+    not document are skipped (never flagged).
 
     Severity: hard_repairable — temperature can always be specified.
     """
 
     rule_id: str = "SAFETY_PROTEIN_TEMPERATURE"
+
+    # Per-protein safe minimum internal temperatures (°C). Backward-compatible
+    # default is the USDA pack; production binds the resolved regional policy.
+    safe_temperatures_c: dict[str, Decimal] = field(default_factory=lambda: dict(USDA_SAFE_MINIMUM_TEMPERATURES_C))
 
     def evaluate(self, context: SafetyContext) -> SafetyFinding | None:
         """Check all protein heating steps across recipes."""
@@ -500,7 +486,7 @@ class ProteinSafetyTemperatureRule:
 
                 # Determine protein type from the recipe ingredients
                 protein_type = _dominant_protein_type(recipe)
-                safe_temp = _USDA_SAFE_TEMPERATURES_C.get(protein_type)
+                safe_temp = self.safe_temperatures_c.get(protein_type)
 
                 if safe_temp is None:
                     continue  # Not a tracked protein — skip
@@ -525,10 +511,11 @@ class ProteinSafetyTemperatureRule:
         return SafetyFinding(
             rule_id=self.rule_id,
             severity="hard_repairable",
-            description=(f"Protein cooking temperature below USDA safe minimum: {detail}"),
+            description=(f"Protein cooking temperature below regional safe minimum: {detail}"),
             recommended_action=(
-                "Set target temperatures to at or above USDA safe minima: "
-                "poultry 74°C, ground meat 71°C, beef/pork/lamb/fish 63°C, eggs 71°C."
+                "Set target temperatures to at or above the safe minimum "
+                "internal temperatures defined by the active regional safety "
+                "policy (see the plan's policy sources)."
             ),
         )
 
@@ -718,8 +705,8 @@ class ExpiredIngredientRule:
 # Rule 6: HoldingTimeRule — food held at unsafe temperatures too long
 # =============================================================================
 
-# USDA: perishable food must not sit at room temperature > 2 hours
-_MAX_HOLDING_MINUTES_ROOM_TEMP = 120
+# Room-temperature holding limit comes from the active regional policy pack
+# (P3-04) — default 120 min is the USDA 2-hour rule for backward compatibility.
 
 _PERISHABLE_FOOD_KEYWORDS: tuple[str, ...] = (
     "chicken",
@@ -757,15 +744,20 @@ _PERISHABLE_FOOD_KEYWORDS: tuple[str, ...] = (
 class HoldingTimeRule:
     """Flag dishes where long passive phases risk temperature abuse.
 
-    Recipes with perishable proteins and total passive time > 2 hours
-    are flagged — food may cool into the danger zone (4–60 °C) where
-    bacteria multiply rapidly.  The scheduler can resolve this by
-    placing completions near serving time.
+    Recipes with perishable proteins and total passive time above the active
+    regional policy's room-temperature holding limit are flagged — food may
+    cool into the danger zone where bacteria multiply rapidly. The scheduler
+    can resolve this by placing completions near serving time.
 
     Severity: hard_repairable — can add cooling/reheating or adjust schedule.
     """
 
     rule_id: str = "SAFETY_HOLDING_TIME"
+
+    # Max minutes perishable food may sit at room temperature before it is
+    # flagged. Backward-compatible default is the USDA 2-hour rule (120 min);
+    # production binds the resolved regional policy (P3-04).
+    max_holding_minutes_room_temp: int = 120
 
     def evaluate(self, context: SafetyContext) -> SafetyFinding | None:
         risky: list[str] = []
@@ -777,7 +769,7 @@ class HoldingTimeRule:
             total_passive = sum((s.passive_duration_minutes or 0) for s in recipe.steps)
             total_active = sum((s.active_duration_minutes or 5) for s in recipe.steps)
 
-            if total_passive > _MAX_HOLDING_MINUTES_ROOM_TEMP:
+            if total_passive > self.max_holding_minutes_room_temp:
                 risky.append(
                     f"'{recipe.dish_name}' (~{total_passive + total_active}min total, {total_passive}min passive)"
                 )
@@ -791,11 +783,14 @@ class HoldingTimeRule:
             description=(
                 f"Holding-time risk: dishes with long passive phases "
                 f"containing perishable proteins: {'; '.join(risky)}. "
-                f"Food may exceed USDA 2-hour room-temperature limit."
+                f"Passive time exceeds the regional room-temperature holding "
+                f"limit of {self.max_holding_minutes_room_temp} minutes."
             ),
             recommended_action=(
-                "Serve perishable food within 2 hours of cooking completion. "
-                "Keep hot food above 60 °C or refrigerate below 4 °C. "
+                "Serve perishable food within the regional room-temperature "
+                "holding limit of the plan's cooking completion. "
+                "Keep hot food above the policy's hot-holding minimum or "
+                "refrigerate below its cold-holding maximum. "
                 "Stagger dish completions near serving time."
             ),
         )
@@ -829,6 +824,25 @@ default_rules: tuple[
     ExpiredIngredientRule(),
     HoldingTimeRule(),
 )
+
+
+def build_rules(policy: SafetyPolicy) -> tuple[SafetyRule, ...]:
+    """Build the standard rule set bound to a resolved regional policy (P3-04).
+
+    Threshold-driven rules (protein temperatures, room-temperature holding)
+    are constructed from ``policy.thresholds``; structural rules are
+    region-agnostic. This is the only place production wiring creates rules —
+    the module-level ``default_rules`` stays only as a backward-compatible
+    USDA-bound fallback for tests and legacy engines.
+    """
+    return (
+        CrossContaminationRule(),
+        AllergenDetectionRule(),
+        ProteinSafetyTemperatureRule(safe_temperatures_c=dict(policy.thresholds.safe_minimum_temperatures_c)),
+        DietaryCompatibilityRule(),
+        ExpiredIngredientRule(),
+        HoldingTimeRule(max_holding_minutes_room_temp=policy.thresholds.max_room_temp_holding_minutes),
+    )
 
 
 # =============================================================================

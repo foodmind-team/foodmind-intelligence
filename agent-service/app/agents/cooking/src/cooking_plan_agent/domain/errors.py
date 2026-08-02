@@ -87,6 +87,11 @@ class DomainErrorCode(StrEnum):
     # payload (P0-06).
     INVALID_APPROVED_DECISION = "INVALID_APPROVED_DECISION"
 
+    # The request body failed Pydantic schema validation at the HTTP
+    # boundary (P3-05). Used by the RequestValidationError handler; never
+    # raised from domain services.
+    REQUEST_VALIDATION_ERROR = "REQUEST_VALIDATION_ERROR"
+
     # ------------------------------------------------------------------
     # Unit conversion errors (handbook 5.3, 5.4)
     # ------------------------------------------------------------------
@@ -108,6 +113,13 @@ class DomainErrorCode(StrEnum):
     # cannot be filled from a trusted source.
     # This error typically produces an INFEASIBLE terminal response.
     SAFETY_CONSTRAINT_VIOLATION = "SAFETY_CONSTRAINT_VIOLATION"
+
+    # The requested regional food-safety policy pack cannot be applied:
+    # unknown region, unknown version, not yet effective, or missing official
+    # sources (P3-04 D6). Never silently falls back to another region.
+    # Routes to a FAILED response — a plan must not enter READY under an
+    # unverifiable policy.
+    SAFETY_POLICY_UNAVAILABLE = "SAFETY_POLICY_UNAVAILABLE"
 
     # ------------------------------------------------------------------
     # Inventory and resource errors (handbook 5.5, 5.6)
@@ -264,3 +276,39 @@ class WorkflowException(Exception):
         # Build a standardised error string with the error code prefix for
         # easy log retrieval.
         super().__init__(f"[{code.value}] {message}")
+
+
+# ===========================================================================
+# Error catalog — retryable semantics (P3-05)
+# ===========================================================================
+# The catalog is the single source of truth for whether a client may retry
+# after receiving a given error_code. It is deliberately decoupled from the
+# human-readable message text (D9), so retry semantics stay stable and
+# auditable. Unknown codes default to non-retryable (safe: fail loudly).
+
+# Codes that indicate a transient condition where a later retry may succeed.
+# These are protocol-level (backpressure, shutdown) or provider-level
+# (external LLM/search) failures, never business-logic rejections.
+_RETRYABLE_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        DomainErrorCode.EXTERNAL_PROVIDER_UNAVAILABLE.value,
+        DomainErrorCode.SCHEDULE_UNKNOWN.value,
+        "OVERLOADED",  # P1-03 backpressure 503
+        "SHUTTING_DOWN",  # graceful shutdown 503
+        "SCHEDULE_MODEL_INVALID",  # transient model construction fault
+    }
+)
+
+
+def is_retryable(error_code: str) -> bool:
+    """Return whether a client may retry for the given error code.
+
+    The decision comes exclusively from the error catalog — never from
+    message-text heuristics (P3-05 D9). Unknown codes are non-retryable.
+    """
+    return error_code in _RETRYABLE_ERROR_CODES
+
+
+def retryable_error_codes() -> tuple[str, ...]:
+    """Return the sorted set of catalogued retryable codes (audit/report)."""
+    return tuple(sorted(_RETRYABLE_ERROR_CODES))

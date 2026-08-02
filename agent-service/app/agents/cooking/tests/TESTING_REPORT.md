@@ -2,7 +2,7 @@
 
 > **Handbook Chapter 11：Testing, Security, and Quality**
 >
-> 执行日期：2026-08-02 | 状态：✅ 全部通过 | 覆盖率：**88%**
+> 执行日期：2026-08-02 | 状态：✅ 全部通过 | 覆盖率：**91%** | 用例总数：**937**
 
 ---
 
@@ -56,33 +56,62 @@ tests/
 ├── conftest.py                          # 根配置：Hypothesis profile + OR-Tools 日志静默
 ├── fixtures/__init__.py                 # 18 个共享工厂函数
 │
-├── unit/                                # ═══ 单元测试 (584 tests) ═══
-│   ├── domain/test_models.py            #   90 — Pydantic 不变量 / 错误码 / 枚举
+├── unit/                                # ═══ 单元测试 ═══
+│   ├── domain/test_models.py            #    — Pydantic 不变量 / 错误码 / 枚举
 │   ├── normalisation/test_units.py      #    — 分类器 / 转换器 / 缩放 / 错误层次
-│   ├── normalisation/test_names.py      #  108 — 归一化 / 名称清理
+│   ├── normalisation/test_names.py      #    — 归一化 / 名称清理
 │   ├── parsing/test_preprocess.py       #    — 解码 / 归一化 / 语言检测 / 管道
-│   ├── parsing/test_parser_pipeline.py  #   82 — 管道级解析
-│   ├── preparation/test_preparation.py  #   49 — 分解 / trie / DAG / 拓扑 / 关键路径
-│   ├── scheduling/test_scheduling.py    #   54 — 10 fixtures / 验证器 / 编排器
-│   ├── scheduling/test_golden.py        #     — 手算最优解 golden 案例
-│   ├── scheduling/test_mutations.py     #     — 破坏排程负向测试
-│   ├── research/test_research.py        #   18 — 9 研究场景 / 清理器 / 提取器
-│   ├── safety/test_safety_engine.py     #   37 — 6 规则引擎 / 严重度
-│   ├── inventory/test_feasibility.py    #   51 — FEFO 分配 / 短缺检测
-│   ├── repair/test_options.py           #   40 — 修复方案 / 排序
-│   ├── rendering/test_rendering.py      #   38 — 时间线 / mise en place
-│   ├── llm/test_llm_adapters.py         #    7 — LLM 适配器
-│   ├── test_properties.py               #     — Hypothesis property-based
-│   └── test_health.py                   #   10 — 活跃度 / property 检查
+│   ├── parsing/test_parser_pipeline.py  #    — 管道级解析
+│   ├── preparation/test_preparation.py  #    — 分解 / trie / DAG / 拓扑 / 关键路径
+│   ├── scheduling/test_scheduling.py    #    — 10 fixtures / 验证器 / 编排器
+│   ├── scheduling/test_golden.py        #    — 手算最优解 golden 案例
+│   ├── scheduling/test_mutations.py     #    — 破坏排程负向测试
+│   ├── scheduling/test_multi_objective.py # 11 — 词典序多目标（P3-03）
+│   ├── research/test_research.py        #    — 9 研究场景 / 清理器 / 提取器
+│   ├── safety/test_safety_engine.py     #    — 6 规则引擎 / 严重度
+│   ├── safety/test_safety_anchors.py    #    — P0-07 安全锚点
+│   ├── safety/test_policy.py            # 19 — 地区策略包 / 溯源 / 拒绝（P3-04）
+│   ├── safety/test_policy_node.py       #  6 — 节点策略解析 / 响应记录（P3-04）
+│   ├── inventory/test_feasibility.py    #    — FEFO 分配 / 短缺检测
+│   ├── repair/test_options.py           #    — 修复方案 / 排序
+│   ├── rendering/test_rendering.py      #    — 时间线 / mise en place
+│   ├── llm/test_llm_adapters.py         #    — LLM 适配器
+│   ├── tasks/test_tasks.py              # 18 — 任务状态机 / 幂等 / 取消（P3-01）
+│   ├── tasks/test_distributed_workers.py # 8 — lease 领取 / 续租 / 死信（P3-02）
+│   ├── test_properties.py               #    — Hypothesis property-based
+│   └── test_health.py                   #    — 活跃度 / property 检查
 │
-├── contract/test_api_contract.py        # ═══ 合约测试 (16 tests) ═══
-├── integration/test_workflow_graph.py   # ═══ 集成测试 (6 tests) ═══
-├── security/                            # ═══ 安全测试 (53 tests) ═══
-│   ├── test_dependencies.py             #   34 — 鉴权 / 关联 ID / 日志注入
-│   └── test_app_security.py             #   19 — NUL / 超大 / 注入 / SSRF
-├── uat/test_scenarios.py                # ═══ UAT 场景 (12 tests) ═══
-└── smoke/test_docker_smoke.py           # ═══ 冒烟测试 (9 tests) ═══
+├── contract/test_api_contract.py        # ═══ 合约测试 ═══
+├── contract/test_task_api.py            # 11 — 异步任务 API 契约（P3-01）
+├── contract/test_unified_error_contract.py # 11 — ErrorEnvelope 契约（P3-05）
+├── integration/test_workflow_graph.py   # ═══ 集成测试 ═══
+├── integration/test_checkpoint_persistence.py # 15 — checkpoint 持久化（P2-06）
+├── integration/test_policy_region.py    #  3 — 整图地区策略（P3-04）
+├── security/                            # ═══ 安全测试 ═══
+│   ├── test_dependencies.py             #    — 鉴权 / 关联 ID / 日志注入
+│   └── test_app_security.py             #    — NUL / 超大 / 注入 / SSRF
+├── uat/test_scenarios.py                # ═══ UAT 场景 ═══
+└── smoke/test_docker_smoke.py           # ═══ 冒烟测试 ═══
 ```
+
+---
+
+## 1b. P3 批次新增测试（P2-06 / P3-01 ~ P3-05）
+
+| 计划 | 测试文件 | 用例数 | 覆盖点 |
+|---|---|---|---|
+| P2-06 | `integration/test_checkpoint_persistence.py` | 15 | 注入 saver、thread_id 关联、恢复、msgpack 反序列化 |
+| P3-01 | `unit/tasks/test_tasks.py` | 18 | 状态机全转移、幂等键、取消/过期、任务与 revision 关联 |
+| P3-01 | `contract/test_task_api.py` | 11 | 提交→轮询全链路、幂等重试、恢复 |
+| P3-02 | `unit/tasks/test_distributed_workers.py` | 8 | 双 Worker 竞争、lease 续租/过期、条件写入、重试/死信 |
+| P3-03 | `unit/scheduling/test_multi_objective.py` | 11 | 词典序固定目标不破坏、phase 回退、verifier 元数据一致性 |
+| P3-04 | `unit/safety/test_policy.py` | 19 | 策略包加载/版本、阈值溯源、未知/过期/缺来源拒绝、checkpoint 兼容 |
+| P3-04 | `unit/safety/test_policy_node.py` | 6 | 节点策略解析、地区覆盖、响应记录 |
+| P3-04 | `integration/test_policy_region.py` | 3 | 未知地区 FAILED、SG/US READY 带 policy |
+| P3-05 | `contract/test_unified_error_contract.py` | 11 | envelope 全字段、错误目录、retryable、compat 映射 |
+
+质量门禁（P3 批次全部通过）：`ruff format --check` / `ruff check` / `mypy src`（87 文件 strict）/
+`pytest`（937 passed）/ 覆盖率 **91%** / `export_openapi.py --check` PASSED。
 
 ---
 

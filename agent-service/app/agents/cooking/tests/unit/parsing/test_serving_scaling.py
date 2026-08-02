@@ -186,9 +186,7 @@ class TestMissingQuantity:
                     confidence=Decimal("0.5"),
                 ),
             ),
-            steps=(
-                ExtractedStep(step_number=1, instruction="Season with salt."),
-            ),
+            steps=(ExtractedStep(step_number=1, instruction="Season with salt."),),
         )
         ir = build_recipe_ir(candidate, target_servings=Decimal(4))
         # The demand is still present (quantity defaulted by the builder to

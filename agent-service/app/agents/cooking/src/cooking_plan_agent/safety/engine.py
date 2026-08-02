@@ -18,6 +18,7 @@ from cooking_plan_agent.domain.models import (
     SafetyInsertion,
     SafetyReport,
 )
+from cooking_plan_agent.safety.policy import SafetyPolicy
 from cooking_plan_agent.safety.rules import SafetyRule, default_rules
 
 
@@ -34,6 +35,10 @@ class SafetyEngine:
     """
 
     rules: tuple[SafetyRule, ...] = field(default=default_rules)
+    # P3-04: the regional policy pack whose thresholds the rules were built
+    # from. When set, the produced SafetyReport records its region/version/
+    # sources for traceability; None keeps legacy engine behaviour.
+    policy: SafetyPolicy | None = None
 
     def evaluate(self, context: SafetyContext) -> SafetyReport:
         """Run all rules and produce an aggregated SafetyReport.
@@ -79,4 +84,5 @@ class SafetyEngine:
             has_unrepairable=has_unrepairable,
             required_safety_task_ids=tuple(safety_task_ids),
             insertions=tuple(insertions),
+            safety_policy=self.policy.to_record() if self.policy is not None else None,
         )
