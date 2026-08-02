@@ -14,6 +14,9 @@ Key acceptance points (P3-02):
 
 from __future__ import annotations
 
+import asyncio
+import time
+from contextlib import suppress
 from decimal import Decimal
 
 import pytest
@@ -25,8 +28,9 @@ from cooking_plan_agent.domain.models import (
     KitchenResourceSnapshot,
     ReadyPlanResponse,
 )
-from cooking_plan_agent.tasks.models import TaskStatus
-from cooking_plan_agent.tasks.repository import SQLiteTaskRepository
+from cooking_plan_agent.tasks.models import TaskRecord, TaskStatus, is_terminal
+from cooking_plan_agent.tasks.queue import InProcessTaskQueue
+from cooking_plan_agent.tasks.repository import SQLiteTaskRepository, TaskRepository
 from cooking_plan_agent.tasks.service import AsyncTaskService
 
 
@@ -89,6 +93,60 @@ class _CountingGeneration:
             mise_en_place=(),
             dish_completions=(),
         )
+
+
+class _FaultInjectionQueue(InProcessTaskQueue):
+    """In-process queue that injects failures at chosen port calls (P4-05).
+
+    Each counter consumes one fault: the first N calls of the targeted
+    method raise, later calls delegate to the wrapped queue. Lets tests
+    simulate transient queue outages, lease-renewal failures, and a crash
+    at the result-commit stage (network partition / kill between graph run
+    and conditional write).
+    """
+
+    def __init__(
+        self,
+        repository: TaskRepository,
+        *,
+        fail_claims: int = 0,
+        fail_completes: int = 0,
+        fail_renews: int = 0,
+    ) -> None:
+        super().__init__(repository)
+        self._fail_claims = fail_claims
+        self._fail_completes = fail_completes
+        self._fail_renews = fail_renews
+
+    async def claim_available(self, lease_seconds: float) -> TaskRecord | None:
+        if self._fail_claims > 0:
+            self._fail_claims -= 1
+            raise RuntimeError("injected claim failure")
+        return await super().claim_available(lease_seconds)
+
+    async def complete(self, record: TaskRecord, expected_status: TaskStatus) -> TaskRecord | None:
+        if self._fail_completes > 0:
+            self._fail_completes -= 1
+            raise RuntimeError("injected complete failure")
+        return await super().complete(record, expected_status)
+
+    async def renew_lease(self, task_id: str, lease_seconds: float) -> TaskRecord | None:
+        if self._fail_renews > 0:
+            self._fail_renews -= 1
+            raise RuntimeError("injected renew failure")
+        return await super().renew_lease(task_id, lease_seconds)
+
+
+async def _await_terminal(svc: AsyncTaskService, task_id: str, timeout: float = 5.0) -> TaskRecord:
+    """Poll until the task reaches a terminal state (bounded, loop-friendly)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        record = await svc.get(task_id)
+        if record is not None and is_terminal(record.status):
+            return record
+        if time.monotonic() > deadline:
+            raise AssertionError(f"Task {task_id} did not reach a terminal state in {timeout}s")
+        await asyncio.sleep(0.05)
 
 
 @pytest_asyncio.fixture
@@ -318,4 +376,104 @@ async def test_scale_down_to_single_worker_loses_no_tasks(tmp_path) -> None:
     for task_id in task_ids:
         done = await repo.get(task_id)
         assert done is not None and done.status == TaskStatus.READY, f"Task {task_id} lost"
+    await repo.close()
+
+
+# ---------------------------------------------------------------------------
+# Fault injection via the TaskQueue port (P4-05 Stage A)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_result_commit_failure_requeues_and_eventually_completes(tmp_path) -> None:
+    """A crash at the result-commit stage never produces a duplicate result.
+
+    Simulates a network partition / kill between the graph run and the
+    conditional result write: the first ``complete`` raises, the task is
+    re-queued (attempts stay within budget), and the retry commits exactly
+    one authoritative READY revision.
+    """
+    repo = SQLiteTaskRepository(str(tmp_path / "commit.sqlite"))
+    await repo.astart()
+    gen = _CountingGeneration()
+    queue = _FaultInjectionQueue(repo, fail_completes=1)
+    svc = AsyncTaskService(repository=repo, generation_service=gen, worker_concurrency=1, queue=queue)
+
+    outcome = await svc.submit(_request("req-commit-fault"))
+
+    # Attempt 1: graph ran, but the terminal write raised -> re-queued.
+    await svc._execute_claimed()  # type: ignore[attr-defined]
+    mid = await repo.get(outcome.task.task_id)
+    assert mid is not None and mid.status == TaskStatus.QUEUED and mid.attempts == 1
+
+    # Attempt 2: re-claim and commit succeed.
+    await svc._execute_claimed()  # type: ignore[attr-defined]
+    done = await repo.get(outcome.task.task_id)
+    assert done is not None and done.status == TaskStatus.READY
+    assert done.result is not None and done.result["status"] == "READY"
+    assert done.attempts == 2
+    # The graph ran once per attempt; only one terminal result was persisted.
+    assert gen.execution_count == 2
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_survives_transient_claim_failure(tmp_path) -> None:
+    """A transient queue outage is absorbed by the loop — no task is lost.
+
+    The first claim raises (e.g. the queue was briefly unavailable); the
+    worker loop catches the failure, keeps running, and the queued task is
+    claimed and completed on the next iteration.
+    """
+    repo = SQLiteTaskRepository(str(tmp_path / "flaky.sqlite"))
+    await repo.astart()
+    gen = _CountingGeneration()
+    queue = _FaultInjectionQueue(repo, fail_claims=1)
+    svc = AsyncTaskService(repository=repo, generation_service=gen, worker_concurrency=1, queue=queue)
+
+    outcome = await svc.submit(_request("req-flaky-claim"))
+    loop_task = asyncio.create_task(svc._run_worker_loop())  # type: ignore[attr-defined]
+    try:
+        done = await _await_terminal(svc, outcome.task.task_id)
+    finally:
+        loop_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await loop_task
+    assert done.status == TaskStatus.READY
+    assert done.result is not None and done.result["status"] == "READY"
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_survives_renewal_failure(tmp_path) -> None:
+    """A failing lease renewal must not crash the heartbeat (it retries).
+
+    The graph runs longer than the heartbeat interval, so the first renewal
+    fires mid-execution and raises; the handler catches it, the heartbeat
+    keeps running, and the worker still commits the terminal result.
+    """
+
+    class _SlowGeneration(_CountingGeneration):
+        async def execute(self, request: GeneratePlanRequest, thread_id: str | None = None):
+            await asyncio.sleep(1.5)
+            return await super().execute(request, thread_id)
+
+    repo = SQLiteTaskRepository(str(tmp_path / "hb.sqlite"))
+    await repo.astart()
+    gen = _SlowGeneration()
+    queue = _FaultInjectionQueue(repo, fail_renews=10)
+    svc = AsyncTaskService(
+        repository=repo,
+        generation_service=gen,
+        worker_concurrency=1,
+        lease_seconds=0.3,
+        queue=queue,
+    )
+
+    outcome = await svc.submit(_request("req-hb-fault"))
+    await svc._execute_claimed()  # type: ignore[attr-defined]
+    done = await repo.get(outcome.task.task_id)
+    assert done is not None and done.status == TaskStatus.READY
+    assert done.result is not None and done.result["status"] == "READY"
+    assert done.attempts == 1
     await repo.close()
