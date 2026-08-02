@@ -22,6 +22,11 @@ from cooking_plan_agent.api import register_exception_handlers
 from cooking_plan_agent.api import router as agent_router
 from cooking_plan_agent.api.compat_router import router as compat_router
 from cooking_plan_agent.application import GenerateCookingPlanService
+from cooking_plan_agent.observability.redaction import (
+    REDACTION_APPLIED_FIELD,
+    REDACTION_FAIL_FIELD,
+    redact_with_stats,
+)
 from cooking_plan_agent.safety.engine import SafetyEngine
 from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.graph import build_cooking_plan_graph
@@ -34,67 +39,77 @@ from cooking_plan_agent.workflow.graph import build_cooking_plan_graph
 
 
 class _RedactingJsonFormatter(logging.Formatter):
-    """JSON log formatter that redacts sensitive fields per Handbook 12.7.
+    """JSON log formatter that redacts ALL content per Handbook 12.7.
 
-    Fields redacted: recipe text, inventory data, dietary rules,
-    provider prompts/responses, credentials, internal service tokens.
+    P4-03 (补 P2-05): upgraded from "redact only by extra field name" to a
+    uniform recursive redactor (observability/redaction.py) covering the
+    message text, exception strings, URLs and nested objects. Diagnostic
+    fields (request_id / node / error_code / correlation_id / duration_ms
+    / status / level / logger / timestamp) survive via the whitelist, and
+    every line carries redaction counters for the P2-05 monitoring matrix.
     """
 
-    _REDACT_FIELDS = frozenset(
+    # Standard LogRecord attributes that are never echoed into the JSON line.
+    _LOG_ATTR_SKIP = frozenset(
         {
-            "recipe_text",
-            "recipes",
-            "inventory",
-            "dietary_rules",
-            "dietary_restrictions",
-            "prompt",
-            "response",
-            "provider_payload",
-            "internal_service_token",
-            "credential",
-            "api_key",
+            "name",
+            "msg",
+            "args",
+            "levelname",
+            "levelno",
+            "pathname",
+            "filename",
+            "module",
+            "exc_info",
+            "exc_text",
+            "stack_info",
+            "lineno",
+            "funcName",
+            "created",
+            "msecs",
+            "relativeCreated",
+            "thread",
+            "threadName",
+            "process",
+            "processName",
+            "taskName",
+            "message",
         }
     )
 
     def format(self, record: logging.LogRecord) -> str:
-        log_entry: dict[str, str | bool] = {
+        message, msg_stats = redact_with_stats(record.getMessage())
+        log_entry: dict[str, object] = {
             "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": message,
         }
-        if hasattr(record, "request_id"):
-            log_entry["request_id"] = record.request_id
-        if record.exc_info and record.exc_info[1]:
-            log_entry["exception"] = str(record.exc_info[1])
 
-        # Redact any sensitive keys that slipped into extra
+        # P2-05: exception keeps only the safe type name + cleaned summary —
+        # the raw traceback is never written, so it cannot leak secrets.
+        applied = msg_stats.applied
+        failed = msg_stats.failed
+        if record.exc_info and record.exc_info[1]:
+            exc = record.exc_info[1]
+            exc_summary, exc_stats = redact_with_stats(str(exc))
+            log_entry["exception"] = f"{type(exc).__name__}: {exc_summary}"
+            applied += exc_stats.applied
+            failed += exc_stats.failed
+
+        # Every extra attribute is recursively redacted; the whitelist keeps
+        # diagnostic fields and the redactor hides everything else.
         for key, value in record.__dict__.items():
-            if key in self._REDACT_FIELDS:
-                log_entry[f"_{key}_redacted"] = True
-            elif key not in {
-                "name",
-                "msg",
-                "args",
-                "levelname",
-                "levelno",
-                "pathname",
-                "filename",
-                "module",
-                "exc_info",
-                "exc_text",
-                "stack_info",
-                "lineno",
-                "funcName",
-                "created",
-                "msecs",
-                "relativeCreated",
-                "thread",
-                "threadName",
-                "process",
-                "message",
-            }:
-                log_entry[key] = value
+            if key in self._LOG_ATTR_SKIP:
+                continue
+            redacted, stats = redact_with_stats(value)
+            log_entry[key] = redacted
+            applied += stats.applied
+            failed += stats.failed
+
+        # P2-05 monitoring matrix: fail-closed redaction is observable.
+        log_entry[REDACTION_APPLIED_FIELD] = applied
+        log_entry[REDACTION_FAIL_FIELD] = failed
 
         return json.dumps(log_entry, default=str)
 

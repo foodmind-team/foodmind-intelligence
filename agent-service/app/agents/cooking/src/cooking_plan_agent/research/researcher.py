@@ -21,6 +21,7 @@ from cooking_plan_agent.domain.models import (
     ReconciledEvidence,
     SearchDocument,
 )
+from cooking_plan_agent.observability.redaction import redact
 from cooking_plan_agent.research.config import DomainAllowList
 from cooking_plan_agent.research.domain_filter import (
     classify_documents,
@@ -108,14 +109,21 @@ class Researcher:
                 timeout=self._settings.research_timeout_seconds,
             )
         except TimeoutError:
+            # P4-03 (补 P2-05): the query text may embed credentials —
+            # always pass it through the redactor before logging.
             logger.warning(
-                "Research timed out after %.1fs for query: %s",
+                "Research timed out after %.1fs | query=%s",
                 self._settings.research_timeout_seconds,
-                query.query_text[:80],
+                redact(query.query_text[:80]),
             )
             return ()
-        except Exception:
-            logger.exception("Search provider failed for query: %s", query.query_text[:80])
+        except Exception as exc:  # noqa: BLE001 — research must never fail the workflow
+            logger.warning(
+                "Search provider failed | query=%s | exception_type=%s | error=%s",
+                redact(query.query_text[:80]),
+                type(exc).__name__,
+                redact(str(exc)),
+            )
             return ()
 
         # Filter results through domain allow-list (handbook 10.4)
