@@ -262,6 +262,24 @@ class TestOpenAPISchema:
         ):
             assert name in schemas, f"{name} schema missing from OpenAPI"
 
+    def test_openapi_includes_confirmation_question_schemas(self, client: TestClient) -> None:
+        """P4-02: the structured confirmation form is documented in OpenAPI.
+
+        ConfirmationQuestion/QuestionOption must be exposed via
+        ConfirmationPlanResponse.confirmation_questions, with the legacy
+        plain-string questions retained for dual-emit compatibility.
+        """
+        response = client.get("/openapi.json")
+        assert response.status_code == 200
+        schema = response.json()
+        schemas = schema.get("components", {}).get("schemas", {})
+        assert "ConfirmationQuestion" in schemas, "ConfirmationQuestion schema missing from OpenAPI"
+        assert "QuestionOption" in schemas, "QuestionOption schema missing from OpenAPI"
+        confirmation = schemas.get("ConfirmationPlanResponse", {})
+        props = confirmation.get("properties", {})
+        assert "confirmation_questions" in props, "confirmation_questions missing from ConfirmationPlanResponse"
+        assert "questions" in props, "legacy questions must stay for dual-emit compatibility"
+
 
 # ---------------------------------------------------------------------------
 # 6. Error response stability (handbook 9.9)

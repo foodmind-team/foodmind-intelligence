@@ -11,7 +11,11 @@ import pytest
 from cooking_plan_agent.domain.enums import HeatLevel, SolverStatus, WorkMode
 from cooking_plan_agent.domain.models import (
     CookingTask,
+    ExtractedIngredient,
+    ExtractedRecipeCandidate,
+    ExtractedStep,
     FeasibilityReport,
+    GeneratePlanRequest,
     IngredientFeasibility,
     InventoryLotSnapshot,
     KitchenResourceSnapshot,
@@ -414,3 +418,118 @@ def test_duplicate_completion_idempotent() -> None:
     report = verifier.verify(problem, corrupted)
     assert not report.passed, "Extra interval for ghost task should be rejected"
     assert any(i.code == "EXTRA_TASK" for i in report.issues)
+
+
+# =============================================================================
+# UAT 11: Structured confirmation form → answers → ApprovedDecision → READY
+# =============================================================================
+
+
+class _StructuredConfirmationExtractor:
+    """Gap-free candidate so the inventory shortage drives the outcome."""
+
+    async def extract(self, source_text: str) -> ExtractedRecipeCandidate:
+        return ExtractedRecipeCandidate(
+            recipe_id="recipe-1",
+            dish_name="Chicken Dish",
+            original_servings=2,
+            source_language="en",
+            ingredients=(
+                ExtractedIngredient(
+                    raw_text="chicken 200g",
+                    name="chicken breast",
+                    quantity=Decimal(200),
+                    unit="g",
+                    confidence=Decimal("1.0"),
+                ),
+            ),
+            steps=(
+                ExtractedStep(
+                    step_number=1,
+                    instruction="Cook for 10 minutes.",
+                    category="heating",
+                    active_duration_minutes=10,
+                    heat_level=HeatLevel.HIGH,
+                ),
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_structured_confirmation_closed_loop() -> None:
+    """UAT: NEEDS_CONFIRMATION → structured answers → ApprovedDecision → READY.
+
+    P4-02: the confirmation carries ConfirmationQuestion[] whose repair
+    CHOICE options map losslessly to ApprovedDecision (D9); answering the
+    repair question and resubmitting re-enters validation and reaches READY
+    (verification item 6 — the complete closed loop).
+    """
+    from cooking_plan_agent.domain.models import (
+        ConfirmationPlanResponse,
+        QuestionAnswer,
+        ReadyPlanResponse,
+    )
+    from cooking_plan_agent.repair.options import answers_to_approved_decisions
+    from cooking_plan_agent.workflow.context import WorkflowContext
+    from cooking_plan_agent.workflow.graph import build_cooking_plan_graph
+
+    request = GeneratePlanRequest(
+        request_id="uat-structured-conf-001",
+        user_id="u",
+        recipes=(
+            {
+                "recipe_id": "recipe-1",
+                "text": "Cook chicken.",
+                "target_servings": 2,
+            },
+        ),
+        # Shortage ratio 0.5 (need 200g, have 100g) so propose_portion_adjustments
+        # proposes reduce_servings (a ratio of 0.75 would round 1.5 → 2 via
+        # ROUND_HALF_EVEN and suppress the option — pre-existing behaviour).
+        inventory_lots=(
+            InventoryLotSnapshot(
+                lot_id="lot-1",
+                item_id="chicken",
+                canonical_name="chicken breast",
+                on_hand=Decimal(100),
+                reserved=Decimal(0),
+                unit="g",
+            ),
+        ),
+        kitchen_resources=(
+            KitchenResourceSnapshot(
+                resource_id="stove-1",
+                resource_type="stove",
+                capacity=Decimal(4),
+                capacity_unit="burners",
+            ),
+        ),
+    )
+
+    graph = build_cooking_plan_graph()
+    context = WorkflowContext(recipe_extractor=_StructuredConfirmationExtractor())
+
+    first = await graph.ainvoke({"request": request}, context=context, config={"recursion_limit": 30})
+    response = first.get("response")
+    assert isinstance(response, ConfirmationPlanResponse)
+    assert response.confirmation_questions, "confirmation must carry structured questions"
+    assert response.plan_revision is not None
+
+    # Answer the repair-option question with a presented option value.
+    repair_question = next(q for q in response.confirmation_questions if q.field_path == "repair_options")
+    answer_value = next(o.value for o in repair_question.options if o.value != "__skip__")
+    answers = (QuestionAnswer(question_id=repair_question.question_id, value=answer_value),)
+    decisions = answers_to_approved_decisions(
+        response.confirmation_questions,
+        answers,
+        response.plan_revision,
+        presented_decisions=response.decisions,
+    )
+    assert decisions, "a presented repair decision must be recovered"
+    assert any(d.option_type == "reduce_servings" for d in decisions)
+
+    # Re-enter: decisions resubmit in approved_decisions, same revision.
+    resolved = request.model_copy(update={"approved_decisions": decisions, "plan_revision": response.plan_revision})
+    second = await graph.ainvoke({"request": resolved}, context=context, config={"recursion_limit": 30})
+    final = second.get("response")
+    assert isinstance(final, ReadyPlanResponse), f"expected READY, got {type(final).__name__}: {final}"
