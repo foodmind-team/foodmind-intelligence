@@ -162,7 +162,7 @@ class TestDecisionBuilders:
         from cooking_plan_agent.repair.options import validate_approved_decisions
 
         issues = validate_approved_decisions(
-            (_decision("purchase", {}),),
+            (_decision("unknown_type", {}),),
             current_plan_revision="decision-req-001:v1",
         )
         assert any("unsupported option_type" in i for i in issues)
@@ -318,10 +318,54 @@ class TestDecisionLoop:
         assert response.status != "FAILED"
 
     @pytest.mark.asyncio
+    async def test_purchase_decision_roundtrip(self, graph, context) -> None:
+        """回归：'外出采购'选项可走结构化确认闭环（生成决策+问题，回传不再被拒）。
+
+        此前 purchase 不在 SUPPORTED_DECISION_TYPES：无 ApprovedDecision、无结构化
+        问题，且回传会被判 INVALID_APPROVED_DECISION。采购语义为 no-op——用户购买后
+        由后端更新库存快照并重提请求。
+        """
+        # peanut 无库存且无替代品 → purchase 选项；chicken 库存充足。
+        request = _base_request(
+            inventory_lots=(
+                InventoryLotSnapshot(
+                    lot_id="lot-1",
+                    item_id="chicken",
+                    canonical_name="chicken breast",
+                    on_hand=Decimal(300),
+                    reserved=Decimal(0),
+                    unit="g",
+                ),
+            ),
+        )
+        first = await graph.ainvoke({"request": request}, context=context, config={"recursion_limit": 30})
+        resp = first.get("response")
+        assert isinstance(resp, ConfirmationPlanResponse), f"got {type(resp).__name__}"
+
+        purchase_decisions = [d for d in resp.decisions if d.option_type == "purchase"]
+        assert purchase_decisions, "确认响应必须携带可回传的 purchase 决策"
+        purchase_q = [
+            q for q in resp.confirmation_questions if q.question_id == f"repair:{purchase_decisions[0].option_id}"
+        ]
+        assert purchase_q, "结构化问题单必须包含 purchase 选项"
+
+        # 回传 purchase 决策（模拟客户端选择采购）：不得报 INVALID_APPROVED_DECISION。
+        resolved = request.model_copy(
+            update={
+                "approved_decisions": (purchase_decisions[0],),
+                "plan_revision": resp.plan_revision,
+            }
+        )
+        second = await graph.ainvoke({"request": resolved}, context=context, config={"recursion_limit": 30})
+        assert second.get("error") is None, second.get("error")
+        second_resp = second.get("response")
+        assert isinstance(second_resp, ConfirmationPlanResponse)  # 库存未变 → 仍需确认
+
+    @pytest.mark.asyncio
     async def test_tampered_payload_rejected(self, graph, context) -> None:
         """Malformed payload (unsupported type) → stable INVALID_APPROVED_DECISION."""
         request = _base_request(
-            approved_decisions=(_decision("purchase", {}),),
+            approved_decisions=(_decision("unknown_type", {}),),
         )
         result = await graph.ainvoke({"request": request}, context=context, config={"recursion_limit": 30})
         error = result.get("error")
