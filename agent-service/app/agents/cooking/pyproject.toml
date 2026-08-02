@@ -64,6 +64,11 @@ ignore = [
     "E501",  # line-too-long: handled by formatter, pre-existing verbose comments
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Compat models mirror the Java DTO records exactly (camelCase field names
+# are the wire contract — fail-on-unknown-properties on the Java side).
+"src/cooking_plan_agent/api/compat_models.py" = ["N815"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

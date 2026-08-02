@@ -29,6 +29,11 @@ _TEST_TOKEN = "test-internal-token-abc123"
 @pytest.fixture(autouse=True)
 def _set_token(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure every test has the required env var for Settings validation."""
+    # Purge the settings lru_cache so create_app() (which reads Settings for
+    # CORS) picks up the monkeypatched token.
+    from cooking_plan_agent.config.settings import get_settings
+
+    get_settings.cache_clear()
     monkeypatch.setenv("COOKING_PLAN_INTERNAL_SERVICE_TOKEN", _TEST_TOKEN)
 
 

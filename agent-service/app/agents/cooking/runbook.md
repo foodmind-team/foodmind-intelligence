@@ -136,8 +136,10 @@ docker exec cooking-plan-agent env | grep INTERNAL_SERVICE_TOKEN
 **Response**:
 
 1. **Token mismatch**: Verify `COOKING_PLAN_INTERNAL_SERVICE_TOKEN` is identical on both Spring Boot and Agent sides.
-2. **Header missing**: Confirm Spring Boot sends `X-Internal-Token` header on every request.
-3. **Network**: Verify Spring Boot can reach the Agent container on the internal network.
+2. **Credential header**: The Spring Boot caller sends `Authorization: Bearer <token>` to the v1 compat endpoint (`/internal/v1/cooking-plans/generate`); the legacy native endpoint (`/internal/v1/agents/cooking-plan/generate`) still expects `X-Internal-Token`. Both credentials are compared against the same `internal_service_token` using constant-time comparison.
+3. **Token strength (P0-08)**: In non-local environments the service token must be at least `COOKING_PLAN_MIN_SERVICE_TOKEN_LENGTH` (default 16) characters — shorter tokens are rejected with `INSUFFICIENT_CREDENTIAL_STRENGTH`.
+4. **CORS (P0-08)**: Internal APIs do NOT enable CORS by default. If a browser caller needs cross-origin access, set `COOKING_PLAN_CORS_ALLOW_ORIGINS` to an explicit comma-separated allow-list. A wildcard (`*`) is rejected at startup.
+5. **Network**: Verify Spring Boot can reach the Agent container on the internal network.
 
 **Rollback**: Not required — fix configuration and restart.
 
@@ -160,7 +162,8 @@ curl http://agent:8000/openapi.json | jq '.components.schemas.GeneratePlanReques
 **Response**:
 
 1. **Schema version field**: If `schema_version` in requests does not match what the Agent expects, update Spring Boot to send the correct version (`"1.0"`).
-2. **Response shape change**: If a new Agent deployment changes the PlanResponse schema, deploy Spring Boot first (it validates Agent responses), then deploy the Agent.
+2. **Compat contract**: The v1 compat endpoint (`/internal/v1/cooking-plans/generate`) requires `contractVersion: "cooking-agent-v1"`. Unsupported versions fail fast with `status: "FAILED"`. Its request/response shape mirrors the Java `AgentCookingRequest`/`AgentCookingResponse` records exactly — do not add extra fields (Java's `fail-on-unknown-properties` treats them as `MALFORMED_JSON`).
+3. **Response shape change**: If a new Agent deployment changes the PlanResponse schema, deploy Spring Boot first (it validates Agent responses), then deploy the Agent.
 
 **Rollback**: Roll back the Agent to the previous image. Database rollback belongs to Spring Boot.
 

@@ -20,6 +20,7 @@ from starlette.responses import JSONResponse, Response
 
 from cooking_plan_agent.api import register_exception_handlers
 from cooking_plan_agent.api import router as agent_router
+from cooking_plan_agent.api.compat_router import router as compat_router
 from cooking_plan_agent.application import GenerateCookingPlanService
 from cooking_plan_agent.safety.engine import SafetyEngine
 from cooking_plan_agent.workflow.context import WorkflowContext
@@ -357,18 +358,34 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(agent_router)
+    application.include_router(compat_router)
     register_exception_handlers(application)
 
     # Shutdown middleware: must be outermost so it runs first on every request.
     application.middleware("http")(_shutdown_middleware)
 
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["POST"],
-        allow_headers=["X-Request-ID", "X-Internal-Token", "Content-Type"],
-        expose_headers=["X-Request-ID"],
-    )
+    # ---- CORS (P0-08) ----
+    # Internal APIs do NOT enable CORS by default. Only when an explicit
+    # allow-list is configured do we register the middleware — and a
+    # wildcard origin is rejected outright (credentials + "*" is unsafe).
+    from cooking_plan_agent.config.settings import get_settings
+
+    settings = get_settings()
+    if settings.cors_allow_origins:
+        if "*" in settings.cors_allow_origins:
+            raise RuntimeError(
+                "cors_allow_origins must not contain '*' — internal API CORS "
+                "requires an explicit origin allow-list (P0-08)."
+            )
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_allow_origins),
+            allow_credentials=True,
+            allow_methods=["POST"],
+            allow_headers=["X-Request-ID", "X-Internal-Token", "Content-Type"],
+            expose_headers=["X-Request-ID"],
+        )
+
     application.middleware("http")(_add_correlation_id_header)
 
     # ---- Health endpoints (Handbook 12.4) ----
