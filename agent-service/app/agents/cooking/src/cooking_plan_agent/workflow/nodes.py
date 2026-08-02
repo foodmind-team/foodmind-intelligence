@@ -807,11 +807,16 @@ async def build_confirmation_response_node(
     """Render NEEDS_CONFIRMATION response with assumptions and repair options.
 
     Delegates to rendering.responses.render_confirmation_response.
+
+    P4-02: the rendered response (which carries the structured
+    ``confirmation_questions``) is ALSO written to the state's
+    ``confirmation_context`` field, so downstream/async consumers can read
+    the field-level confirmation form without re-rendering.
     """
     from cooking_plan_agent.rendering.responses import render_confirmation_response
 
     response = render_confirmation_response(state)
-    return {"response": response}
+    return {"response": response, "confirmation_context": response}
 
 
 # ============================================================================

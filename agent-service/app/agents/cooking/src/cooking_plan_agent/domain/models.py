@@ -1,5 +1,6 @@
 from datetime import date, datetime  # Date type for expiry_date (no time component needed)
 from decimal import Decimal  # Exact decimal arithmetic — never float for inventory
+from enum import StrEnum  # String enum base class (P4-02 response types)
 from typing import (  # Typed annotation composition (e.g. PositiveDecimal)
     Annotated,
 )
@@ -634,19 +635,87 @@ class ReadyPlanResponse(StrictModel):
     explanation_source: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# 3.13a  Structured confirmation questions (P4-02)
+# ---------------------------------------------------------------------------
+
+
+class QuestionResponseType(StrEnum):
+    """How a ConfirmationQuestion expects to be answered (P4-02)."""
+
+    CHOICE = "CHOICE"  # The client selects exactly one QuestionOption value
+    TEXT = "TEXT"  # The client supplies a bounded free-text value
+
+
+class QuestionOption(StrictModel):
+    """A single selectable answer for a CHOICE confirmation question (P4-02).
+
+    ``value`` is the stable token the client echoes back inside a
+    QuestionAnswer. For repair-option questions it is the presented
+    ApprovedDecision's ``option_id``, so the mapping back to the decision
+    is lossless — the server never rewrites or re-derives the payload
+    from prose (D9).
+    """
+
+    value: str
+    label: str
+    suggested: bool = False
+
+
+class ConfirmationQuestion(StrictModel):
+    """A field-level, client-renderable confirmation question (P4-02).
+
+    Replaces the fixed legacy ``questions`` strings with a structured
+    form: each question carries a stable ``question_id`` (derived from
+    stable domain keys — recipe_id + field_path — never from array
+    position, D6), the domain field it targets, the prompt, the expected
+    response type, and — for CHOICE — the exact allowed option values.
+    """
+
+    question_id: str
+    field_path: str
+    prompt: str
+    response_type: QuestionResponseType
+    options: tuple[QuestionOption, ...] = ()
+    required: bool = True
+    suggested_value: str | None = None
+
+
+class QuestionAnswer(StrictModel):
+    """A client-submitted answer to a ConfirmationQuestion (P4-02).
+
+    ``value`` is validated against the presented question: for CHOICE it
+    must hit one of the option values; for TEXT it must be non-empty and
+    within the configured length bound. Unknown question_ids and
+    duplicate answers are rejected.
+    """
+
+    question_id: str
+    value: str
+
+
 class ConfirmationPlanResponse(StrictModel):
     """NEEDS_CONFIRMATION response.
 
     ``decisions`` carries the structured, client-submittable approved
     decisions (P0-06). The client resubmits these verbatim in the next
     request's ``approved_decisions`` field.
+
+    P4-02: ``confirmation_questions`` carries the field-level structured
+    form the client renders and answers; answers map losslessly back to
+    ``ApprovedDecision`` (repair-option questions) before re-entry.
+    ``questions`` remains a legacy dual-emit of plain strings for older
+    clients — deprecated since P4-02, removed when contract v2 lands.
     """
 
     plan_id: str
     status: str = "NEEDS_CONFIRMATION"
     assumptions: tuple["Assumption", ...] = ()
     repair_options: tuple["RepairOption", ...] = ()
+    # P4-02: legacy plain-string questions (dual-emit, deprecated).
     questions: tuple[str, ...] = ()
+    # P4-02: field-level structured confirmation form.
+    confirmation_questions: tuple["ConfirmationQuestion", ...] = ()
     decisions: tuple["ApprovedDecision", ...] = ()
     plan_revision: str | None = None
     # P3-04: policy provenance (region/version/sources) that produced the plan.
