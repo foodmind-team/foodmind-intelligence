@@ -14,8 +14,12 @@ RUNNING tasks and re-queues them; RUNNING tasks are safe to re-run because
 results are written conditionally by task ID/revision (D2) and the graph is
 idempotent at the checkpoint level.
 
-The worker runs in-process for MVP (approved decision). P3-02 replaces this
-loop with a distributed queue port without changing the submit/query API.
+The worker runs in-process for MVP (approved decision). P4-05 Stage A
+extracted the worker's claim/lease/conditional-write operations behind a
+``TaskQueue`` port (tasks/queue.py); the in-process adapter preserves the
+MVP behaviour exactly, and a distributed backend (Stage B, pending
+infrastructure approval) can replace it without changing the submit/query
+API or the worker-loop structure.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from cooking_plan_agent.tasks.models import (
     new_task_id,
     utc_now,
 )
+from cooking_plan_agent.tasks.queue import InProcessTaskQueue, TaskQueue
 from cooking_plan_agent.tasks.repository import (
     DuplicateRequestError,
     TaskRepository,
@@ -70,6 +75,7 @@ class AsyncTaskService:
         repository: TaskRepository,
         generation_service: GenerateCookingPlanService,
         *,
+        queue: TaskQueue | None = None,
         default_ttl_seconds: int = 3600,
         worker_concurrency: int = 2,
         lease_seconds: float = 60.0,
@@ -77,6 +83,12 @@ class AsyncTaskService:
     ) -> None:
         self._repo = repository
         self._generation = generation_service
+        # P4-05 Stage A: the worker consumes a TaskQueue port instead of
+        # touching the repository's claim/lease/conditional-write primitives
+        # directly. The default in-process queue preserves the MVP behaviour
+        # exactly; a distributed backend (Stage B, pending infrastructure
+        # approval) is injected here without changing the service layer.
+        self._queue = queue if queue is not None else InProcessTaskQueue(repository)
         self._default_ttl = timedelta(seconds=default_ttl_seconds)
         self._worker_concurrency = max(1, worker_concurrency)
         self._lease_seconds = lease_seconds
@@ -116,6 +128,9 @@ class AsyncTaskService:
             except asyncio.CancelledError:
                 pass
             self._worker_task = None
+        # P4-05: release queue-side resources (a no-op for the in-process
+        # queue, which shares the repository); the repository is closed last.
+        await self._queue.close()
         await self._repo.close()
 
     # -- API operations -----------------------------------------------------
@@ -351,7 +366,7 @@ class AsyncTaskService:
                     "progress": TaskProgress(message="Task expired before completion"),
                 }
             )
-            updated = await self._repo.update(expired, expected_status=record.status)
+            updated = await self._queue.complete(expired, expected_status=record.status)
             if updated is not None:
                 self._notify(updated)
                 logger.info(
@@ -371,7 +386,7 @@ class AsyncTaskService:
         (QUEUED, backoff window), otherwise it is dead-lettered as FAILED
         (P3-02). Results are written conditionally on RUNNING (D2).
         """
-        record = await self._repo.claim_available(self._lease_seconds)
+        record = await self._queue.claim_available(self._lease_seconds)
         if record is None:
             return
         self._notify(record)  # P4-04: QUEUED -> RUNNING is a progress event
@@ -379,7 +394,7 @@ class AsyncTaskService:
         heartbeat = asyncio.create_task(self._renew_heartbeat(record.task_id))
         try:
             terminal = await self._run_graph(record)
-            updated = await self._repo.update(terminal, expected_status=TaskStatus.RUNNING)
+            updated = await self._queue.complete(terminal, expected_status=TaskStatus.RUNNING)
             if updated is not None:
                 self._notify(updated)  # P4-04: terminal snapshot -> done event
         except asyncio.CancelledError:
@@ -409,7 +424,7 @@ class AsyncTaskService:
         try:
             while True:
                 await asyncio.sleep(max(1.0, self._lease_seconds / 3))
-                renewed = await self._repo.renew_lease(task_id, self._lease_seconds)
+                renewed = await self._queue.renew_lease(task_id, self._lease_seconds)
                 if renewed is None:
                     return
         except asyncio.CancelledError:
@@ -448,7 +463,7 @@ class AsyncTaskService:
                     ),
                 }
             )
-            updated = await self._repo.update(dead, expected_status=TaskStatus.RUNNING)
+            updated = await self._queue.complete(dead, expected_status=TaskStatus.RUNNING)
             if updated is not None:
                 self._notify(updated)  # P4-04: dead-letter terminal -> done event
             logger.warning(
@@ -474,7 +489,7 @@ class AsyncTaskService:
         )
         # Never requeue past the hard TTL: the worker loop will expire it.
         if requeued.expires_at is None or requeued.expires_at > utc_now():
-            updated = await self._repo.update(requeued, expected_status=TaskStatus.RUNNING)
+            updated = await self._queue.complete(requeued, expected_status=TaskStatus.RUNNING)
             if updated is not None:
                 self._notify(updated)  # P4-04: re-queue progress event
             logger.info(

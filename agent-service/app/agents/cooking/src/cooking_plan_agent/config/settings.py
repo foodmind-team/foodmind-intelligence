@@ -189,6 +189,14 @@ class Settings(BaseSettings):
     # returns 404 and polling is unaffected.
     task_sse_enabled: bool = True
 
+    # --- Distributed task queue (P4-05) ---
+    # Worker queue backend. Stage A ships the in-process queue (approved MVP
+    # path, no behaviour change). Distributed backends (e.g. "redis") are
+    # Stage B and must NOT be enabled until the queue infrastructure
+    # (ADR + approval) lands — the service refuses to start with an
+    # unapproved backend instead of silently degrading.
+    task_queue_backend: str = "inprocess"
+
     # define the model config
     model_config = SettingsConfigDict(
         env_prefix="COOKING_PLAN_",
