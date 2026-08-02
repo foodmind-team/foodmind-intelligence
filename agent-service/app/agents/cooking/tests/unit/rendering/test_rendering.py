@@ -434,6 +434,33 @@ class TestRenderReadyResponse:
         assert len(response.completion_checklist) == 1
         assert response.completion_checklist[0].ingredient_name == "chicken breast"
 
+    def test_completion_checklist_from_full_results(self):
+        """真实 READY 流程回归：ingredient_results（含满足的食材）驱动消耗清单。
+
+        此前 READY 时 ingredient_shortages 恒为空，导致 completion_checklist 恒为空，
+        后端拿不到库存消耗分配（P4 缺陷）。
+        """
+        feasibility = FeasibilityReport(
+            report_id="r2",
+            ingredient_shortages=(),
+            is_feasible=True,
+            ingredient_results=(
+                IngredientFeasibility(
+                    ingredient_name="chicken breast",
+                    required=Decimal(400),
+                    available=Decimal(400),
+                    shortage=Decimal(0),
+                    unit="g",
+                    proposed_allocations=(LotAllocation(inventory_lot_id="lot-001", quantity=Decimal(400), unit="g"),),
+                ),
+            ),
+        )
+        state = _make_state(feasibility_report=feasibility)
+        response = render_ready_response(state)
+        assert len(response.completion_checklist) == 1
+        assert response.completion_checklist[0].ingredient_name == "chicken breast"
+        assert response.completion_checklist[0].allocations[0].quantity == Decimal(400)
+
 
 # ======================================================================
 # render_confirmation_response

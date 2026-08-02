@@ -308,6 +308,38 @@ class TestCheckAllInventory:
         assert report.is_feasible is True
         assert len(report.ingredient_shortages) == 0
 
+    def test_satisfied_ingredients_keep_full_results(
+        self, chicken_demand, tomato_demand, chicken_lot, tomato_lot
+    ):
+        """READY 场景回归：满足的食材必须保留完整分配结果（completion_checklist 依赖）。"""
+        report = check_all_inventory(
+            (chicken_demand, tomato_demand),
+            (chicken_lot, tomato_lot),
+        )
+        assert report.is_feasible is True
+        assert report.ingredient_shortages == ()  # 短缺语义不变
+        assert len(report.ingredient_results) == 2  # 全部食材均有结果
+        by_name = {r.ingredient_name: r for r in report.ingredient_results}
+        chicken = by_name["chicken breast"]
+        assert chicken.shortage == 0
+        assert len(chicken.proposed_allocations) == 1
+        assert chicken.proposed_allocations[0].quantity == Decimal(400)
+        assert len(by_name["tomato"].proposed_allocations) == 1
+
+    def test_partial_shortage_keeps_results_for_satisfied(
+        self, chicken_demand, tomato_demand, tomato_lot
+    ):
+        """部分短缺：满足的食材仍保留分配结果，短缺条目只出现在 ingredient_shortages。"""
+        report = check_all_inventory(
+            (chicken_demand, tomato_demand),
+            (tomato_lot,),
+        )
+        assert report.is_feasible is False
+        assert [s.ingredient_name for s in report.ingredient_shortages] == ["chicken breast"]
+        by_name = {r.ingredient_name: r for r in report.ingredient_results}
+        assert len(by_name["chicken breast"].proposed_allocations) == 0  # 无库存 → 无分配
+        assert len(by_name["tomato"].proposed_allocations) == 1
+
     def test_partial_shortage(self, chicken_demand, tomato_demand, tomato_lot):
         """Chicken has no matching lot → one shortage."""
         # chicken_demand: 400g, but only tomato lot available

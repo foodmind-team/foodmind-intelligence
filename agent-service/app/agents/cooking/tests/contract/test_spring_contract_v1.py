@@ -246,10 +246,16 @@ class TestValidatorEquivalents:
         assert [s["stepNo"] for s in steps] == list(range(1, len(steps) + 1))
 
     def test_ingredient_availability_and_quantity_rules(self, client: TestClient) -> None:
-        response = client.post("/internal/v1/cooking-plans/generate", json=_compat_body(), headers=_auth_headers())
+        body = _compat_body()
+        response = client.post("/internal/v1/cooking-plans/generate", json=body, headers=_auth_headers())
         payload = response.json()
+        owned = {i["ingredientName"].lower().strip() for i in body["request"]["ingredients"]}
         for ing in payload["ingredients"]:
             assert ing["availability"] in ("AVAILABLE", "TO_BUY")
+            # 回归：请求方已提供的食材（库存充足）必须标记为 AVAILABLE。
+            # 此前 READY 的 completion_checklist 恒为空，导致所有食材都被标为 TO_BUY。
+            if ing["ingredientName"].lower().strip() in owned:
+                assert ing["availability"] == "AVAILABLE"
             # quantity and unit must be both set or both null
             assert (ing["quantity"] is None) == (ing["unit"] is None)
 

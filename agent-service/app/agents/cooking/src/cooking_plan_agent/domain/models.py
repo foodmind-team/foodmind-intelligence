@@ -500,6 +500,11 @@ class FeasibilityReport(StrictModel):
     ingredient_shortages: tuple["IngredientFeasibility", ...] = ()
     missing_resources: tuple[str, ...] = ()
     is_feasible: bool
+    # 完整库存分配结果（含完全满足的食材），供 READY 响应的消耗清单使用。
+    # ingredient_shortages 只保留 shortage > 0 的条目（确认/修复语义不变）；
+    # 本字段保留每个食材的 required/available/shortage/proposed_allocations，
+    # 避免满足的食材的 FEFO 分配在渲染层丢失（P4 缺陷修复）。
+    ingredient_results: tuple["IngredientFeasibility", ...] = ()
 
 
 class RepairOption(StrictModel):

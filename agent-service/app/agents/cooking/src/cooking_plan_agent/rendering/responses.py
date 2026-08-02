@@ -98,11 +98,13 @@ def render_ready_response(state: PlanState) -> ReadyPlanResponse:
     if schedule:
         dish_completions = build_dish_completion_summary(schedule, all_tasks)
 
-    # Build completion checklist from feasibility report allocations
-    # (deferred to when reservation_proposal is wired)
+    # Build completion checklist from feasibility report allocations.
+    # Uses the FULL ingredient_results (satisfied + short) so a READY plan
+    # always carries the inventory consumption plan — previously it was
+    # empty because ingredient_shortages only retains short items.
     completion_checklist: tuple[CompletionItem, ...] = ()
     feasibility = state.get("feasibility_report")
-    if feasibility and feasibility.ingredient_shortages:
+    if feasibility and (feasibility.ingredient_results or feasibility.ingredient_shortages):
         from cooking_plan_agent.inventory.feasibility import build_reservation_proposal
 
         proposal = build_reservation_proposal(feasibility)

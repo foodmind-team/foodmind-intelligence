@@ -196,9 +196,13 @@ def check_all_inventory(
     """
     aggregated = _aggregate_demands(requirements)
 
+    results: list[IngredientFeasibility] = []
     shortages: list[IngredientFeasibility] = []
     for demand in aggregated.values():
         result = allocate_fefo(demand, lots, cooking_date)
+        # 保留每个食材的完整分配结果（含满足的食材），供 READY 消耗清单使用；
+        # ingredient_shortages 仍只收录有缺口的条目，确认/修复语义不变。
+        results.append(result)
         if result.shortage > 0:
             shortages.append(result)
 
@@ -209,6 +213,7 @@ def check_all_inventory(
         ingredient_shortages=tuple(shortages),
         missing_resources=(),  # Inventory check only — resources checked separately
         is_feasible=is_feasible,
+        ingredient_results=tuple(results),
     )
 
 
@@ -320,29 +325,35 @@ def build_reservation_proposal(
 ) -> InventoryConsumptionProposal:
     """Build an InventoryConsumptionProposal from a feasibility report.
 
-    Converts each IngredientFeasibility.proposed_allocations into a
-    CompletionItem grouped by ingredient. The snapshot version is derived
-    from the number of allocations (simple non-crypto version for MVP).
+    Converts each ingredient's FEFO allocations into a CompletionItem
+    grouped by ingredient. Sources the FULL allocation results
+    (``ingredient_results`` — every ingredient, satisfied or not) so a
+    READY plan carries the consumption plan for all ingredients, not
+    only the short ones; falls back to ``ingredient_shortages`` for
+    callers that still construct legacy reports. The snapshot version is
+    derived from the number of allocations (simple non-crypto version
+    for MVP).
 
     Args:
-        report: A FeasibilityReport with ingredient_shortages that carry
-            proposed_allocations.
+        report: A FeasibilityReport with ingredient allocations.
 
     Returns:
         InventoryConsumptionProposal ready for inclusion in a READY response.
     """
     items: list[CompletionItem] = []
 
-    for shortage in report.ingredient_shortages:
-        if not shortage.proposed_allocations:
+    # 优先使用完整分配结果；兼容仅含短缺条目的旧报告。
+    sources = report.ingredient_results or report.ingredient_shortages
+    for result in sources:
+        if not result.proposed_allocations:
             continue
 
         items.append(
             CompletionItem(
-                completion_item_id=f"comp_{shortage.ingredient_name}_{uuid4().hex[:8]}",
-                ingredient_name=shortage.ingredient_name,
+                completion_item_id=f"comp_{result.ingredient_name}_{uuid4().hex[:8]}",
+                ingredient_name=result.ingredient_name,
                 recipe_ids=(),  # MVP: recipe attribution deferred to rendering layer
-                allocations=shortage.proposed_allocations,
+                allocations=result.proposed_allocations,
             )
         )
 
