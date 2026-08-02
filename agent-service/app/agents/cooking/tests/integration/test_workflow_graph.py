@@ -114,7 +114,139 @@ def valid_request():
 
 
 # ---------------------------------------------------------------------------
-# 8.11 Happy-path tests
+# P2-01: shared preparation across recipes
+# ---------------------------------------------------------------------------
+
+
+class _SharedOnionExtractor:
+    """Two recipes that share a single onion ingredient (P2-01)."""
+
+    async def extract(self, source_text: str) -> ExtractedRecipeCandidate:
+        if source_text.startswith("r1"):
+            return ExtractedRecipeCandidate(
+                recipe_id="r1",
+                dish_name="Onion Stir-fry",
+                original_servings=2,
+                source_language="en",
+                ingredients=(
+                    ExtractedIngredient(
+                        raw_text="onion 100g",
+                        name="brown onion",
+                        quantity=Decimal(100),
+                        unit="g",
+                        preparation="diced",
+                    ),
+                ),
+                steps=(
+                    ExtractedStep(
+                        step_number=1,
+                        instruction="Stir-fry diced onion for 5 minutes",
+                        category="heating",
+                        active_duration_minutes=5,
+                        heat_level=HeatLevel.HIGH,
+                        resources_hint=("stove",),
+                    ),
+                ),
+            )
+        return ExtractedRecipeCandidate(
+            recipe_id="r2",
+            dish_name="Onion Sauté",
+            original_servings=2,
+            source_language="en",
+            ingredients=(
+                ExtractedIngredient(
+                    raw_text="onion 200g",
+                    name="brown onion",
+                    quantity=Decimal(200),
+                    unit="g",
+                    preparation="sliced",
+                ),
+            ),
+            steps=(
+                ExtractedStep(
+                    step_number=1,
+                    instruction="Sauté sliced onion for 3 minutes",
+                    category="heating",
+                    active_duration_minutes=3,
+                    heat_level=HeatLevel.HIGH,
+                    resources_hint=("stove",),
+                ),
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_shared_prep_single_wash_across_recipes():
+    """P2-01: shared onion across two recipes is washed once, then branches.
+
+    The full graph must reach READY with exactly one onion wash task (100g +
+    200g merged), and the resulting task graph must contain no dangling
+    predecessors or cycles.
+    """
+    from cooking_plan_agent.preparation.task_graph import topological_sort_kahn
+
+    context = WorkflowContext(recipe_extractor=_SharedOnionExtractor())
+    request = GeneratePlanRequest(
+        request_id="test-req-shared-prep",
+        user_id="test-user",
+        recipes=(
+            {"recipe_id": "r1", "text": "r1: stir-fry onion", "target_servings": 2},
+            {"recipe_id": "r2", "text": "r2: sauté onion", "target_servings": 2},
+        ),
+        inventory_lots=(
+            InventoryLotSnapshot(
+                lot_id="lot-onion",
+                item_id="item-onion",
+                canonical_name="brown onion",
+                on_hand=Decimal(500),
+                reserved=Decimal(0),
+                unit="g",
+            ),
+        ),
+        kitchen_resources=(
+            KitchenResourceSnapshot(
+                resource_id="stove-1",
+                resource_type="stove",
+                capacity=Decimal(4),
+                capacity_unit="burners",
+            ),
+            KitchenResourceSnapshot(
+                resource_id="wok-1",
+                resource_type="wok",
+                capacity=Decimal(1),
+            ),
+            KitchenResourceSnapshot(
+                resource_id="spatula-1",
+                resource_type="spatula",
+                capacity=Decimal(2),
+            ),
+        ),
+    )
+    graph = build_cooking_plan_graph()
+    result = await graph.ainvoke(
+        {"request": request},
+        context=context,
+        config={"recursion_limit": 30},
+    )
+
+    response = result.get("response")
+    assert isinstance(response, ReadyPlanResponse), f"expected READY, got {type(response).__name__}"
+    assert response.status == "READY"
+
+    prep_tasks = result.get("prep_tasks", ())
+    onion_wash = [t for t in prep_tasks if "wash" in t.task_id and "onion" in t.task_id]
+    assert len(onion_wash) == 1, f"onion must be washed exactly once, got {len(onion_wash)}"
+    assert "300" in onion_wash[0].instruction, "wash must aggregate 100g + 200g"
+
+    task_graph = result.get("task_graph")
+    assert task_graph is not None
+    # No dangling predecessors and no cycles -> full topological order.
+    order = topological_sort_kahn(task_graph)
+    assert len(order) == len(task_graph.tasks)
+
+
+# ---------------------------------------------------------------------------
+# Happy-path tests
 # ---------------------------------------------------------------------------
 
 

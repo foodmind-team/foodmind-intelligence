@@ -143,6 +143,12 @@ class Settings(BaseSettings):
     # Oversized artifacts are skipped rather than cached (memory bound).
     cache_max_item_bytes: int = 100_000
 
+    # --- Shared preparation merging (P2-01) ---
+    # Merges identical ingredient-prep operations across recipes via the
+    # preparation trie (one wash instead of N). Disabling restores per-recipe
+    # preparation and is the rollback path for the feature.
+    shared_prep_enabled: bool = True
+
     # --- Workflow checkpoint persistence (P2-06) ---
     # Persists PlanState at node boundaries via a LangGraph checkpointer so
     # long tasks, human confirmation, and async execution (P3-01) can resume

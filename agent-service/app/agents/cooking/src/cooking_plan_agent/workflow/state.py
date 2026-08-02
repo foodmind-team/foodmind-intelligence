@@ -67,6 +67,9 @@ class PlanState(TypedDict, total=False):
     recipe_tasks: tuple[CookingTask, ...]
     prep_tasks: tuple[CookingTask, ...]
     safety_tasks: tuple[CookingTask, ...]
+    # P2-01: human-readable summaries of shared-prep merge/branch/isolate
+    # decisions, for observability and regression tests.
+    prep_observations: tuple[str, ...]
     task_graph: TaskGraph
     schedule_result: ScheduleResult
     # Independent verification report (separate from solver's internal check)
