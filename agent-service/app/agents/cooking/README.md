@@ -36,6 +36,7 @@ API 文档：`GET /docs`。OpenAPI 契约导出：`uv run python scripts/export_
 | `CHECKPOINT_ENABLED` / `CHECKPOINT_BACKEND` | `false` / `sqlite` | 工作流断点持久化（P2-06） |
 | `TASK_API_ENABLED` | `false` | 异步任务 API（P3-01，进程内 worker） |
 | `LLM_ENABLED` / `LLM_BASE_URL` / `LLM_MODEL` | `false` / … | LLM 抽取开关（默认走规则抽取） |
+| `EXPLANATION_ENABLED` | `false` | READY 响应附带排程解释（P4-01）；关闭时 `explanation` 为 `null` |
 
 ## 多地区食品安全策略（P3-04）
 

@@ -5,7 +5,7 @@ state serialisable even without checkpoint persistence in MVP.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from cooking_plan_agent.domain.models import (
@@ -59,6 +59,19 @@ class SafetyRuleEngine(Protocol):
     def evaluate(self, context: "SafetyContext") -> "SafetyReport": ...
 
 
+@runtime_checkable
+class PlanExplainer(Protocol):
+    """Explain a solved schedule in natural language (P4-01).
+
+    Receives a compact, NON-SENSITIVE summary (makespan, dish completions,
+    parallel groups) — never raw recipes, inventory, or user identity (D4).
+    Returns prose; the caller must treat the explanation as additive so a
+    failure never blocks the READY response.
+    """
+
+    async def explain(self, schedule_summary: dict[str, Any]) -> str: ...
+
+
 # ---------------------------------------------------------------------------
 # Context dataclass
 # ---------------------------------------------------------------------------
@@ -85,5 +98,9 @@ class WorkflowContext:
     # P1-06: intermediate-artifact cache (parse/research results). None keeps
     # the pipeline fully uncached — results are identical either way.
     cache: "Cache | None" = None
+    # P4-01: optional schedule explainer. When None (or disabled via
+    # Settings.explanation_enabled) the explain node emits no explanation or
+    # a deterministic one — the READY response is never blocked.
+    explainer: PlanExplainer | None = None
     # Future services (all optional until fully implemented):
     # optimiser: ScheduleOptimiser | None = None

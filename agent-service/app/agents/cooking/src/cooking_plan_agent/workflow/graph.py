@@ -16,6 +16,7 @@ from cooking_plan_agent.workflow.nodes import (
     build_task_graph_node,
     check_feasibility_node,
     detect_gaps_node,
+    explain_schedule_node,
     infer_local_node,
     merge_preparation_node,
     parse_recipes_node,
@@ -60,7 +61,7 @@ def build_cooking_plan_graph(
     builder = StateGraph(PlanState, context_schema=WorkflowContext)
 
     # ------------------------------------------------------------------
-    # 8.5 Register all 16 nodes
+    # 8.5 Register all nodes (16 core + P4-01 explain_schedule)
     # ------------------------------------------------------------------
     builder.add_node("validate_input", validate_input_node)
     builder.add_node("parse_recipes", parse_recipes_node)
@@ -79,6 +80,8 @@ def build_cooking_plan_graph(
     builder.add_node("build_task_graph", build_task_graph_node)
     builder.add_node("solve_schedule", solve_schedule_node)
     builder.add_node("verify_schedule", verify_schedule_node)
+    # P4-01: additive schedule explanation (verify → explain → READY render).
+    builder.add_node("explain_schedule", explain_schedule_node)
     builder.add_node("render_ready_response", render_ready_response_node)
     builder.add_node("render_infeasible_response", render_infeasible_response_node)
     builder.add_node("render_failed_response", render_failed_response_node)
@@ -206,15 +209,20 @@ def build_cooking_plan_graph(
         },
     )
 
-    # verify_schedule: independent check passes -> READY; fails -> FAILED
+    # verify_schedule: independent check passes -> explain (P4-01) then READY;
+    #   fails -> FAILED
     builder.add_conditional_edges(
         "verify_schedule",
         route_after_verification,
         {
-            "render_ready_response": "render_ready_response",
+            "explain_schedule": "explain_schedule",
             "render_failed_response": "render_failed_response",
         },
     )
+
+    # P4-01: the explanation is additive — the verified schedule renders
+    # READY regardless of whether an explanation could be produced.
+    builder.add_edge("explain_schedule", "render_ready_response")
 
     # ------------------------------------------------------------------
     # 8.7 Terminal edges — every response node ends the graph

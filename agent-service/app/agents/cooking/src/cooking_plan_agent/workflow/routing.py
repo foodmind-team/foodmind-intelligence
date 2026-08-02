@@ -209,11 +209,12 @@ def route_after_solve(
 
 def route_after_verification(
     state: PlanState,
-) -> Literal["render_ready_response", "render_failed_response"]:
-    """Verification passes -> READY; fails -> FAILED.
+) -> Literal["explain_schedule", "render_failed_response"]:
+    """Verification passes -> explain (P4-01) then READY; fails -> FAILED.
 
     The verifier checks constraint satisfaction independently from the solver,
-    catching optimiser bugs before they reach the user.
+    catching optimiser bugs before they reach the user. The explain node is
+    additive and never blocks READY.
 
     Any workflow error takes precedence and short-circuits to FAILED (P0-03).
     """
@@ -222,5 +223,5 @@ def route_after_verification(
 
     report = state.get("verification_report")
     if report is not None and report.passed:
-        return "render_ready_response"
+        return "explain_schedule"
     return "render_failed_response"

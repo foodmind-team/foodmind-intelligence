@@ -296,6 +296,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         recipe_researcher=recipe_researcher,
         safety_engine=SafetyEngine(),
         cache=cache,  # type: ignore[arg-type]
+        # P4-01: optional schedule explainer (LLM). None keeps the graph
+        # deterministic — the explain node then emits "disabled"/deterministic.
+        explainer=app.state.llm_explainer,
     )
 
     # Build and compile the LangGraph workflow graph once at startup.
