@@ -227,4 +227,3 @@ Release is blocked by unresolved U-01/U-03/U-04/U-10/U-11, missing Backend v2
 support, incompatible inference v1, failed privacy/security checks, or missing
 rollback proof. Agent rollback never authorizes changing inference/model/ML
 artifacts; use Backend fallback or prior Agent image.
-

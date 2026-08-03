@@ -153,4 +153,3 @@ by these plans.
 - Squash-merge after focused/full gates.
 - Roll back by disabling Backend Agent v2 or deploying the prior Agent image;
   Backend deterministic fallback stays enabled.
-

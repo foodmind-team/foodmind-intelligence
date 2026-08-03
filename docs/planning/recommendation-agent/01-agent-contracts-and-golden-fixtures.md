@@ -266,4 +266,3 @@ recorded checksums match.
 This is a new version. Rollback keeps Backend on v1/fallback; never mutate v1 or
 reuse `recommendation-agent-v2` for incompatible semantics. Inference and ML
 remain external workstreams.
-

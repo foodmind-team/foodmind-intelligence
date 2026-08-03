@@ -108,4 +108,3 @@ implementation and are outside scope.
 - [ ] New paths are marked `Proposed`; verified paths/symbols are accurate.
 - [ ] Task order is small and dependency-safe.
 - [ ] No application source code is part of this planning package.
-

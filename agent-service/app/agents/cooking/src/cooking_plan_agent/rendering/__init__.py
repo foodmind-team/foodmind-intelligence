@@ -3,8 +3,8 @@
 from cooking_plan_agent.rendering.builder import (
     build_completion_checklist,
     build_dish_completion_summary,
-    build_mise_en_place,
     build_execution_flow,
+    build_mise_en_place,
     build_timeline,
     validate_completion_checklist,
 )

@@ -203,4 +203,3 @@ budget, fixture checksum, and zero sensitive canary leakage.
 Rollback deploys the prior Agent image or disables Backend v2 routing. Backend
 fallback remains the resilience path. U-04 and U-10 must be resolved before
 non-local integration.
-

@@ -237,4 +237,3 @@ canary appears in logs/errors.
 
 Rollback is the previous image/commit; no persistent state exists. U-03/U-07/
 U-09/U-10 must be resolved before their paths/contracts freeze.
-
