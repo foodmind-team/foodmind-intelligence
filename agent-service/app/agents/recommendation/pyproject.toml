@@ -5,12 +5,12 @@ description = "Bounded private Recommendation Agent service"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.116.0,<1.0",
+    "fastapi>=0.141.1,<1.0",
     "httpx>=0.28.1,<1.0",
-    "langgraph>=1.2.0,<2.0",
-    "pydantic>=2.11.0,<3.0",
-    "pydantic-settings>=2.10.0,<3.0",
-    "uvicorn>=0.35.0,<1.0",
+    "langgraph>=1.2.10,<2.0",
+    "pydantic>=2.13.4,<3.0",
+    "pydantic-settings>=2.14.2,<3.0",
+    "uvicorn>=0.52.0,<1.0",
 ]
 
 [project.scripts]
