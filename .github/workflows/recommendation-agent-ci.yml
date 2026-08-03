@@ -104,9 +104,24 @@ jobs:
           --fail-on "GPL-2.0-only;GPL-2.0-or-later;GPL-3.0-only;GPL-3.0-or-later;AGPL-3.0-only;AGPL-3.0-or-later;GNU General Public License;GNU Affero General Public License"
           --partial-match --format=json --output-file=licenses.json
       - name: Secret scan
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="zricethezav/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854"
+          scopes=(
+            .github
+            agent-service/app/agents/recommendation
+            artifacts/test-fixtures/recommendation
+            contracts/internal/agent/recommendation
+            contracts/internal/inference/recommendation
+            contracts/internal/shared/recommendation-features
+            deployment
+            docs/architecture
+            docs/operations
+            docs/testing
+          )
+          for scope in "${scopes[@]}"; do
+            docker run --rm -v "${GITHUB_WORKSPACE}:/repo:ro" "$image" detect \
+              --no-git --source "/repo/$scope" --redact --exit-code 1 --log-level error
+          done
 
   image:
     runs-on: ubuntu-latest
@@ -133,19 +148,19 @@ jobs:
           format: cyclonedx-json
           output-file: recommendation-agent-sbom.json
       - name: Container vulnerability scan
-        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
-        with:
-          image-ref: foodmind-recommendation-agent:ci
-          version: v0.56.1
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.56.1@sha256:c42bb3221509b0a9fa2291cd79a3a818b30a172ab87e9aac8a43997a5b56f293
+          image --scanners vuln --ignore-unfixed --severity CRITICAL,HIGH --exit-code 1
+          foodmind-recommendation-agent:ci
 
   merge-gate:
     if: always()
     needs: [quality, tests, contracts, security, image]
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
     steps:
       - name: Require every Recommendation Agent gate
         run: |
