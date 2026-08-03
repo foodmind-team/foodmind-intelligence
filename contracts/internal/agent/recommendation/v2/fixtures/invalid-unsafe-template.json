@@ -1,0 +1,29 @@
+{
+  "contractVersion": "recommendation-agent-v2",
+  "requestId": "req-normal-001",
+  "sessionId": "session-synthetic-001",
+  "traceId": "trace-normal-001",
+  "agentTraceId": "agent-trace-invalid-001",
+  "status": "success",
+  "modelVersion": "hybrid-ranking-v1",
+  "modelPackageVersion": "recommendation-package-v1",
+  "featureSchemaVersion": "recommendation-features-v2",
+  "inferenceContractVersion": "recommendation-inference-v1",
+  "modelKeyVersion": "hmac-sha256-v1",
+  "diversityPolicyVersion": "recommendation-diversity-v1",
+  "reasonPolicyVersion": "recommendation-reasons-v1",
+  "templateVersion": "recommendation-template-v1",
+  "recommendations": [
+    {
+      "candidateId": "candidate-a",
+      "rank": 1,
+      "recommendationType": "PERSONAL",
+      "probability": 0.8,
+      "modelScore": 1,
+      "reasons": [
+        "PREFERENCE_MATCH"
+      ],
+      "explanation": "This is guaranteed to be the healthiest and safest choice."
+    }
+  ]
+}

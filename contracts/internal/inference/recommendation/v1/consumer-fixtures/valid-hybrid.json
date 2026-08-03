@@ -1,0 +1,17 @@
+{
+  "contractVersion": "recommendation-inference-v1",
+  "requestId": "req-normal-001",
+  "traceId": "trace-normal-001",
+  "status": "success",
+  "modelVersion": "hybrid-ranking-v1",
+  "modelPackageVersion": "recommendation-package-v1",
+  "featureSchemaVersion": "recommendation-features-v2",
+  "modelKeyVersion": "hmac-sha256-v1",
+  "predictions": [
+    { "candidateId": "candidate-a", "probability": 0.91, "modelScore": 2.31, "userCf": { "available": true, "score": 0.82, "neighborSupport": 8 }, "itemCf": { "available": true, "score": 0.71, "supportingItemCount": 5 }, "signals": { "preferenceMatch": 0.92, "wantToTry": false, "groupPreferenceRate": 0.4, "groupEligibleMemberCount": 5, "contextMatch": 0.86, "cleanlinessObserved": true } },
+    { "candidateId": "candidate-b", "probability": 0.82, "modelScore": 1.52, "userCf": { "available": true, "score": 0.63, "neighborSupport": 3 }, "itemCf": { "available": false, "score": null, "supportingItemCount": 0 }, "signals": { "preferenceMatch": 0.55, "wantToTry": true, "groupPreferenceRate": 0.5, "groupEligibleMemberCount": 4, "contextMatch": 0.62, "cleanlinessObserved": true } },
+    { "candidateId": "candidate-c", "probability": 0.78, "modelScore": 1.27, "userCf": { "available": false, "score": null, "neighborSupport": 0 }, "itemCf": { "available": true, "score": 0.68, "supportingItemCount": 4 }, "signals": { "preferenceMatch": 0.48, "wantToTry": false, "groupPreferenceRate": 0.75, "groupEligibleMemberCount": 4, "contextMatch": 0.74, "cleanlinessObserved": false } },
+    { "candidateId": "candidate-d", "probability": 0.74, "modelScore": 1.1, "userCf": { "available": true, "score": 0.65, "neighborSupport": 4 }, "itemCf": { "available": true, "score": 0.58, "supportingItemCount": 2 }, "signals": { "preferenceMatch": 0.72, "wantToTry": false, "groupPreferenceRate": null, "groupEligibleMemberCount": 0, "contextMatch": 0.7, "cleanlinessObserved": true } },
+    { "candidateId": "candidate-e", "probability": 0.74, "modelScore": 1.1, "userCf": { "available": true, "score": 0.65, "neighborSupport": 4 }, "itemCf": { "available": true, "score": 0.58, "supportingItemCount": 2 }, "signals": { "preferenceMatch": 0.72, "wantToTry": false, "groupPreferenceRate": 0.6, "groupEligibleMemberCount": 2, "contextMatch": null, "cleanlinessObserved": false } }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "baseFixture": "../../../../inference/recommendation/v1/consumer-fixtures/valid-hybrid.json",
+  "cases": [
+    { "name": "unknown candidate", "mutation": "predictions[0].candidateId=outside-request", "expectedCode": "UNKNOWN_CANDIDATE" },
+    { "name": "duplicate candidate", "mutation": "append predictions[0]", "expectedCode": "DUPLICATE_CANDIDATE" },
+    { "name": "missing candidate", "mutation": "remove predictions[0]", "expectedCode": "MISSING_CANDIDATE" },
+    { "name": "invalid probability low", "mutation": "predictions[0].probability=-0.001", "expectedCode": "INVALID_PROBABILITY" },
+    { "name": "invalid probability high", "mutation": "predictions[0].probability=1.001", "expectedCode": "INVALID_PROBABILITY" },
+    { "name": "non-finite probability", "mutation": "predictions[0].probability=NaN", "expectedCode": "INVALID_PROBABILITY" },
+    { "name": "missing UserCF availability", "mutation": "delete predictions[0].userCf.available", "expectedCode": "INVALID_EVIDENCE" },
+    { "name": "available UserCF missing score", "mutation": "predictions[0].userCf.score=null while available", "expectedCode": "INVALID_EVIDENCE" },
+    { "name": "unavailable ItemCF with score", "mutation": "predictions[0].itemCf.score=0.8 while unavailable", "expectedCode": "INVALID_EVIDENCE" },
+    { "name": "feature version mismatch", "mutation": "featureSchemaVersion=recommendation-features-v1", "expectedCode": "FEATURE_VERSION_MISMATCH" },
+    { "name": "package version mismatch", "mutation": "modelPackageVersion=recommendation-package-v0", "expectedCode": "MODEL_PACKAGE_MISMATCH" },
+    { "name": "key version mismatch", "mutation": "modelKeyVersion=raw-id-v0", "expectedCode": "MODEL_KEY_VERSION_MISMATCH" }
+  ]
+}

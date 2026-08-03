@@ -1,0 +1,31 @@
+{
+  "canonicalOwner": "foodmind-backend",
+  "repository": "foodmind-backend",
+  "revision": "7ea2b90c1451d689c59d4ea37d337b4552220f44",
+  "version": "recommendation-agent-v1",
+  "featureSchemaVersion": "recommendation-features-v1",
+  "copyStoredInIntelligence": false,
+  "retirementApproved": false,
+  "files": [
+    {
+      "path": "src/test/resources/contracts/agent/recommendation/contract-notes.md",
+      "sha256": "041c7c70983b5147f5c29fd4273da67d02198537583f0a4e382efcca4546a8d0",
+      "kind": "canonical-notes"
+    },
+    {
+      "path": "src/test/resources/contracts/agent/recommendation/valid-normal-response.json",
+      "sha256": "275724221ac7da4da3f0f3c27fbf0333eba23ea2da4ece48eab0e3dd8c7d6a8b",
+      "kind": "positive-consumer-fixture"
+    },
+    {
+      "path": "src/test/resources/contracts/agent/recommendation/invalid-unknown-id-response.json",
+      "sha256": "52a1d8ce50d56291587490453c362b219a4faf59e56d89445ab4b9fcf0c05917",
+      "kind": "negative-consumer-fixture"
+    },
+    {
+      "path": "src/test/resources/contracts/agent/recommendation/inference-unavailable-response.json",
+      "sha256": "c170f65b4509e4d88d4a4ceb99c7e20610351a64892ec9bba54269be8d5d08f0",
+      "kind": "failure-consumer-fixture"
+    }
+  ]
+}

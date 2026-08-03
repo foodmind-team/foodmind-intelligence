@@ -1,0 +1,18 @@
+{
+  "contractVersion": "recommendation-agent-v2",
+  "featureSchemaVersion": "recommendation-features-v2",
+  "requestId": "req-normal-001",
+  "sessionId": "session-synthetic-001",
+  "traceId": "trace-normal-001",
+  "deadlineAt": "2030-01-01T00:00:02Z",
+  "decisionAt": "2030-01-01T00:00:00Z",
+  "modelUserKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "modelKeyVersion": "hmac-sha256-v1",
+  "candidates": [
+    { "candidateId": "candidate-a", "modelMealKey": "meal_key_00000001", "modelOfferingKey": "offering_key_0001", "evidence": { "preferenceMatch": 0.92, "wantToTry": false, "groupPreferenceRate": 0.4, "groupEligibleMemberCount": 5, "contextMatch": 0.86, "cleanlinessObserved": true, "novelty": 0.1, "cuisineCode": "CHINESE", "categoryCode": "NOODLES" } },
+    { "candidateId": "candidate-b", "modelMealKey": "meal_key_00000002", "modelOfferingKey": "offering_key_0002", "evidence": { "preferenceMatch": 0.55, "wantToTry": true, "groupPreferenceRate": 0.5, "groupEligibleMemberCount": 4, "contextMatch": 0.62, "cleanlinessObserved": true, "novelty": 0.95, "cuisineCode": "MALAY", "categoryCode": "RICE" } },
+    { "candidateId": "candidate-c", "modelMealKey": "meal_key_00000003", "modelOfferingKey": "offering_key_0003", "evidence": { "preferenceMatch": 0.48, "wantToTry": false, "groupPreferenceRate": 0.75, "groupEligibleMemberCount": 4, "contextMatch": 0.74, "cleanlinessObserved": false, "novelty": 0.45, "cuisineCode": "INDIAN", "categoryCode": "BREAD" } },
+    { "candidateId": "candidate-d", "modelMealKey": "meal_key_00000004", "modelOfferingKey": "offering_key_0004", "evidence": { "preferenceMatch": 0.72, "wantToTry": false, "groupPreferenceRate": null, "groupEligibleMemberCount": 0, "contextMatch": 0.7, "cleanlinessObserved": true, "novelty": 0.3, "cuisineCode": "JAPANESE", "categoryCode": "NOODLES" } },
+    { "candidateId": "candidate-e", "modelMealKey": "meal_key_00000005", "modelOfferingKey": "offering_key_0005", "evidence": { "preferenceMatch": 0.72, "wantToTry": false, "groupPreferenceRate": 0.6, "groupEligibleMemberCount": 2, "contextMatch": null, "cleanlinessObserved": false, "novelty": 0.3, "cuisineCode": "WESTERN", "categoryCode": "GRILL" } }
+  ]
+}

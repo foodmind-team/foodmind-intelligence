@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foodmind.internal/contracts/agent/recommendation/v2/failure.schema.json",
+  "title": "Recommendation Agent v2 typed failure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "requestId", "sessionId", "traceId", "agentTraceId", "status", "error"],
+  "properties": {
+    "contractVersion": { "const": "recommendation-agent-v2" },
+    "requestId": { "$ref": "#/$defs/safeId" },
+    "sessionId": { "$ref": "#/$defs/safeId" },
+    "traceId": { "$ref": "#/$defs/safeId" },
+    "agentTraceId": { "$ref": "#/$defs/safeId" },
+    "status": { "const": "failure" },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "retryable"],
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_REQUEST", "REQUEST_TOO_LARGE", "RESPONSE_TOO_LARGE", "SERVICE_NOT_READY", "SERVICE_OVERLOADED",
+            "UNSUPPORTED_AGENT_VERSION", "UNSUPPORTED_FEATURE_VERSION",
+            "DEADLINE_EXPIRED", "DEADLINE_INSUFFICIENT", "DEADLINE_EXHAUSTED",
+            "INFERENCE_CONNECTION_FAILED", "INFERENCE_TIMEOUT", "INFERENCE_HTTP_ERROR",
+            "INFERENCE_MALFORMED_RESPONSE", "INFERENCE_RESPONSE_TOO_LARGE", "INFERENCE_UNAVAILABLE",
+            "INFERENCE_CONTRACT_MISMATCH", "MODEL_VERSION_MISMATCH", "MODEL_PACKAGE_MISMATCH",
+            "FEATURE_VERSION_MISMATCH", "MODEL_KEY_VERSION_MISMATCH", "UNKNOWN_CANDIDATE",
+            "DUPLICATE_CANDIDATE", "MISSING_CANDIDATE", "INVALID_PROBABILITY", "INVALID_EVIDENCE",
+            "RESULT_SELECTION_FAILED", "UNSUPPORTED_REASON", "UNSAFE_TEMPLATE", "INTERNAL_ERROR"
+          ]
+        },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "safeId": {
+      "type": "string", "minLength": 1, "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    }
+  }
+}

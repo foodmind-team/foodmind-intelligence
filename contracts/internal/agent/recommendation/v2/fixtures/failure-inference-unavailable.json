@@ -1,0 +1,9 @@
+{
+  "contractVersion": "recommendation-agent-v2",
+  "requestId": "req-failure-001",
+  "sessionId": "session-synthetic-004",
+  "traceId": "trace-failure-001",
+  "agentTraceId": "agent-trace-failure-001",
+  "status": "failure",
+  "error": { "code": "INFERENCE_UNAVAILABLE", "retryable": true }
+}

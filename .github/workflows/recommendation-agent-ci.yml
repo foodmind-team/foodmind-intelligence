@@ -1,0 +1,171 @@
+name: Recommendation Agent CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - "agent-service/app/agents/recommendation/**"
+      - "contracts/internal/agent/recommendation/**"
+      - "contracts/internal/inference/recommendation/**"
+      - "contracts/internal/shared/recommendation-features/**"
+      - "artifacts/test-fixtures/recommendation/**"
+      - "deployment/docker/recommendation-agent.env.example"
+      - "deployment/local/recommendation-agent.compose.yaml"
+      - "docs/architecture/recommendation-agent-compatibility-matrix.md"
+      - "docs/operations/recommendation-agent.md"
+      - "docs/testing/recommendation-agent-**"
+      - ".github/workflows/recommendation-agent-ci.yml"
+  pull_request:
+    paths:
+      - "agent-service/app/agents/recommendation/**"
+      - "contracts/internal/agent/recommendation/**"
+      - "contracts/internal/inference/recommendation/**"
+      - "contracts/internal/shared/recommendation-features/**"
+      - "artifacts/test-fixtures/recommendation/**"
+      - "deployment/docker/recommendation-agent.env.example"
+      - "deployment/local/recommendation-agent.compose.yaml"
+      - "docs/architecture/recommendation-agent-compatibility-matrix.md"
+      - "docs/operations/recommendation-agent.md"
+      - "docs/testing/recommendation-agent-**"
+      - ".github/workflows/recommendation-agent-ci.yml"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: agent-service/app/agents/recommendation
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen --dev
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy src tests
+
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen --dev
+      - run: uv run pytest -W error --cov=recommendation_agent --cov-report=term-missing
+      - run: uv run python scripts/smoke_private_agent.py --mode fixture
+      - run: uv run python scripts/verify_release_evidence.py
+
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --frozen --dev
+      - run: uv run pytest tests/contract tests/security -v
+      - name: Verify OpenAPI paths
+        run: uv run python -c "from recommendation_agent.main import create_app; assert set(create_app().openapi()['paths']) == {'/health/live','/health/ready','/internal/v1/recommendations/generate'}"
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --frozen --dev
+      - run: uv pip check
+      - name: Dependency vulnerability audit
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt --no-hashes -o requirements-audit.txt
+          uvx --from pip-audit==2.9.0 pip-audit -r requirements-audit.txt
+      - name: License inventory
+        run: >-
+          uv run --with pip-licenses==5.5.5 pip-licenses
+          --ignore-packages recommendation-agent
+          --fail-on "GPL-2.0-only;GPL-2.0-or-later;GPL-3.0-only;GPL-3.0-or-later;AGPL-3.0-only;AGPL-3.0-or-later;GNU General Public License;GNU Affero General Public License"
+          --partial-match --format=json --output-file=licenses.json
+      - name: Secret scan
+        run: |
+          image="zricethezav/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854"
+          scopes=(
+            .github
+            agent-service/app/agents/recommendation
+            artifacts/test-fixtures/recommendation
+            contracts/internal/agent/recommendation
+            contracts/internal/inference/recommendation
+            contracts/internal/shared/recommendation-features
+            deployment
+            docs/architecture
+            docs/operations
+            docs/testing
+          )
+          for scope in "${scopes[@]}"; do
+            docker run --rm -v "${GITHUB_WORKSPACE}:/repo:ro" "$image" detect \
+              --no-git --source "/repo/$scope" --redact --exit-code 1 --log-level error
+          done
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: agent-service/app/agents/recommendation
+          load: true
+          push: false
+          tags: foodmind-recommendation-agent:ci
+          build-args: SOURCE_REVISION=${{ github.sha }}
+      - name: Non-root read-only inspection
+        run: >-
+          docker run --rm --read-only --user 10001:10001 --entrypoint python
+          foodmind-recommendation-agent:ci
+          -c "import os; assert os.getuid() == 10001; import recommendation_agent"
+      - name: Generate SBOM
+        uses: anchore/sbom-action@61119d458adab75f756bc0b9e4bde25725f86a7a # v0.17.2
+        with:
+          image: foodmind-recommendation-agent:ci
+          format: cyclonedx-json
+          output-file: recommendation-agent-sbom.json
+      - name: Container vulnerability scan
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.56.1@sha256:c42bb3221509b0a9fa2291cd79a3a818b30a172ab87e9aac8a43997a5b56f293
+          image --scanners vuln --ignore-unfixed --severity CRITICAL,HIGH --exit-code 1
+          foodmind-recommendation-agent:ci
+
+  merge-gate:
+    if: always()
+    needs: [quality, tests, contracts, security, image]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Require every Recommendation Agent gate
+        run: |
+          test "${{ needs.quality.result }}" = success
+          test "${{ needs.tests.result }}" = success
+          test "${{ needs.contracts.result }}" = success
+          test "${{ needs.security.result }}" = success
+          test "${{ needs.image.result }}" = success

@@ -1,0 +1,17 @@
+{
+  "contractVersion": "recommendation-agent-v2",
+  "featureSchemaVersion": "recommendation-features-v2",
+  "requestId": "req-sparse-group-001",
+  "sessionId": "session-synthetic-003",
+  "traceId": "trace-sparse-group-001",
+  "deadlineAt": "2030-01-01T00:00:02Z",
+  "decisionAt": "2030-01-01T00:00:00Z",
+  "modelUserKey": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+  "modelKeyVersion": "hmac-sha256-v1",
+  "candidates": [
+    {
+      "candidateId": "candidate-sparse-a", "modelMealKey": "meal_key_sparse01", "modelOfferingKey": "offering_sparse01",
+      "evidence": { "preferenceMatch": 0.7, "wantToTry": false, "groupPreferenceRate": 1.0, "groupEligibleMemberCount": 1, "contextMatch": 0.7, "cleanlinessObserved": true, "novelty": 0.2, "cuisineCode": "CHINESE", "categoryCode": "RICE" }
+    }
+  ]
+}

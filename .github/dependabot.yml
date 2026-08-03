@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /agent-service/app/agents/recommendation
+    schedule:
+      interval: weekly
+    groups:
+      recommendation-agent-runtime:
+        dependency-type: production
+      recommendation-agent-development:
+        dependency-type: development
+  - package-ecosystem: docker
+    directory: /agent-service/app/agents/recommendation
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
