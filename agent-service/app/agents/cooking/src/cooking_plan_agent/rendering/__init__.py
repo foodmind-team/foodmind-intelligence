@@ -4,6 +4,7 @@ from cooking_plan_agent.rendering.builder import (
     build_completion_checklist,
     build_dish_completion_summary,
     build_mise_en_place,
+    build_execution_flow,
     build_timeline,
     validate_completion_checklist,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "build_completion_checklist",
     "build_dish_completion_summary",
     "build_mise_en_place",
+    "build_execution_flow",
     "build_timeline",
     "render_confirmation_response",
     "render_failed_response",

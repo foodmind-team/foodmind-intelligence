@@ -147,6 +147,55 @@ def build_timeline(
 
 
 # =============================================================================
+# 11.2a Dependency-driven execution flow
+# =============================================================================
+
+
+def build_execution_flow(
+    tasks: tuple[CookingTask, ...],
+) -> tuple[dict[str, object], ...]:
+    """Build UI-ready task dependencies without prescribing clock times.
+
+    A client keeps its own ``completed_task_ids`` / ``in_progress_task_ids``
+    and uses ``depends_on`` to decide what can be shown next.  This means a
+    task such as "blanch crab" becomes available immediately after handling
+    the crab; while its heating interval is in progress, unrelated active
+    tasks such as preparing shrimp remain available to the cook.
+    """
+    successor_map: dict[str, list[str]] = {task.task_id: [] for task in tasks}
+    items: list[dict[str, object]] = []
+    for task in tasks:
+        dependencies = tuple(dep.predecessor_id for dep in task.dependencies)
+        for predecessor_id in dependencies:
+            if predecessor_id in successor_map:
+                successor_map[predecessor_id].append(task.task_id)
+        items.append(
+            {
+                "task_id": task.task_id,
+                "dish_id": task.dish_id,
+                "instruction": task.instruction,
+                "depends_on": dependencies,
+                "unlocks": (),
+                "work_mode": task.work_mode.value,
+                "resources": [resource.resource_type for resource in task.resources],
+                "resource_needs": [
+                    {"resource_type": resource.resource_type, "quantity": resource.quantity}
+                    for resource in task.resources
+                ],
+                "completion_hint": "Mark complete when this operation is finished.",
+            }
+        )
+
+    return tuple(
+        {
+            **item,
+            "unlocks": tuple(successor_map[str(item["task_id"])]),
+        }
+        for item in items
+    )
+
+
+# =============================================================================
 # 11.3  Dish completion summary
 # =============================================================================
 

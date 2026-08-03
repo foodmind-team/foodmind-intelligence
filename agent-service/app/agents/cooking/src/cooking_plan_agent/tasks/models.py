@@ -173,6 +173,9 @@ class TaskRecord(StrictModel):
     error: dict[str, Any] | None = None
     """Serialised ErrorEnvelope for FAILED."""
 
+    execution_state: dict[str, str] = {}
+    """Runtime cooking-task states, persisted for READY plans and recovery."""
+
     created_at: datetime = utc_now()
     """Submission timestamp."""
 

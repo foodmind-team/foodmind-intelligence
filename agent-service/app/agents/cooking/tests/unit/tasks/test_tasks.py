@@ -153,6 +153,53 @@ async def test_get_by_request_id(repo) -> None:
     assert loaded is not None and loaded.task_id == record.task_id
 
 
+# ---------------------------------------------------------------------------
+# Runtime cooking execution flow
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execution_state_persists_and_unlocks_parallel_work(repo) -> None:
+    """Completing crab prep unlocks blanching without blocking shrimp prep."""
+    flow = (
+        {"task_id": "crab_prep", "depends_on": (), "work_mode": "ACTIVE", "resources": ()},
+        {
+            "task_id": "crab_heat",
+            "depends_on": ("crab_prep",),
+            "work_mode": "PASSIVE",
+            "resource_needs": ({"resource_type": "stove", "quantity": 1},),
+        },
+        {"task_id": "shrimp_prep", "depends_on": (), "work_mode": "ACTIVE", "resources": ()},
+    )
+    record = _record("req-execution", status=TaskStatus.READY).model_copy(
+        update={
+            "result": {"execution_flow": flow},
+            "request_payload": {"kitchen_resources": ({"resource_type": "stove", "capacity": "1"},)},
+        }
+    )
+    await repo.create(record)
+    service = AsyncTaskService(repo, generation_service=None)  # type: ignore[arg-type]
+
+    updated, snapshot, error = await service.update_execution(
+        record.task_id, "crab_prep", "COMPLETED", expected_event_id=0
+    )
+    assert error is None
+    assert updated is not None and updated.event_id == 1
+    assert {item["task_id"] for item in snapshot["available_tasks"]} == {"crab_heat", "shrimp_prep"}  # type: ignore[index]
+
+    updated, snapshot, error = await service.update_execution(
+        record.task_id, "crab_heat", "IN_PROGRESS", expected_event_id=1
+    )
+    assert error is None
+    assert updated is not None and updated.execution_state["crab_heat"] == "IN_PROGRESS"
+    assert "shrimp_prep" in {item["task_id"] for item in snapshot["available_tasks"]}  # type: ignore[index]
+
+    _latest, _snapshot, error = await service.update_execution(
+        record.task_id, "shrimp_prep", "IN_PROGRESS", expected_event_id=1
+    )
+    assert error == "EXECUTION_STATE_CONFLICT"
+
+
 @pytest.mark.asyncio
 async def test_conditional_update_respects_status(repo) -> None:
     record = _record("req-cond", status=TaskStatus.QUEUED)
