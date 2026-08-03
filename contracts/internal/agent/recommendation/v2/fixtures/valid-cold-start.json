@@ -1,0 +1,21 @@
+{
+  "contractVersion": "recommendation-agent-v2",
+  "featureSchemaVersion": "recommendation-features-v2",
+  "requestId": "req-cold-001",
+  "sessionId": "session-synthetic-002",
+  "traceId": "trace-cold-001",
+  "deadlineAt": "2030-01-01T00:00:02Z",
+  "decisionAt": "2030-01-01T00:00:00Z",
+  "modelUserKey": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  "modelKeyVersion": "hmac-sha256-v1",
+  "candidates": [
+    {
+      "candidateId": "candidate-cold-a", "modelMealKey": "meal_key_cold_001", "modelOfferingKey": "offering_cold_001",
+      "evidence": { "preferenceMatch": 0.5, "wantToTry": true, "groupPreferenceRate": null, "groupEligibleMemberCount": 0, "contextMatch": 0.8, "cleanlinessObserved": true, "novelty": 1.0, "cuisineCode": "THAI", "categoryCode": "RICE" }
+    },
+    {
+      "candidateId": "candidate-cold-b", "modelMealKey": "meal_key_cold_002", "modelOfferingKey": "offering_cold_002",
+      "evidence": { "preferenceMatch": 0.8, "wantToTry": false, "groupPreferenceRate": null, "groupEligibleMemberCount": 0, "contextMatch": 0.6, "cleanlinessObserved": false, "novelty": 0.4, "cuisineCode": "KOREAN", "categoryCode": "SOUP" }
+    }
+  ]
+}

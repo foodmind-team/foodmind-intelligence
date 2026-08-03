@@ -1,0 +1,11 @@
+{
+  "contractVersion": "recommendation-inference-v1",
+  "requestId": "req-package-mismatch-001",
+  "traceId": "trace-package-mismatch-001",
+  "status": "failure",
+  "modelVersion": "hybrid-ranking-v1",
+  "modelPackageVersion": "recommendation-package-v0",
+  "featureSchemaVersion": "recommendation-features-v2",
+  "modelKeyVersion": "hmac-sha256-v1",
+  "error": { "code": "MODEL_PACKAGE_INCOMPATIBLE" }
+}

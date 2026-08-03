@@ -1,0 +1,9 @@
+{
+  "contractVersion": "recommendation-agent-v2",
+  "requestId": "req-failure-002",
+  "sessionId": "session-synthetic-005",
+  "traceId": "trace-failure-002",
+  "agentTraceId": "agent-trace-failure-002",
+  "status": "failure",
+  "error": { "code": "DEADLINE_EXHAUSTED", "retryable": false }
+}

@@ -1,0 +1,15 @@
+{
+  "canonicalOwner": "FoodMind Backend Agent v2 contract owner (approval pending)",
+  "repository": "foodmind-intelligence",
+  "baseRevision": "299125e77a79ee1dc1255c468a41ef31ce1fb431",
+  "path": "contracts/internal/agent/recommendation/v2/fixtures",
+  "version": "recommendation-agent-v2",
+  "approvalPending": true,
+  "files": [
+    { "path": "valid-normal.json", "sha256": "e96c7e6d4cd97848bc4b235bc10a8b95ed0da5d7bb575aa3f2618d36a447bf39", "kind": "positive-producer-fixture" },
+    { "path": "valid-cold-start.json", "sha256": "004642fcdd29654519993afd011b13f030299390fd301d83cf73cdf6dfc06db0", "kind": "positive-producer-fixture" },
+    { "path": "valid-sparse-group.json", "sha256": "f2c5aecc0099c0ad5a265e47d1aa46df375e23599d4b0da8c6e3e91d7017f7d5", "kind": "positive-producer-fixture" },
+    { "path": "failure-inference-unavailable.json", "sha256": "89241db3a475426b659061b47a7e04a82b966cae130faf988d6ca5ab965947a2", "kind": "negative-consumer-fixture" },
+    { "path": "failure-deadline-exhausted.json", "sha256": "aadbfa4d20b0d44ad87b5f9de3b83b50b83df72688a8cf26484d5cdb2561fe9c", "kind": "negative-consumer-fixture" }
+  ]
+}

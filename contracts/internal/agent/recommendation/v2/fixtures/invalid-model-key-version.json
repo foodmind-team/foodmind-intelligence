@@ -1,0 +1,17 @@
+{
+  "contractVersion": "recommendation-agent-v2",
+  "featureSchemaVersion": "recommendation-features-v2",
+  "requestId": "req-invalid-key-version",
+  "sessionId": "session-synthetic-006",
+  "traceId": "trace-invalid-key-version",
+  "deadlineAt": "2030-01-01T00:00:02Z",
+  "decisionAt": "2030-01-01T00:00:00Z",
+  "modelUserKey": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+  "modelKeyVersion": "raw-database-id-v0",
+  "candidates": [
+    {
+      "candidateId": "candidate-invalid", "modelMealKey": "meal_key_invalid1", "modelOfferingKey": "offering_invalid1",
+      "evidence": { "preferenceMatch": 0.5, "wantToTry": false, "groupPreferenceRate": null, "groupEligibleMemberCount": 0, "contextMatch": null, "cleanlinessObserved": false, "novelty": 0.5, "cuisineCode": "OTHER", "categoryCode": "OTHER" }
+    }
+  ]
+}

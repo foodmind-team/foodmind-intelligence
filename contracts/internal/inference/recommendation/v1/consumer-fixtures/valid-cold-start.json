@@ -1,0 +1,14 @@
+{
+  "contractVersion": "recommendation-inference-v1",
+  "requestId": "req-cold-001",
+  "traceId": "trace-cold-001",
+  "status": "success",
+  "modelVersion": "hybrid-ranking-v1",
+  "modelPackageVersion": "recommendation-package-v1",
+  "featureSchemaVersion": "recommendation-features-v2",
+  "modelKeyVersion": "hmac-sha256-v1",
+  "predictions": [
+    { "candidateId": "candidate-cold-a", "probability": 0.65, "modelScore": 0.62, "userCf": { "available": false, "score": null, "neighborSupport": 0 }, "itemCf": { "available": false, "score": null, "supportingItemCount": 0 }, "signals": { "preferenceMatch": 0.5, "wantToTry": true, "groupPreferenceRate": null, "groupEligibleMemberCount": 0, "contextMatch": 0.8, "cleanlinessObserved": true } },
+    { "candidateId": "candidate-cold-b", "probability": 0.62, "modelScore": 0.49, "userCf": { "available": false, "score": null, "neighborSupport": 0 }, "itemCf": { "available": false, "score": null, "supportingItemCount": 0 }, "signals": { "preferenceMatch": 0.8, "wantToTry": false, "groupPreferenceRate": null, "groupEligibleMemberCount": 0, "contextMatch": 0.6, "cleanlinessObserved": false } }
+  ]
+}

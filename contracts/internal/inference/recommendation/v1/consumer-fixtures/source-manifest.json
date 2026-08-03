@@ -1,0 +1,14 @@
+{
+  "canonicalOwner": "FoodMind inference contract owner (approval pending)",
+  "repository": "foodmind-intelligence",
+  "baseRevision": "299125e77a79ee1dc1255c468a41ef31ce1fb431",
+  "path": "contracts/internal/inference/recommendation/v1/consumer-fixtures",
+  "version": "recommendation-inference-v1",
+  "approvalPending": true,
+  "files": [
+    { "path": "valid-hybrid.json", "sha256": "9326e1a7d782fdef20a2562be565e4e2d47dc5a15e357b136f791f7677fa4cd7", "kind": "positive-consumer-fixture" },
+    { "path": "valid-cold-start.json", "sha256": "a5e71162fea8ba36744d96b89f643225147dca6c1014d05499ef7d742746d6f0", "kind": "positive-consumer-fixture" },
+    { "path": "failure-package-incompatible.json", "sha256": "f3bb012c2587504efac2b78dca4492991938171e6b2dfa6ac67524bbc689bb2f", "kind": "negative-consumer-fixture" },
+    { "path": "invalid-feature-schema.json", "sha256": "5b15e1fe3c0990b6215c2da838a747baefb29258df2cc721569bd6758be0eff5", "kind": "negative-consumer-fixture" }
+  ]
+}

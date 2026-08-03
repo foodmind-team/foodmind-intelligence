@@ -1,0 +1,16 @@
+{
+  "policyVersion": "recommendation-reasons-v1",
+  "cases": [
+    { "reason": "USER_CF", "positive": { "available": true, "score": 0.6, "neighborSupport": 3 }, "negative": [{ "available": false, "score": null, "neighborSupport": 0 }, { "available": true, "score": 0.599, "neighborSupport": 3 }, { "available": true, "score": 0.6, "neighborSupport": 2 }] },
+    { "reason": "ITEM_CF", "positive": { "available": true, "score": 0.6, "supportingItemCount": 2 }, "negative": [{ "available": false, "score": null, "supportingItemCount": 0 }, { "available": true, "score": 0.599, "supportingItemCount": 2 }, { "available": true, "score": 0.6, "supportingItemCount": 1 }] },
+    { "reason": "PREFERENCE_MATCH", "positive": { "preferenceMatch": 0.7 }, "negative": [{ "preferenceMatch": 0.699 }] },
+    { "reason": "WANT_TO_TRY", "positive": { "wantToTry": true }, "negative": [{ "wantToTry": false }] },
+    { "reason": "GROUP_POPULAR", "positive": { "groupPreferenceRate": 0.6, "groupEligibleMemberCount": 2 }, "negative": [{ "groupPreferenceRate": 0.599, "groupEligibleMemberCount": 2 }, { "groupPreferenceRate": 1.0, "groupEligibleMemberCount": 1 }, { "groupPreferenceRate": null, "groupEligibleMemberCount": 0 }] },
+    { "reason": "CONTEXT_MATCH", "positive": { "contextMatch": 0.7 }, "negative": [{ "contextMatch": 0.699 }, { "contextMatch": null }] },
+    { "reason": "CLEANLINESS_OBSERVED", "positive": { "cleanlinessObserved": true }, "negative": [{ "cleanlinessObserved": false }] }
+  ],
+  "separationChecks": [
+    { "description": "Group support cannot satisfy USER_CF", "groupEligibleMemberCount": 100, "userCf": { "available": false, "score": null, "neighborSupport": 0 }, "mustNotEmit": "USER_CF" },
+    { "description": "User neighbors cannot satisfy ITEM_CF", "userCf": { "available": true, "score": 1.0, "neighborSupport": 100 }, "itemCf": { "available": false, "score": null, "supportingItemCount": 0 }, "mustNotEmit": "ITEM_CF" }
+  ]
+}

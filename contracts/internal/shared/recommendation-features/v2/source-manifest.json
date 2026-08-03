@@ -1,0 +1,9 @@
+{
+  "canonicalOwner": "FoodMind Backend feature contract owner (approval pending)",
+  "repository": "foodmind-intelligence",
+  "baseRevision": "299125e77a79ee1dc1255c468a41ef31ce1fb431",
+  "path": "contracts/internal/shared/recommendation-features/v2/agent-evidence-catalog.md",
+  "version": "recommendation-features-v2",
+  "sha256": "6d2326b05d4e2731b07d3376d8f5c11ba220820592d4f5149441a0c184c6fd9c",
+  "approvalPending": true
+}
