@@ -949,6 +949,52 @@ async def merge_preparation_node(
             }
         prep_tasks = shared.tasks
         prep_observations = shared.observations
+        if prep_tasks:
+            # A menu plan should feel like a real mise en place: take all
+            # ingredients out once, finish the shared washing/cutting work,
+            # then begin cooking.  The previous state-only wiring allowed
+            # unrelated recipes to start while other ingredients were still
+            # being fetched, which causes repeated fridge trips and a
+            # fragmented prep phase.
+            gather_task = CookingTask(
+                task_id="prep_gather_all_ingredients",
+                dish_id="shared",
+                instruction="[Mise en place] 一次取出所有食材、调料和所需工具",
+                duration_minutes=5,
+                work_mode=WorkMode.ACTIVE,
+                category="preparation",
+            )
+            staged_prep_tasks = tuple(
+                task.model_copy(
+                    update={
+                        "dependencies": task.dependencies
+                        + (TaskDependency(predecessor_id=gather_task.task_id),)
+                    }
+                )
+                for task in prep_tasks
+            )
+            ready_task = CookingTask(
+                task_id="prep_mise_en_place_complete",
+                dish_id="shared",
+                instruction="[Mise en place] 确认清洗、切配与调料分装完成",
+                duration_minutes=1,
+                work_mode=WorkMode.ACTIVE,
+                category="preparation",
+                dependencies=tuple(TaskDependency(predecessor_id=task.task_id) for task in staged_prep_tasks),
+            )
+            first_task_ids = {first for anchors in step_task_anchors.values() for first, _last in anchors.values()}
+            all_recipe_tasks = [
+                task.model_copy(
+                    update={
+                        "dependencies": task.dependencies
+                        + (TaskDependency(predecessor_id=ready_task.task_id),)
+                    }
+                )
+                if task.task_id in first_task_ids
+                else task
+                for task in all_recipe_tasks
+            ]
+            prep_tasks = (gather_task, *staged_prep_tasks, ready_task)
         all_recipe_tasks = _wire_prep_consumption(all_recipe_tasks, shared.demand_final_states)
 
     # --- Safety tasks (P0-07: anchored insertions from the safety report) ---

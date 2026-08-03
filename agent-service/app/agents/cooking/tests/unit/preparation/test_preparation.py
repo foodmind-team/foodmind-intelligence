@@ -908,6 +908,8 @@ class TestIntegration:
         graph = build_task_graph(recipe_tasks, prep_tasks, ())
         # Should have edges connecting prep → recipe via food states
         assert len(graph.edges) >= 1
+        scheduled_recipe = next(task for task in graph.tasks if task.task_id == "r1_s1")
+        assert prep_tasks[-1].task_id in {dep.predecessor_id for dep in scheduled_recipe.dependencies}
 
         # Must be acyclic
         order = topological_sort_kahn(graph)

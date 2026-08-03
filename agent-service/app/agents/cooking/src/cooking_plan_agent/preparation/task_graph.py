@@ -9,7 +9,7 @@ This module handles:
 
 from collections import deque
 
-from cooking_plan_agent.domain.models import CookingTask, StrictModel
+from cooking_plan_agent.domain.models import CookingTask, StrictModel, TaskDependency
 
 # ============================================================================
 # 6.8  Task DAG construction
@@ -110,7 +110,32 @@ def build_task_graph(
             seen.add(pair)
             unique_edges.append(e)
 
-    return TaskGraph(tasks=all_tasks, edges=tuple(unique_edges))
+    # The scheduler operates on CookingTask.dependencies, while this DAG also
+    # expresses prerequisites through food-state producer → consumer edges.
+    # Materialise those derived edges back onto the successor tasks so the
+    # solver, verifier and completion-time logic all enforce the same graph.
+    # Without this, a shared prep task can be scheduled after the recipe step
+    # that consumes it even though TaskGraph.edges correctly shows the edge.
+    deps_by_successor: dict[str, list[str]] = {}
+    for edge in unique_edges:
+        deps_by_successor.setdefault(edge.successor_id, []).append(edge.predecessor_id)
+
+    materialised_tasks: list[CookingTask] = []
+    for task in all_tasks:
+        added = deps_by_successor.get(task.task_id, [])
+        existing = {dep.predecessor_id for dep in task.dependencies}
+        new_dependencies = tuple(
+            TaskDependency(predecessor_id=predecessor_id)
+            for predecessor_id in added
+            if predecessor_id not in existing
+        )
+        materialised_tasks.append(
+            task.model_copy(update={"dependencies": task.dependencies + new_dependencies})
+            if new_dependencies
+            else task
+        )
+
+    return TaskGraph(tasks=tuple(materialised_tasks), edges=tuple(unique_edges))
 
 
 # ============================================================================

@@ -146,6 +146,38 @@ def test_identical_spec_merges_single_wash_and_cut() -> None:
     assert set(result.demand_final_states.values()) == {"brown onion:cut_diced:shared"}
 
 
+@pytest.mark.parametrize(
+    "name",
+    ("盐", "生抽", "蚝油", "火锅底料", "火锅料", "白芝麻", "料酒", "蛋清", "鸡翅中", "cornstarch"),
+)
+def test_condiments_do_not_get_inferred_wash_tasks(name: str) -> None:
+    """Pantry ingredients are ready to use, even when represented as raw."""
+    result = build_shared_prep_tasks((("r1", _demand(name=name, spec=None)),))
+    assert result.tasks == ()
+    assert result.demand_final_states == {}
+
+
+def test_different_fresh_ingredients_share_one_batched_wash() -> None:
+    """A single basin wash produces the states required by each dish."""
+    result = build_shared_prep_tasks(
+        (
+            ("r1", _demand(name="cabbage", spec=None)),
+            ("r2", _demand(name="carrot", spec=None)),
+            ("r3", _demand(name="onion", spec=None)),
+        )
+    )
+
+    assert len(result.tasks) == 1
+    batch = result.tasks[0]
+    assert batch.task_id == "prep_batch_wash_fresh_ingredients"
+    assert set(batch.produces_states) == {
+        "cabbage:wash:shared",
+        "carrot:wash:shared",
+        "onion:wash:shared",
+    }
+    assert batch.duration_minutes < 15
+
+
 def test_branching_split_500_into_three_cuts() -> None:
     """500g onion -> washed once, then split into 100/200/200 cut branches."""
     demands = (
@@ -188,14 +220,16 @@ def test_raw_protein_and_rte_never_merge() -> None:
     assert "500" not in quantities, "quantities must not be merged into one shared task"
 
 
-def test_different_ingredients_never_merge() -> None:
-    """Chicken and salad vegetables with identical ops are separate tries."""
+def test_raw_protein_is_not_inferred_as_a_washable_ingredient() -> None:
+    """Raw chicken must never enter a generic vegetable washing batch."""
     chicken = _demand(name="chicken breast", quantity="200", spec="diced")
     lettuce = _demand(name="lettuce", quantity="150", spec="diced")
     result = build_shared_prep_tasks((("r1", chicken), ("r2", lettuce)))
 
     wash_tasks = [t for t in result.tasks if "wash" in t.task_id]
-    assert len(wash_tasks) == 2, "different ingredients must not merge"
+    assert len(wash_tasks) == 1
+    assert "lettuce:wash:shared" in wash_tasks[0].produces_states
+    assert "chicken breast:wash:shared" not in wash_tasks[0].produces_states
 
 
 def test_quantity_conservation_total_matches_sum() -> None:
@@ -270,6 +304,8 @@ async def test_shared_prep_produces_non_empty_prep_tasks(monkeypatch) -> None:
     assert result["prep_tasks"], "P2-01: prep_tasks must no longer be fixed empty"
     assert "prep_observations" in result
     assert result["prep_observations"], "expected merge observations"
+    prep_ids = {task.task_id for task in result["prep_tasks"]}
+    assert {"prep_gather_all_ingredients", "prep_mise_en_place_complete"} <= prep_ids
 
 
 @pytest.mark.asyncio
@@ -300,3 +336,4 @@ async def test_recipe_first_task_consumes_prep_final_state(monkeypatch) -> None:
     assert any("brown onion:cut_diced" in s for s in first.consumes_states), (
         "recipe first task must consume the prep final state"
     )
+    assert "prep_mise_en_place_complete" in {dep.predecessor_id for dep in first.dependencies}

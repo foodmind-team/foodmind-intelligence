@@ -471,6 +471,12 @@ def _infer_pattern(step: ExtractedStep) -> str:
     if any(kw in instruction_lower for kw in ("stir-fry", "stir fry", "炒", "爆炒", "翻炒")):
         return "stir_fry"
 
+    # Pan-frying is an active stove-and-pan operation. Check it before the
+    # marinade keywords below: "将腌好的鸡翅下锅煎制" describes frying, not a
+    # new marination step.
+    if any(kw in instruction_lower for kw in ("pan-fry", "pan fry", "煎")):
+        return "stir_fry"
+
     # Bake detection
     if any(kw in instruction_lower for kw in ("bake", "oven", "烤", "烘烤", "烤箱")):
         return "bake"
