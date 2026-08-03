@@ -14,6 +14,7 @@ from cooking_plan_agent.domain.enums import WorkMode
 from cooking_plan_agent.domain.models import (
     CookingTask,
 )
+from cooking_plan_agent.normalisation.names import normalise_resource_type
 from cooking_plan_agent.scheduling.models import SchedulingProblem
 
 # ============================================================================
@@ -165,12 +166,13 @@ class ScheduleModelBuilder:
         resource_capacity: dict[str, int] = {}
         resource_available: dict[str, bool] = {}
         for r in problem.resources:
-            if r.resource_type not in resource_capacity:
-                resource_capacity[r.resource_type] = 0
-                resource_available[r.resource_type] = True
-            resource_capacity[r.resource_type] += int(r.capacity) if r.capacity else 1
+            resource_type = normalise_resource_type(r.resource_type)
+            if resource_type not in resource_capacity:
+                resource_capacity[resource_type] = 0
+                resource_available[resource_type] = True
+            resource_capacity[resource_type] += int(r.capacity) if r.capacity else 1
             if not r.available:
-                resource_available[r.resource_type] = False
+                resource_available[resource_type] = False
 
         for res_type, capacity in resource_capacity.items():
             if not resource_available[res_type]:
@@ -181,7 +183,7 @@ class ScheduleModelBuilder:
 
             for task in problem.tasks:
                 for need in task.resources:
-                    if need.resource_type == res_type:
+                    if normalise_resource_type(need.resource_type) == res_type:
                         res_ivs.append(intervals[task.task_id])
                         res_demands.append(need.quantity)
                         break  # Each task counts once per resource type

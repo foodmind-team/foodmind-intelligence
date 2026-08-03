@@ -5,6 +5,7 @@ from __future__ import annotations
 from cooking_plan_agent.normalisation.names import (
     match_catalogue_item,
     normalise_ingredient_name,
+    normalise_resource_type,
 )
 
 
@@ -23,6 +24,12 @@ class TestNormaliseIngredientName:
         assert normalise_ingredient_name("green onion") == "spring onion"
         assert normalise_ingredient_name("scallion") == "spring onion"
         assert normalise_ingredient_name("capsicum") == "bell pepper"
+
+    def test_chinese_aliases_resolved(self):
+        """Chinese ingredient names share the English inventory key."""
+        assert normalise_ingredient_name("鸡胸肉") == "chicken breast"
+        assert normalise_ingredient_name("西红柿") == "tomato"
+        assert normalise_ingredient_name("生抽") == "soy sauce"
 
     def test_quantity_prefix_stripped(self):
         """Quantity+unit prefixes are removed."""
@@ -117,3 +124,10 @@ class TestMatchCatalogueItem:
         result = match_catalogue_item("chicken breast fillet", cat)
         assert result.canonical_name == "chicken breast"
         assert result.catalogue_id == "poultry_specific"
+
+
+class TestNormaliseResourceType:
+    def test_bilingual_resource_aliases_resolved(self):
+        assert normalise_resource_type("燃气灶") == "stove"
+        assert normalise_resource_type("炒锅") == "wok"
+        assert normalise_resource_type("cutting-board") == "cutting_board"

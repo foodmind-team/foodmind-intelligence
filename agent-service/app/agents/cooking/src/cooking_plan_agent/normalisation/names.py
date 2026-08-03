@@ -12,6 +12,7 @@ parameter so the module remains testable without a database.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import NamedTuple
 
 # =============================================================================
@@ -114,7 +115,77 @@ _INGREDIENT_ALIASES: list[tuple[str, str]] = [
     ("ginger root", "ginger"),
     ("fresh ginger", "ginger"),
     ("coriander", "cilantro"),
+    # --- Chinese LLM / user input aliases ---
+    ("鸡胸肉", "chicken breast"),
+    ("鸡胸", "chicken breast"),
+    ("鸡腿肉", "chicken thigh"),
+    ("鸡腿", "chicken thigh"),
+    ("牛里脊", "beef fillet"),
+    ("牛肉末", "minced beef"),
+    ("猪肉末", "minced pork"),
+    ("五花肉", "pork belly"),
+    ("虾", "shrimp"),
+    ("大虾", "shrimp"),
+    ("三文鱼", "salmon"),
+    ("洋葱", "onion"),
+    ("红洋葱", "red onion"),
+    ("葱", "spring onion"),
+    ("青葱", "spring onion"),
+    ("小葱", "spring onion"),
+    ("彩椒", "bell pepper"),
+    ("甜椒", "bell pepper"),
+    ("辣椒", "chilli"),
+    ("番茄", "tomato"),
+    ("西红柿", "tomato"),
+    ("小番茄", "cherry tomato"),
+    ("生菜", "lettuce"),
+    ("卷心菜", "cabbage"),
+    ("包菜", "cabbage"),
+    ("大白菜", "napa cabbage"),
+    ("西兰花", "broccoli"),
+    ("花椰菜", "cauliflower"),
+    ("米", "rice"),
+    ("大米", "rice"),
+    ("面粉", "flour"),
+    ("玉米淀粉", "cornstarch"),
+    ("牛奶", "milk"),
+    ("黄油", "butter"),
+    ("淡奶油", "cream"),
+    ("酱油", "soy sauce"),
+    ("生抽", "soy sauce"),
+    ("老抽", "soy sauce"),
+    ("蚝油", "oyster sauce"),
+    ("鱼露", "fish sauce"),
+    ("香油", "sesame oil"),
+    ("食用油", "vegetable oil"),
+    ("盐", "salt"),
+    ("白糖", "sugar"),
+    ("蒜", "garlic"),
+    ("大蒜", "garlic"),
+    ("姜", "ginger"),
+    ("香菜", "cilantro"),
 ]
+
+# Kitchen resources use the same internal vocabulary as ResourceNeed and
+# KitchenResourceSnapshot.  LLM output is allowed to be bilingual, but
+# comparisons must always use these stable keys.
+_RESOURCE_ALIASES: dict[str, str] = {
+    "stove": "stove", "gas stove": "stove", "cooktop": "stove", "hob": "stove",
+    "burner": "stove", "炉灶": "stove", "燃气灶": "stove", "电磁炉": "stove",
+    "oven": "oven", "烤箱": "oven",
+    "wok": "wok", "炒锅": "wok",
+    "frying pan": "frying_pan", "skillet": "frying_pan", "平底锅": "frying_pan", "煎锅": "frying_pan",
+    "pot": "pot", "saucepan": "pot", "汤锅": "pot", "煮锅": "pot",
+    "knife": "knife", "chef knife": "knife", "菜刀": "knife", "厨刀": "knife",
+    "cutting board": "cutting_board", "chopping board": "cutting_board", "砧板": "cutting_board",
+    "mixing bowl": "mixing_bowl", "搅拌碗": "mixing_bowl", "调料碗": "mixing_bowl",
+    "sink": "sink", "水槽": "sink", "洗菜池": "sink",
+    "spatula": "spatula", "turner": "spatula", "锅铲": "spatula", "铲子": "spatula",
+    "steamer": "steamer", "蒸锅": "steamer",
+    "microwave": "microwave", "microwave oven": "microwave", "微波炉": "microwave",
+    "blender": "blender", "food processor": "blender", "料理机": "blender", "搅拌机": "blender",
+    "air fryer": "air_fryer", "空气炸锅": "air_fryer",
+}
 
 # Patterns to strip from ingredient names during normalisation.
 # Applied BEFORE alias mapping — removes quantity, unit, and prep notes
@@ -157,7 +228,7 @@ def normalise_ingredient_name(raw_name: str) -> str:
         >>> normalise_ingredient_name('Salt')
         'salt'
     """
-    name = raw_name.strip().lower()
+    name = unicodedata.normalize("NFKC", raw_name).strip().lower()
 
     # Stage 1: strip quantity + unit prefix (e.g. "200g chicken breast" → "chicken breast")
     name = _RE_STRIP_QUANTITY.sub("", name).strip()
@@ -183,10 +254,25 @@ def normalise_ingredient_name(raw_name: str) -> str:
     # known alias (e.g. "chicken breast" appears in "chicken breast fillet")
     # Only apply if the match covers > 60% of the cleaned name.
     for alias, canonical in _INGREDIENT_ALIASES:
-        if len(alias) > 4 and alias in name:
+        # CJK aliases are commonly two to four characters, whereas the
+        # equivalent English aliases need a longer threshold to avoid noise.
+        if (len(alias) > 4 or any("\u4e00" <= char <= "\u9fff" for char in alias)) and alias in name:
             return canonical
 
     return name
+
+
+def normalise_resource_type(raw_type: str) -> str:
+    """Normalise bilingual equipment labels to a stable resource type.
+
+    Unknown labels are returned in a whitespace- and separator-normalised
+    form so existing custom resource types continue to match exactly.
+    """
+    resource_type = unicodedata.normalize("NFKC", raw_type).strip().lower()
+    resource_type = _RE_MULTI_SPACE.sub(" ", resource_type)
+    resource_type = resource_type.replace("-", " ").replace("_", " ")
+    resource_type = _RE_MULTI_SPACE.sub(" ", resource_type).strip()
+    return _RESOURCE_ALIASES.get(resource_type, resource_type.replace(" ", "_"))
 
 
 # =============================================================================

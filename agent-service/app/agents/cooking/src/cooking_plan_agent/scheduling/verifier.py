@@ -9,6 +9,7 @@ All checks are deterministic and purely based on the domain input/output.
 
 from cooking_plan_agent.domain.enums import SolverStatus, WorkMode
 from cooking_plan_agent.domain.models import CookingTask
+from cooking_plan_agent.normalisation.names import normalise_resource_type
 from cooking_plan_agent.scheduling.models import (
     ScheduledInterval,
     ScheduleResult,
@@ -420,11 +421,15 @@ class ScheduleVerifier:
     ) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
 
-        available_types = {r.resource_type for r in problem.resources if r.available}
+        available_types = {
+            normalise_resource_type(r.resource_type)
+            for r in problem.resources
+            if r.available
+        }
 
         for task in problem.tasks:
             for need in task.resources:
-                if need.resource_type not in available_types:
+                if normalise_resource_type(need.resource_type) not in available_types:
                     issues.append(
                         VerificationIssue(
                             code="RESOURCE_UNAVAILABLE",
@@ -457,7 +462,8 @@ class ScheduleVerifier:
         for r in problem.resources:
             if r.available:
                 cap = int(r.capacity) if r.capacity else 1
-                res_capacity[r.resource_type] = res_capacity.get(r.resource_type, 0) + cap
+                resource_type = normalise_resource_type(r.resource_type)
+                res_capacity[resource_type] = res_capacity.get(resource_type, 0) + cap
 
         for res_type, capacity in res_capacity.items():
             # Collect events: (time, is_start, task_id, demand).
@@ -467,7 +473,7 @@ class ScheduleVerifier:
                 if task is None:
                     continue
                 for need in task.resources:
-                    if need.resource_type == res_type:
+                    if normalise_resource_type(need.resource_type) == res_type:
                         events.append((interval.start_minute, True, task_id, need.quantity))
                         events.append((interval.end_minute, False, task_id, need.quantity))
                         break  # Each task counts once per resource type

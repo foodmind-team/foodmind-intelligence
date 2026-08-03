@@ -742,6 +742,7 @@ async def check_feasibility_node(
     merge_preparation + build_task_graph stages.
     """
     from cooking_plan_agent.inventory.feasibility import check_all_inventory
+    from cooking_plan_agent.normalisation.names import normalise_resource_type
 
     request = state["request"]
     parsed_recipes = state.get("parsed_recipes", ())
@@ -760,11 +761,15 @@ async def check_feasibility_node(
     # --- Resource pre-check (from step hints, pre-decomposition) ---
     missing_resources: list[str] = []
     if request.kitchen_resources:
-        available_types = {r.resource_type.lower() for r in request.kitchen_resources if r.available}
+        available_types = {
+            normalise_resource_type(r.resource_type)
+            for r in request.kitchen_resources
+            if r.available
+        }
         for recipe in parsed_recipes:
             for step in recipe.steps:
                 for hint in step.resources_hint:
-                    if hint.lower() not in available_types:
+                    if normalise_resource_type(hint) not in available_types:
                         if hint not in missing_resources:
                             missing_resources.append(hint)
 
