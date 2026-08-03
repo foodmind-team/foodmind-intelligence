@@ -43,6 +43,7 @@ def _row_to_record(row: tuple[Any, ...]) -> TaskRecord:
         progress_json,
         result_json,
         error_json,
+        execution_state_json,
         created_at_iso,
         updated_at_iso,
         expires_at_iso,
@@ -62,6 +63,7 @@ def _row_to_record(row: tuple[Any, ...]) -> TaskRecord:
         progress=_progress_from_json(progress_json),
         result=json.loads(result_json) if result_json else None,
         error=json.loads(error_json) if error_json else None,
+        execution_state=json.loads(execution_state_json) if execution_state_json else {},
         created_at=utc_now().fromisoformat(created_at_iso),
         updated_at=utc_now().fromisoformat(updated_at_iso),
         expires_at=utc_now().fromisoformat(expires_at_iso) if expires_at_iso else None,
@@ -110,6 +112,14 @@ class TaskRepository(ABC):
         """
 
     @abstractmethod
+    async def update_execution_state(
+        self,
+        record: TaskRecord,
+        expected_event_id: int,
+    ) -> TaskRecord | None:
+        """Persist execution state with optimistic event-version control."""
+
+    @abstractmethod
     async def list_running(self) -> list[TaskRecord]:
         """Return QUEUED/RUNNING tasks (recovery after restart, P3-01)."""
 
@@ -156,6 +166,7 @@ class SQLiteTaskRepository(TaskRepository):
         progress          TEXT NOT NULL DEFAULT '{}',
         result            TEXT,
         error             TEXT,
+        execution_state   TEXT NOT NULL DEFAULT '{}',
         created_at        TEXT NOT NULL,
         updated_at        TEXT NOT NULL,
         expires_at        TEXT,
@@ -176,6 +187,7 @@ class SQLiteTaskRepository(TaskRepository):
         "max_attempts": "max_attempts INTEGER NOT NULL DEFAULT 3",
         "lease_expires_at": "lease_expires_at TEXT",
         "event_id": "event_id INTEGER NOT NULL DEFAULT 0",
+        "execution_state": "execution_state TEXT NOT NULL DEFAULT '{}'",
     }
 
     def __init__(self, db_path: str) -> None:
@@ -230,6 +242,7 @@ class SQLiteTaskRepository(TaskRepository):
             record.progress.model_dump_json(),
             json.dumps(record.result, default=str) if record.result else None,
             json.dumps(record.error, default=str) if record.error else None,
+            json.dumps(record.execution_state, default=str),
             record.created_at.isoformat(),
             record.updated_at.isoformat(),
             record.expires_at.isoformat() if record.expires_at else None,
@@ -240,7 +253,7 @@ class SQLiteTaskRepository(TaskRepository):
 
     _SELECT = """
         SELECT task_id, request_id, user_id, status, request_payload,
-               thread_id, revision, event_id, progress, result, error,
+               thread_id, revision, event_id, progress, result, error, execution_state,
                created_at, updated_at, expires_at,
                attempts, max_attempts, lease_expires_at
         FROM cooking_tasks
@@ -260,9 +273,9 @@ class SQLiteTaskRepository(TaskRepository):
             raise DuplicateRequestError(record.request_id)
         cols = (
             "task_id, request_id, user_id, status, request_payload, thread_id, revision, event_id, progress, "
-            "result, error, created_at, updated_at, expires_at, attempts, max_attempts, lease_expires_at"
+            "result, error, execution_state, created_at, updated_at, expires_at, attempts, max_attempts, lease_expires_at"
         )
-        placeholders = ", ".join("?" for _ in range(17))
+        placeholders = ", ".join("?" for _ in range(18))
         await self.conn.execute(
             f"INSERT INTO cooking_tasks ({cols}) VALUES ({placeholders})",
             self._columns(record),
@@ -288,7 +301,7 @@ class SQLiteTaskRepository(TaskRepository):
             UPDATE cooking_tasks
             SET status=?, request_payload=?, thread_id=?, revision=?,
                 event_id = event_id + 1,
-                progress=?, result=?, error=?, updated_at=?, expires_at=?,
+                progress=?, result=?, error=?, execution_state=?, updated_at=?, expires_at=?,
                 attempts=?, max_attempts=?, lease_expires_at=?
             WHERE task_id=? AND status=?
             """,
@@ -300,6 +313,7 @@ class SQLiteTaskRepository(TaskRepository):
                 record.progress.model_dump_json(),
                 json.dumps(record.result, default=str) if record.result else None,
                 json.dumps(record.error, default=str) if record.error else None,
+                json.dumps(record.execution_state, default=str),
                 record.updated_at.isoformat(),
                 record.expires_at.isoformat() if record.expires_at else None,
                 record.attempts,
@@ -316,6 +330,30 @@ class SQLiteTaskRepository(TaskRepository):
             return None
         # Re-read to return the authoritative stored row.
         return await self.get(record.task_id)
+
+    async def update_execution_state(self, record: TaskRecord, expected_event_id: int) -> TaskRecord | None:
+        """Atomically persist a READY plan's cooking progress.
+
+        ``event_id`` guards concurrent mobile/web updates; clients that lose
+        the race reload the latest snapshot rather than overwriting progress.
+        """
+        cursor = await self.conn.execute(
+            """
+            UPDATE cooking_tasks
+            SET execution_state=?, updated_at=?, event_id = event_id + 1
+            WHERE task_id=? AND status='READY' AND event_id=?
+            """,
+            (
+                json.dumps(record.execution_state, default=str),
+                record.updated_at.isoformat(),
+                record.task_id,
+                expected_event_id,
+            ),
+        )
+        await self.conn.commit()
+        changed = cursor.rowcount
+        await cursor.close()
+        return await self.get(record.task_id) if changed else None
 
     async def list_running(self) -> list[TaskRecord]:
         cursor = await self.conn.execute(f"{self._SELECT} WHERE status IN ('QUEUED', 'RUNNING') ORDER BY created_at")

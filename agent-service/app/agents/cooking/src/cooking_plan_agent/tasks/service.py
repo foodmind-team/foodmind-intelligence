@@ -194,6 +194,61 @@ class AsyncTaskService:
             self._notify(updated)
         return updated or record
 
+    async def execution_snapshot(self, task_id: str) -> tuple[TaskRecord | None, dict[str, object] | None]:
+        """Load the dependency-driven cooking state for a READY task."""
+        from cooking_plan_agent.execution import build_execution_snapshot
+
+        record = await self._repo.get(task_id)
+        if record is None or record.status != TaskStatus.READY or not isinstance(record.result, dict):
+            return record, None
+        return (
+            record,
+            build_execution_snapshot(
+                record.result.get("execution_flow"),
+                record.execution_state,
+                record.request_payload.get("kitchen_resources", ()),
+            ),
+        )
+
+    async def update_execution(
+        self,
+        task_id: str,
+        cooking_task_id: str,
+        target_status: str,
+        expected_event_id: int,
+    ) -> tuple[TaskRecord | None, dict[str, object] | None, str | None]:
+        """Apply one validated cooking-task transition to a READY plan.
+
+        The event version makes concurrent Android/Web updates safe: a stale
+        client receives ``EXECUTION_STATE_CONFLICT`` and reloads the snapshot.
+        """
+        from cooking_plan_agent.execution import ExecutionStateError, transition_execution_state
+
+        record = await self._repo.get(task_id)
+        if record is None or record.status != TaskStatus.READY or not isinstance(record.result, dict):
+            return record, None, "PLAN_NOT_READY_FOR_EXECUTION"
+        if record.event_id != expected_event_id:
+            return record, None, "EXECUTION_STATE_CONFLICT"
+        try:
+            next_state, snapshot = transition_execution_state(
+                record.result.get("execution_flow"),
+                record.execution_state,
+                record.request_payload.get("kitchen_resources", ()),
+                cooking_task_id,
+                target_status,
+            )
+        except ExecutionStateError as exc:
+            return record, None, exc.code
+        updated = await self._repo.update_execution_state(
+            record.model_copy(update={"execution_state": next_state, "updated_at": utc_now()}),
+            expected_event_id=expected_event_id,
+        )
+        if updated is None:
+            latest, latest_snapshot = await self.execution_snapshot(task_id)
+            return latest, latest_snapshot, "EXECUTION_STATE_CONFLICT"
+        self._notify(updated)
+        return updated, snapshot, None
+
     # -- SSE progress subscription (P4-04) -----------------------------------
 
     async def subscribe(

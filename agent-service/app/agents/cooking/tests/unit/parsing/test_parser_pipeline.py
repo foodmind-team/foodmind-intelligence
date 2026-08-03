@@ -12,6 +12,7 @@ from decimal import Decimal
 import pytest
 
 from cooking_plan_agent.domain.enums import HeatLevel
+from cooking_plan_agent.domain.models import ExtractedIngredient, ExtractedRecipeCandidate, ExtractedStep
 from cooking_plan_agent.parsing.extractor import RecipeExtractor
 from cooking_plan_agent.parsing.gaps import GapClass, find_recipe_gaps
 from cooking_plan_agent.parsing.golden_fixtures import GOLDEN_FIXTURES
@@ -117,6 +118,29 @@ class TestRecipeExtractor:
         # Should detect "鸡翅" or "鸡翅中" in ingredients
         names = [i.name for i in candidate.ingredients]
         assert any("鸡翅" in n for n in names), f"Ingredient names: {names}"
+
+
+def test_frying_step_with_marinated_food_is_not_a_marination_step() -> None:
+    """“腌好的鸡翅下锅煎制” describes frying, not another marinade wait."""
+    candidate = ExtractedRecipeCandidate(
+        recipe_id="r7",
+        dish_name="香辣鸡翅",
+        original_servings=Decimal(2),
+        source_language="zho",
+        ingredients=(
+            ExtractedIngredient(raw_text="鸡翅中", name="鸡翅中", quantity=Decimal(15), unit="个"),
+        ),
+        steps=(
+            ExtractedStep(
+                step_number=1,
+                instruction="煎制鸡翅：将腌好的鸡翅下锅，煎至两面焦黄。",
+                category="heating",
+            ),
+        ),
+    )
+
+    recipe = build_recipe_ir(candidate, request_recipe_id="r7")
+    assert recipe.steps[0].pattern == "stir_fry"
 
     @pytest.mark.asyncio
     async def test_extract_duration_detection(self) -> None:

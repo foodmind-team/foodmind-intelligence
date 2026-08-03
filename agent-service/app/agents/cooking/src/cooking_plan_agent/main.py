@@ -251,6 +251,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
             temperature=settings.llm_temperature,
+            max_output_tokens=settings.llm_max_output_tokens,
             connection_pool_size=settings.llm_connection_pool_size,
         )
         # P1-02: one lifecycle-level client, closed exactly once on shutdown.

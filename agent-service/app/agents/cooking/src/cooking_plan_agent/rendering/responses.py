@@ -31,6 +31,7 @@ from cooking_plan_agent.domain.models import (
 )
 from cooking_plan_agent.rendering.builder import (
     build_dish_completion_summary,
+    build_execution_flow,
     build_mise_en_place,
     build_timeline,
 )
@@ -116,6 +117,7 @@ def render_ready_response(state: PlanState) -> ReadyPlanResponse:
         solver_status=solver_status,
         makespan_minutes=makespan,
         timeline=timeline,
+        execution_flow=build_execution_flow(all_tasks),
         completion_checklist=completion_checklist,
         mise_en_place=mise_en_place,
         dish_completions=dish_completions,

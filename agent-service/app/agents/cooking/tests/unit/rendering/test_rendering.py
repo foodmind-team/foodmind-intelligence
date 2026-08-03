@@ -20,12 +20,14 @@ from cooking_plan_agent.domain.models import (
     RepairOption,
     SafetyFinding,
     SafetyReport,
+    TaskDependency,
     WorkflowError,
 )
 from cooking_plan_agent.rendering.builder import (
     build_completion_checklist,
     build_dish_completion_summary,
     build_mise_en_place,
+    build_execution_flow,
     build_timeline,
     validate_completion_checklist,
 )
@@ -245,6 +247,41 @@ class TestBuildTimeline:
         """Interval references a task not in the task list → skipped."""
         result = build_timeline(sample_schedule, ())  # No tasks
         assert result == ()
+
+
+# =====================================================================
+# build_execution_flow
+# =====================================================================
+
+
+class TestBuildExecutionFlow:
+    def test_exposes_actual_dependencies_and_unlocked_follow_up(self):
+        """A UI can offer blanching immediately after crab preparation.
+
+        The unrelated shrimp task intentionally has no dependency, so it can
+        be presented as another available task while the passive heating task
+        is in progress.  No wall-clock time is involved.
+        """
+        tasks = (
+            _make_task("crab_prep", "crab", "处理蟹脚", 5),
+            CookingTask(
+                task_id="crab_blanch",
+                dish_id="crab",
+                instruction="蟹脚冷水加米酒焯水",
+                duration_minutes=5,
+                work_mode=WorkMode.PASSIVE,
+                category="heating",
+                dependencies=(TaskDependency(predecessor_id="crab_prep"),),
+            ),
+            _make_task("shrimp_prep", "shrimp", "处理鲜虾", 5),
+        )
+
+        flow = {item["task_id"]: item for item in build_execution_flow(tasks)}
+
+        assert flow["crab_blanch"]["depends_on"] == ("crab_prep",)
+        assert flow["crab_prep"]["unlocks"] == ("crab_blanch",)
+        assert flow["crab_blanch"]["work_mode"] == WorkMode.PASSIVE.value
+        assert flow["shrimp_prep"]["depends_on"] == ()
 
 
 # ======================================================================

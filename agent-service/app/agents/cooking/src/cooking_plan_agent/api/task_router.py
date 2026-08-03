@@ -100,6 +100,25 @@ class TaskEvent(BaseModel):
     updated_at: str
 
 
+class ExecutionUpdateRequest(BaseModel):
+    """One user-confirmed cooking-task transition."""
+
+    cooking_task_id: str = Field(min_length=1, max_length=200)
+    status: str = Field(pattern="^(IN_PROGRESS|COMPLETED)$")
+    expected_event_id: int = Field(ge=0)
+
+
+class ExecutionSnapshot(BaseModel):
+    """Current ready/blocked task groups for Android and Web clients."""
+
+    event_id: int
+    available_tasks: tuple[dict[str, object], ...]
+    in_progress_task_ids: tuple[str, ...]
+    completed_task_ids: tuple[str, ...]
+    blocked_tasks: tuple[dict[str, object], ...]
+    is_complete: bool
+
+
 def _to_summary(record: TaskRecord) -> TaskSummary:
     """Convert a persisted record to the wire model."""
     return TaskSummary(
@@ -229,6 +248,62 @@ async def get_task(
             detail={"code": "TASK_NOT_FOUND", "message": f"Task {task_id} not found."},
         )
     return _to_summary(record)
+
+
+def _execution_response(record: TaskRecord, snapshot: dict[str, object]) -> ExecutionSnapshot:
+    """Convert a trusted service snapshot to the stable HTTP response."""
+    return ExecutionSnapshot(event_id=record.event_id, **snapshot)
+
+
+@router.get(
+    "/{task_id}/execution",
+    response_model=ExecutionSnapshot,
+    responses={
+        404: {"model": ErrorEnvelope, "description": "Task not found."},
+        409: {"model": ErrorEnvelope, "description": "Plan is not READY for execution."},
+    },
+)
+async def get_execution_state(
+    task_id: str,
+    service: Annotated[AsyncTaskService, Depends(get_task_service)],
+    _correlation_id: Annotated[str, Depends(extract_correlation_id)],
+) -> ExecutionSnapshot:
+    """Return tasks that are executable now, based on actual completion state."""
+    record, snapshot = await service.execution_snapshot(task_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "TASK_NOT_FOUND", "message": "Task not found."})
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "PLAN_NOT_READY_FOR_EXECUTION", "message": "Plan is not READY for execution."})
+    return _execution_response(record, snapshot)
+
+
+@router.post(
+    "/{task_id}/execution",
+    response_model=ExecutionSnapshot,
+    responses={
+        404: {"model": ErrorEnvelope, "description": "Task not found."},
+        409: {"model": ErrorEnvelope, "description": "Execution transition rejected."},
+    },
+)
+async def update_execution_state(
+    task_id: str,
+    body: ExecutionUpdateRequest,
+    service: Annotated[AsyncTaskService, Depends(get_task_service)],
+    _correlation_id: Annotated[str, Depends(extract_correlation_id)],
+) -> ExecutionSnapshot:
+    """Mark a cooking task in progress or complete, then return the next group."""
+    record, snapshot, error_code = await service.update_execution(
+        task_id,
+        body.cooking_task_id,
+        body.status,
+        body.expected_event_id,
+    )
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "TASK_NOT_FOUND", "message": "Task not found."})
+    if error_code is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": error_code, "message": "Cooking task transition is not currently allowed."})
+    assert snapshot is not None
+    return _execution_response(record, snapshot)
 
 
 @router.post(

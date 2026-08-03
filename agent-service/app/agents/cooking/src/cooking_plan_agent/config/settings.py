@@ -87,9 +87,15 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.deepseek.com"  # OpenAI-compatible base URL
     llm_model: str = "deepseek-chat"  # model name
     llm_api_key: str | None = None  # bearer token for cloud providers (Ollama: None)
-    llm_timeout_seconds: float = 30.0  # per-call timeout
+    # Recipe extraction returns a sizeable JSON document.  Allow cloud models
+    # enough time to complete it; callers with interactive deadlines can
+    # override this through COOKING_PLAN_LLM_TIMEOUT_SECONDS.
+    llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2  # retries before falling back to rule-based
     llm_temperature: float = 0.1  # low temp for deterministic structured output
+    # Bounds provider output so a malformed/overly verbose structured response
+    # cannot consume the entire request timeout.
+    llm_max_output_tokens: int = 2048
 
     # --- LLM concurrency & connection budget (P1-02) ---
     # Max in-flight LLM calls per request (recipe extraction fan-out). The
@@ -102,7 +108,7 @@ class Settings(BaseSettings):
     llm_connection_pool_size: int = 10
     # Overall envelope timeout for the whole multi-recipe extraction batch.
     # Per-call timeout is llm_timeout_seconds; this bounds the gather.
-    llm_overall_timeout_seconds: float = 120.0
+    llm_overall_timeout_seconds: float = 240.0
 
     # --- Schedule explanation (P2-02 / P4-01) ---
     # READY responses may carry a short "why this schedule" explanation

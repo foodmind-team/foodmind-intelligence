@@ -628,6 +628,9 @@ class ReadyPlanResponse(StrictModel):
     solver_status: str
     makespan_minutes: int
     timeline: tuple[dict[str, object], ...]
+    # Dependency-driven task graph for execution UIs.  Unlike ``timeline``,
+    # this never asks the user to start a task at a fixed minute.
+    execution_flow: tuple[dict[str, object], ...] = ()
     completion_checklist: tuple["CompletionItem", ...]
     mise_en_place: tuple[dict[str, object], ...]
     dish_completions: tuple[dict[str, object], ...]

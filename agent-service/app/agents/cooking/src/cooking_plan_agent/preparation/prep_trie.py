@@ -329,6 +329,70 @@ def _verify_node(node: PrepTrieNode) -> None:
 # Infer preparation chains from IngredientDemand
 # ============================================================================
 
+# Pantry seasonings and cooking media are ready to use; treating their generic
+# raw input state as produce and scheduling a sink wash is both nonsensical
+# and makes a multi-dish schedule much longer. This is intentionally a
+# conservative keyword allow-list: items not matched here retain the existing
+# wash-first behaviour until a proper ingredient taxonomy is available.
+_NON_WASHABLE_INGREDIENT_KEYWORDS = (
+    "salt",
+    "sugar",
+    "soy sauce",
+    "vinegar",
+    "oil",
+    "starch",
+    "flour",
+    "pepper",
+    "seasoning",
+    "sauce",
+    "stock cube",
+    "盐",
+    "糖",
+    "生抽",
+    "老抽",
+    "蚝油",
+    "醋",
+    "油",
+    "淀粉",
+    "胡椒",
+    "鸡精",
+    "鸡粉",
+    "味精",
+    "火锅底料",
+    "火锅料",
+    "豆瓣酱",
+    "辣椒面",
+    "白芝麻",
+    "料酒",
+    "米酒",
+    "酒糟",
+    "五香粉",
+    "egg",
+    "chicken",
+    "beef",
+    "pork",
+    "fish",
+    "shrimp",
+    "prawn",
+    "lamb",
+    "turkey",
+    "duck",
+    "sausage",
+    "蛋清",
+    "鸡翅",
+    "鲜虾",
+    "基围虾",
+    "蟹",
+    "排骨",
+    "腊肠",
+)
+
+
+def _is_washable_ingredient(demand: IngredientDemand) -> bool:
+    """Return whether a raw ingredient should receive an inferred wash step."""
+    name = demand.canonical_name.lower()
+    return not any(keyword in name for keyword in _NON_WASHABLE_INGREDIENT_KEYWORDS)
+
 
 def _infer_prep_chain(demand: IngredientDemand) -> tuple[PreparationOperation, ...]:
     """Infer a basic preparation chain from an IngredientDemand.
@@ -343,8 +407,10 @@ def _infer_prep_chain(demand: IngredientDemand) -> tuple[PreparationOperation, .
     """
     ops: list[PreparationOperation] = []
 
-    # Always start with wash (unless input_state suggests already processed).
-    if demand.input_state == "raw":
+    # Start with wash only for raw, washable ingredients. Condiments and
+    # cooking media are supplied ready to use even though the MVP model marks
+    # otherwise-unclassified inputs as raw.
+    if demand.input_state == "raw" and _is_washable_ingredient(demand):
         ops.append(
             PreparationOperation(
                 operation="wash",
@@ -491,6 +557,43 @@ class SharedPrepResult:
     observations: tuple[str, ...]
 
 
+def _batch_wash_tasks(tasks: list[CookingTask]) -> list[CookingTask]:
+    """Combine independent fresh-ingredient washes into one basin operation.
+
+    All wash candidates entering this function are non-protein ingredients:
+    raw proteins and pantry items are excluded by the preparation inference.
+    A single task produces every original food state, so downstream recipe
+    dependencies remain intact while the user performs one concentrated wash
+    and drain operation instead of repeatedly returning to the sink.
+    """
+    wash_tasks = [
+        task
+        for task in tasks
+        if task.task_id.startswith("prep_") and "_wash_" in task.task_id and not task.consumes_states
+    ]
+    if len(wash_tasks) < 2:
+        return tasks
+
+    names = [task.task_id.removeprefix("prep_").rsplit("_wash_", 1)[0] for task in wash_tasks]
+    produced_states = tuple(state for task in wash_tasks for state in task.produces_states)
+    # One large basin pass: five minutes of setup/rinsing plus roughly one
+    # minute for every three additional ingredient groups, capped at 15.
+    duration = min(15, 5 + (len(wash_tasks) - 1 + 2) // 3)
+    batch_task = wash_tasks[0].model_copy(
+        update={
+            "task_id": "prep_batch_wash_fresh_ingredients",
+            "dish_id": "shared",
+            "instruction": f"[Prep] 集中清洗并沥干：{'、'.join(names)}",
+            "duration_minutes": duration,
+            "resources": (ResourceNeed(quantity=1, resource_type="sink"),),
+            "produces_states": produced_states,
+            "batch_key": "prep_batch_wash_fresh_ingredients",
+        }
+    )
+    wash_ids = {task.task_id for task in wash_tasks}
+    return [task for task in tasks if task.task_id not in wash_ids] + [batch_task]
+
+
 def build_shared_prep_tasks(
     demands: tuple[tuple[str, IngredientDemand], ...],
 ) -> SharedPrepResult:
@@ -578,8 +681,12 @@ def build_shared_prep_tasks(
         if len(class_by_ingredient.get(name, set())) > 1:
             observations.append(f"isolated raw/RTE prep for {name}")
 
+    batched_tasks = _batch_wash_tasks(tasks)
+    if len(batched_tasks) < len(tasks):
+        observations.append(f"batched {len(tasks) - len(batched_tasks) + 1} fresh-ingredient washes")
+
     return SharedPrepResult(
-        tasks=tuple(tasks),
+        tasks=tuple(batched_tasks),
         demand_final_states=demand_final_states,
         observations=tuple(observations),
     )
