@@ -22,6 +22,10 @@ from cooking_plan_agent.domain.models import (
     LotAllocation,
     ResourceNeed,
 )
+from cooking_plan_agent.normalisation.names import (
+    normalise_ingredient_name,
+    normalise_resource_type,
+)
 
 # =============================================================================
 # 5.10  Lot usability
@@ -100,11 +104,14 @@ def allocate_fefo(
         IngredientFeasibility with shortage (0 if fully satisfiable) and
         proposed allocations.
     """
-    required_name = requirement.canonical_name.lower().strip()
+    required_name = normalise_ingredient_name(requirement.canonical_name)
 
     # Step 1–2: filter matching + usable lots
     matching = [
-        lot for lot in lots if lot.canonical_name.lower().strip() == required_name and is_lot_usable(lot, cooking_date)
+        lot
+        for lot in lots
+        if normalise_ingredient_name(lot.canonical_name) == required_name
+        and is_lot_usable(lot, cooking_date)
     ]
 
     # Step 3: sort by expiry (earliest first, None last)
@@ -164,7 +171,7 @@ def _aggregate_demands(
     """
     aggregated: dict[str, IngredientDemand] = {}
     for d in demands:
-        key = d.canonical_name.lower().strip()
+        key = normalise_ingredient_name(d.canonical_name)
         if key in aggregated:
             existing = aggregated[key]
             # Quantity summing — unit must match (upstream responsibility)
@@ -242,7 +249,7 @@ def resource_is_compatible(
         True if the resource satisfies the need.
     """
     # Type match
-    if resource.resource_type.lower() != need.resource_type.lower():
+    if normalise_resource_type(resource.resource_type) != normalise_resource_type(need.resource_type):
         return False
 
     # Availability

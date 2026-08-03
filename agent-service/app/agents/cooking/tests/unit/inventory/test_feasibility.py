@@ -273,6 +273,20 @@ class TestAllocateFefo:
         result = allocate_fefo(chicken_demand, (lot,), _TODAY)
         assert result.shortage == Decimal(100)
 
+    def test_name_match_chinese_english_synonyms(self, chicken_demand):
+        """A Chinese LLM demand matches an English inventory canonical name."""
+        chinese_demand = chicken_demand.model_copy(update={"canonical_name": "鸡胸肉"})
+        inventory_lot = InventoryLotSnapshot(
+            lot_id="lot-chinese-alias",
+            item_id="item-chicken",
+            canonical_name="chicken breast",
+            on_hand=Decimal(400),
+            reserved=Decimal(0),
+            unit="g",
+        )
+        result = allocate_fefo(chinese_demand, (inventory_lot,), _TODAY)
+        assert result.shortage == Decimal(0)
+
     def test_exact_satisfaction(self, chicken_demand, chicken_lot):
         """Demand exactly matches available."""
         demand = chicken_demand.model_copy(update={"quantity": Decimal(500)})
@@ -393,6 +407,10 @@ class TestResourceIsCompatible:
 
     def test_case_insensitive_type_match(self, stove_resource):
         need = ResourceNeed(resource_type="STOVE", quantity=1)
+        assert resource_is_compatible(need, stove_resource) is True
+
+    def test_chinese_english_type_match(self, stove_resource):
+        need = ResourceNeed(resource_type="燃气灶", quantity=1)
         assert resource_is_compatible(need, stove_resource) is True
 
     def test_type_mismatch(self, oven_resource):
