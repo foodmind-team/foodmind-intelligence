@@ -44,6 +44,7 @@ class LLMClient:
         timeout_seconds: float = 30.0,
         max_retries: int = 2,
         temperature: float = 0.1,
+        max_output_tokens: int = 2048,
         connection_pool_size: int = 10,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -52,6 +53,7 @@ class LLMClient:
         self._timeout = timeout_seconds
         self._max_retries = max_retries
         self._temperature = temperature
+        self._max_output_tokens = max_output_tokens
         # Lifecycle-level transport: bounded pool, reused across every call.
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds),
@@ -96,6 +98,7 @@ class LLMClient:
             "model": self._model,
             "messages": messages,
             "temperature": self._temperature if temperature is None else temperature,
+            "max_tokens": self._max_output_tokens,
             "stream": False,
         }
         if json_mode:
