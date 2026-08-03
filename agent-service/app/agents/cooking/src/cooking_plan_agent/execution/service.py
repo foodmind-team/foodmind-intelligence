@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-
 PENDING = "PENDING"
 IN_PROGRESS = "IN_PROGRESS"
 COMPLETED = "COMPLETED"
@@ -137,7 +136,12 @@ def transition_execution_state(
     if current == COMPLETED:
         raise ExecutionStateError("TASK_ALREADY_COMPLETED", f"Cooking task '{task_id}' is already complete.")
     snapshot = build_execution_snapshot(flow, next_states, kitchen_resources)
-    available_ids = {item["task_id"] for item in snapshot["available_tasks"] if isinstance(item, dict)}
+    raw_available = snapshot.get("available_tasks", ())
+    available_ids = (
+        {item["task_id"] for item in raw_available if isinstance(item, dict) and isinstance(item.get("task_id"), str)}
+        if isinstance(raw_available, (list, tuple))
+        else set()
+    )
     if current == PENDING and task_id not in available_ids:
         raise ExecutionStateError("TASK_NOT_READY", f"Cooking task '{task_id}' is blocked by a dependency, cook, or resource.")
     if target_status == COMPLETED and current == PENDING and task_id not in available_ids:

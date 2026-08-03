@@ -4,7 +4,6 @@ import pytest
 
 from cooking_plan_agent.execution import ExecutionStateError, build_execution_snapshot, transition_execution_state
 
-
 FLOW = (
     {
         "task_id": "crab_prep",

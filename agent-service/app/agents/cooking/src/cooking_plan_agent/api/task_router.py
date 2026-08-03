@@ -252,7 +252,7 @@ async def get_task(
 
 def _execution_response(record: TaskRecord, snapshot: dict[str, object]) -> ExecutionSnapshot:
     """Convert a trusted service snapshot to the stable HTTP response."""
-    return ExecutionSnapshot(event_id=record.event_id, **snapshot)
+    return ExecutionSnapshot.model_validate({"event_id": record.event_id, **snapshot})
 
 
 @router.get(
