@@ -21,3 +21,6 @@ openapi.json
 
 # Development plans (local only, not for remote)
 docs/
+
+# Runtime sqlite databases (checkpointer + task queue, generated at startup)
+data/
