@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # --- LLM integration (local Ollama via OpenAI-compatible API) ---
     # Provider-neutral: base_url + model are configurable so any OpenAI-
     # compatible endpoint (Ollama, localhost proxy, cloud) can be swapped in.
-    llm_enabled: bool = False  # master switch; False keeps rule-based pipeline
+    llm_enabled: bool = True  # master switch; False keeps rule-based pipeline
     llm_base_url: str = "https://api.deepseek.com"  # OpenAI-compatible base URL
     llm_model: str = "deepseek-chat"  # model name
     llm_api_key: str | None = None  # bearer token for cloud providers (Ollama: None)

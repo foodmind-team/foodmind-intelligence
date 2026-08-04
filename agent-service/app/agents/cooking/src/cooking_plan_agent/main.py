@@ -129,8 +129,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # ---- LLM wiring (local Ollama via OpenAI-compatible API) ----
     # Provider-neutral: any OpenAI-compatible endpoint can be swapped via
-    # COOKING_PLAN_LLM_* settings. When llm_enabled=False (default), the
-    # rule-based pipeline is preserved — CI stays offline-deterministic.
+    # COOKING_PLAN_LLM_* settings. LLM is enabled by default; set
+    # llm_enabled=False to keep the rule-based pipeline (e.g. CI stays
+    # offline-deterministic).
     from cooking_plan_agent.llm import (
         LLMClient,
         LLMKnowledgeResearcher,
