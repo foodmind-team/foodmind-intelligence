@@ -136,3 +136,23 @@ class VerificationReport(StrictModel):
 
     checked_resource_count: int = 0
     """How many resources were verified."""
+
+
+# ============================================================================
+# P5-3  RepairAttemptRecord — schedule 反思修复尝试留痕
+# ============================================================================
+
+
+class RepairAttemptRecord(StrictModel):
+    """P5-3: 单次 schedule 反思修复尝试的留痕。
+
+    outcome 取值：
+      - "retrying"：本次尝试未恢复，计划降级后重试求解；
+      - "gave_up"：不可修复或已达重试上限，路由到 FAILED；
+      - "recovered"：保留位，供未来"重试后恢复"场景记录。
+    """
+
+    attempt: int
+    issues: tuple[str, ...] = ()
+    action: str = ""
+    outcome: str = "retrying"

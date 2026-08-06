@@ -101,9 +101,7 @@ async def test_soft_llm_hints_do_not_block_knife_only_operation():
     )
     state = {
         "request": _request(kitchen),
-        "parsed_recipes": (
-            _ir((_step(("剪刀", "厨房纸", "电饭煲", "碗", "锅", "锅盖")),)),
-        ),
+        "parsed_recipes": (_ir((_step(("剪刀", "厨房纸", "电饭煲", "碗", "锅", "锅盖")),)),),
     }
 
     result = await check_feasibility_node(state, _RuntimeStub())

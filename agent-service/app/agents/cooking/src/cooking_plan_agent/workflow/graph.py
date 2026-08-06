@@ -23,6 +23,7 @@ from cooking_plan_agent.workflow.nodes import (
     render_failed_response_node,
     render_infeasible_response_node,
     render_ready_response_node,
+    repair_schedule_node,
     research_missing_node,
     solve_schedule_node,
     validate_input_node,
@@ -34,6 +35,7 @@ from cooking_plan_agent.workflow.routing import (
     route_after_feasibility,
     route_after_gap_detection,
     route_after_local_inference,
+    route_after_repair,
     route_after_research,
     route_after_safety,
     route_after_solve,
@@ -80,6 +82,8 @@ def build_cooking_plan_graph(
     builder.add_node("build_task_graph", build_task_graph_node)
     builder.add_node("solve_schedule", solve_schedule_node)
     builder.add_node("verify_schedule", verify_schedule_node)
+    # P5-3: 反思修复节点 —— 验证失败后降级重试（唯一的 back-edge 起点）。
+    builder.add_node("repair_schedule", repair_schedule_node)
     # P4-01: additive schedule explanation (verify → explain → READY render).
     builder.add_node("explain_schedule", explain_schedule_node)
     builder.add_node("render_ready_response", render_ready_response_node)
@@ -209,13 +213,25 @@ def build_cooking_plan_graph(
         },
     )
 
-    # verify_schedule: independent check passes -> explain (P4-01) then READY;
-    #   fails -> FAILED
+    # verify_schedule: passes -> explain (P4-01) then READY; fails -> repair
+    # loop (P5-3); error -> FAILED.
     builder.add_conditional_edges(
         "verify_schedule",
         route_after_verification,
         {
             "explain_schedule": "explain_schedule",
+            "repair_schedule": "repair_schedule",
+            "render_failed_response": "render_failed_response",
+        },
+    )
+
+    # P5-3: 反思修复循环 —— 唯一的 back-edge。retrying -> 重新求解；
+    # gave_up -> FAILED。循环次数由 repair_attempts <= max_attempts 保证终止。
+    builder.add_conditional_edges(
+        "repair_schedule",
+        route_after_repair,
+        {
+            "solve_schedule": "solve_schedule",
             "render_failed_response": "render_failed_response",
         },
     )

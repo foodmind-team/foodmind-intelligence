@@ -421,11 +421,15 @@ class ScheduleVerifier:
     ) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
 
-        available_types = {
-            normalise_resource_type(r.resource_type)
-            for r in problem.resources
-            if r.available
-        }
+        # P5-0 degradation: when the caller supplies no kitchen-resource model
+        # at all, equipment needs (pattern defaults / soft hints) are treated as
+        # non-blocking — consistent with the soft-hint policy (器材 hint 软性化).
+        # A partial resource model stays strict so real infeasibilities — e.g. a
+        # declared-but-unavailable oven — are still caught by the verifier.
+        if not problem.resources:
+            return issues
+
+        available_types = {normalise_resource_type(r.resource_type) for r in problem.resources if r.available}
 
         for task in problem.tasks:
             for need in task.resources:

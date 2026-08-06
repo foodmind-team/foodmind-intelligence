@@ -4,6 +4,7 @@ Handbook 11.2: tests must be deterministic and offline.
 No external keys, no live websites, no nondeterministic model output.
 """
 
+import os
 from decimal import Decimal
 
 import pytest
@@ -15,6 +16,24 @@ from cooking_plan_agent.domain.models import (
     ResourceNeed,
     TaskDependency,
 )
+
+# -----------------------------------------------------------------------------
+# Hermetic settings baseline (P5-0)
+# -----------------------------------------------------------------------------
+# The local ``.env`` is a gitignored dev artifact; a copy of it must never
+# change test behaviour. pydantic-settings precedence is env vars > dotenv,
+# so pinning the values tests are designed against here (module-import time,
+# before any test module imports ``main``) restores the deterministic CI
+# defaults whether or not a local ``.env`` exists. ``setdefault`` preserves an
+# explicit caller-provided override.
+os.environ.setdefault("COOKING_PLAN_INTERNAL_SERVICE_TOKEN", "test-internal-token-abc123")
+os.environ.setdefault("COOKING_PLAN_LLM_ENABLED", "false")
+os.environ.setdefault("COOKING_PLAN_LLM_API_KEY", "")
+os.environ.setdefault("COOKING_PLAN_WEB_RESEARCH_ENABLED", "false")
+os.environ.setdefault("COOKING_PLAN_CACHE_ENABLED", "false")
+os.environ.setdefault("COOKING_PLAN_EXPLANATION_ENABLED", "false")
+os.environ.setdefault("COOKING_PLAN_CHECKPOINT_ENABLED", "false")
+os.environ.setdefault("COOKING_PLAN_TASK_API_ENABLED", "false")
 
 # =============================================================================
 # Domain object factories — used across unit/integration/contract tests

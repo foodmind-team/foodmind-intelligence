@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     # and never alters the verified schedule.
     explanation_enabled: bool = False
 
+    # P5-3: schedule repair loop（反思修复循环）。
+    # verify 失败后最多重试次数；0 表示禁用（保持原 FAILED 语义）。
+    schedule_repair_max_attempts: int = 2
+    # 重试前是否允许 LLM 做诊断摘要（仅建议，最终动作仍由规则裁决）。
+    schedule_repair_llm_enabled: bool = False
+
     # --- Bounded web research controls (handbook 10.1, 10.9) ---
     # Per-query timeout in seconds — search fails to confirmation on timeout
     research_timeout_seconds: float = 10.0
