@@ -35,6 +35,7 @@ from cooking_plan_agent.application.contract_adapter import (
     selected_recipe_id,
     to_compat_response,
 )
+from cooking_plan_agent.infrastructure.checkpointer import build_thread_id
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,13 @@ async def generate_plan_compat(
         # No usable candidates → the Java side will map to NO_RECIPE_MATCH.
         return _failure_response(body, "NO_USABLE_CANDIDATES")
 
-    response = await service.execute(internal_request)
+    response = await service.execute(
+        internal_request,
+        # P5-0: mirror the native router — namespace checkpoint state per
+        # request attempt so the compat endpoint also works when checkpoint
+        # persistence is enabled (P2-06).
+        thread_id=build_thread_id(str(body.requestId)),
+    )
     source_recipe_id = selected_recipe_id(body)
     return to_compat_response(body, response, source_recipe_id)
 
