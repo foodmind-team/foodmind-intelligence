@@ -811,3 +811,69 @@ async def test_research_evidence_writes_back_and_plan_reaches_ready(monkeypatch)
     assumptions = result.get("research_assumptions", ())
     assert assumptions, "Applied evidence must produce a traceable assumption"
     assert assumptions[0].evidence and assumptions[0].evidence[0].url == "https://www.fda.gov/food/chicken-safety"
+
+
+# ---------------------------------------------------------------------------
+# P5-3: schedule repair loop (reflection-based retry)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graph_repair_loop_recovers_then_ready(monkeypatch, context, valid_request) -> None:
+    """P5-3: 第一次 verify 失败，repair 降级后重试成功，最终 READY。
+
+    solve_schedule_node / verify_schedule_node 在函数体内
+    ``from cooking_plan_agent.scheduling.{orchestrator,verifier} import ...``，
+    因此必须 patch 源模块的同名符号，patch 才能真正生效。
+    """
+    from cooking_plan_agent.config.settings import get_settings
+    from cooking_plan_agent.domain.enums import SolverStatus
+    from cooking_plan_agent.scheduling.models import (
+        RepairAttemptRecord,
+        ScheduleResult,
+        VerificationIssue,
+        VerificationReport,
+    )
+    from cooking_plan_agent.workflow.graph import build_cooking_plan_graph
+
+    calls = {"solve": 0, "verify": 0}
+
+    class FlakySolver:
+        def solve(self, problem, optimization_level):
+            calls["solve"] += 1
+            return ScheduleResult(status=SolverStatus.OPTIMAL, makespan_minutes=45), None
+
+    class FlakyVerifier:
+        def verify(self, problem, result):
+            calls["verify"] += 1
+            if calls["verify"] == 1:
+                return VerificationReport(
+                    passed=False,
+                    issues=(VerificationIssue(code="CAPACITY_EXCEEDED", message="peak overlap"),),
+                )
+            return VerificationReport(passed=True, issues=())
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("COOKING_PLAN_SCHEDULE_REPAIR_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("COOKING_PLAN_SOLVER_OPTIMIZATION_LEVEL", "full")
+    monkeypatch.setattr("cooking_plan_agent.scheduling.orchestrator.ScheduleOrchestrator", lambda: FlakySolver())
+    monkeypatch.setattr("cooking_plan_agent.scheduling.verifier.ScheduleVerifier", lambda: FlakyVerifier())
+
+    graph = build_cooking_plan_graph()
+    initial_state: PlanState = {"request": valid_request}
+    try:
+        final = await graph.ainvoke(
+            initial_state,
+            context=context,
+            config={"recursion_limit": 30},
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert calls["solve"] == 2  # 第一次失败后重试一次
+    assert calls["verify"] == 2
+    assert final["response"].status == "READY"
+    history = final["repair_history"]
+    assert isinstance(history[-1], RepairAttemptRecord)
+    assert history[-1].outcome == "retrying"
+    assert final["solver_overrides"]["optimization_level"] == "phase12"
