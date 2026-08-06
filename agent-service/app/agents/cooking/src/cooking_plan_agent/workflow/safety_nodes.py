@@ -95,7 +95,10 @@ async def check_feasibility_node(
     merge_preparation + build_task_graph stages.
     """
     from cooking_plan_agent.inventory.feasibility import check_all_inventory
-    from cooking_plan_agent.normalisation.names import normalise_resource_type
+    from cooking_plan_agent.normalisation.names import (
+        normalise_essential_resource,
+        normalise_resource_type,
+    )
 
     request = state["request"]
     parsed_recipes = state.get("parsed_recipes", ())
@@ -112,15 +115,22 @@ async def check_feasibility_node(
     )
 
     # --- Resource pre-check (from step hints, pre-decomposition) ---
+    # resources_hint is a soft hint from extraction (LLM free text or keyword
+    # regex). Only hints that resolve to an ESSENTIAL equipment type gate
+    # feasibility — consumables/containers/unknown labels (e.g. 剪刀、厨房纸、
+    # 碗、锅盖) never block a plan on their own, so an operation that only
+    # needs a knife isn't reported infeasible because its text also mentions
+    # other tools.
     missing_resources: list[str] = []
     if request.kitchen_resources:
         available_types = {normalise_resource_type(r.resource_type) for r in request.kitchen_resources if r.available}
         for recipe in parsed_recipes:
             for step in recipe.steps:
                 for hint in step.resources_hint:
-                    if normalise_resource_type(hint) not in available_types:
-                        if hint not in missing_resources:
-                            missing_resources.append(hint)
+                    canonical = normalise_essential_resource(hint)
+                    if canonical is not None and canonical not in available_types:
+                        if canonical not in missing_resources:
+                            missing_resources.append(canonical)
 
     is_feasible = ingredient_report.is_feasible and len(missing_resources) == 0
 

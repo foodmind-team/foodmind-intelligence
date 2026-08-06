@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from cooking_plan_agent.normalisation.names import (
     match_catalogue_item,
+    normalise_essential_resource,
     normalise_ingredient_name,
     normalise_resource_type,
 )
@@ -131,3 +132,39 @@ class TestNormaliseResourceType:
         assert normalise_resource_type("燃气灶") == "stove"
         assert normalise_resource_type("炒锅") == "wok"
         assert normalise_resource_type("cutting-board") == "cutting_board"
+
+    def test_llm_noisy_labels_resolved_to_canonical(self):
+        """LLM 自由文本的器材标签也需归一化为稳定类型。"""
+        assert normalise_resource_type("锅") == "pot"
+        assert normalise_resource_type("电饭煲") == "rice_cooker"
+        assert normalise_resource_type("rice cooker") == "rice_cooker"
+        assert normalise_resource_type("碗") == "mixing_bowl"
+
+    def test_unknown_label_preserved(self):
+        """未知标签保留归一化形式，供自定义类型精确匹配。"""
+        assert normalise_resource_type("剪刀") == "剪刀"
+        assert normalise_resource_type("厨房纸") == "厨房纸"
+        assert normalise_resource_type("锅盖") == "锅盖"
+
+
+class TestNormaliseEssentialResource:
+    def test_essential_equipment_resolved(self):
+        """关键器材（能力定义型）返回规范类型。"""
+        assert normalise_essential_resource("stove") == "stove"
+        assert normalise_essential_resource("燃气灶") == "stove"
+        assert normalise_essential_resource("锅") == "pot"
+        assert normalise_essential_resource("菜刀") == "knife"
+        assert normalise_essential_resource("oven") == "oven"
+
+    def test_capability_suffix_stripped(self):
+        """'stove:induction' → 'stove'（与 repair 目录查询保持一致）。"""
+        assert normalise_essential_resource("stove:induction") == "stove"
+
+    def test_soft_or_unknown_hints_return_none(self):
+        """耗材/容器/配件/可替代家电/未知标签不参与可行性 gating。"""
+        assert normalise_essential_resource("剪刀") is None
+        assert normalise_essential_resource("厨房纸") is None
+        assert normalise_essential_resource("碗") is None
+        assert normalise_essential_resource("锅盖") is None
+        assert normalise_essential_resource("电饭煲") is None  # 可替代家电，不做 gating
+        assert normalise_essential_resource("laser_cutter") is None
