@@ -23,7 +23,11 @@ from cooking_plan_agent.domain.models import (
     WorkflowError,
 )
 from cooking_plan_agent.preparation.task_graph import TaskGraph
-from cooking_plan_agent.scheduling.models import ScheduleResult, VerificationReport
+from cooking_plan_agent.scheduling.models import (
+    RepairAttemptRecord,
+    ScheduleResult,
+    VerificationReport,
+)
 
 
 class PlanState(TypedDict, total=False):
@@ -95,3 +99,10 @@ class PlanState(TypedDict, total=False):
     # 每步 agent 决策（repair / tool_call / question）的留痕，保持可序列化。
     # 元素为 plain dict（{"step": int, "action": str, "detail": dict}）。
     agent_trace: tuple[dict[str, object], ...]
+
+    # --- P5-3: schedule repair loop ---
+    # 已验证失败的修复尝试计数；超过 max_attempts 则 FAILED（保证终止）。
+    repair_attempts: int
+    repair_history: tuple[RepairAttemptRecord, ...]
+    # 请求级求解覆盖（如 {"optimization_level": "phase12"}）——不污染全局 Settings。
+    solver_overrides: dict[str, object]
