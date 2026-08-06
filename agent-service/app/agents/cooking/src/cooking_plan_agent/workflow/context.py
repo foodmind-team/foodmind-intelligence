@@ -72,6 +72,17 @@ class PlanExplainer(Protocol):
     async def explain(self, schedule_summary: dict[str, Any]) -> str: ...
 
 
+@runtime_checkable
+class RepairDiagnoser(Protocol):
+    """P5-3: 可选 LLM 诊断器 —— 对验证失败做摘要。
+
+    只输入 issue code 列表与求解深度（非敏感），返回建议 dict。
+    建议不直接产生副作用：最终动作由 repair 规则裁决。
+    """
+
+    async def diagnose(self, context: dict[str, object]) -> dict[str, object]: ...
+
+
 # ---------------------------------------------------------------------------
 # Context dataclass
 # ---------------------------------------------------------------------------
@@ -102,5 +113,7 @@ class WorkflowContext:
     # Settings.explanation_enabled) the explain node emits no explanation or
     # a deterministic one — the READY response is never blocked.
     explainer: PlanExplainer | None = None
+    # P5-3: 可选 LLM 诊断器（加法能力，缺失则纯规则修复）。
+    repair_diagnoser: "RepairDiagnoser | None" = None
     # Future services (all optional until fully implemented):
     # optimiser: ScheduleOptimiser | None = None

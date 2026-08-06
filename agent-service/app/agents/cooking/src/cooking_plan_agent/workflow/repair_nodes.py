@@ -21,8 +21,8 @@ async def repair_schedule_node(
 ) -> dict[str, object]:
     """对验证失败做修复决策（walk down optimization ladder）。
 
-    Returns state deltas：repair_attempts / repair_history / solver_overrides
-    （保留位：后续可叠加 LLM 诊断，见任务 3.5）。
+    Returns state deltas：repair_attempts / repair_history / solver_overrides。
+    可选 LLM 诊断仅做摘要记录，最终动作仍由确定性规则裁决（P5-3）。
     """
     report = state.get("verification_report")
     if report is None or report.passed:
@@ -32,6 +32,20 @@ async def repair_schedule_node(
     attempts = state.get("repair_attempts", 0)
     overrides = dict(state.get("solver_overrides", {}))
     current_level = str(overrides.get("optimization_level") or settings.solver_optimization_level)
+
+    # P5-3 增强：LLM 诊断仅做记录（加法、非阻断），规则仍独立裁决。
+    diagnoser = getattr(runtime.context, "repair_diagnoser", None)
+    if settings.schedule_repair_llm_enabled and diagnoser is not None:
+        try:
+            await diagnoser.diagnose(
+                {
+                    "issues": [issue.code for issue in report.issues],
+                    "current_optimization_level": current_level,
+                    "attempt": attempts,
+                }
+            )
+        except Exception:  # noqa: BLE001 —— 诊断失败不影响规则修复
+            pass
 
     action = plan_schedule_repair(
         issues=report.issues,
