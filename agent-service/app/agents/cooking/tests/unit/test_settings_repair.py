@@ -1,4 +1,5 @@
 """P5-3: schedule repair loop 配置。"""
+
 from cooking_plan_agent.config.settings import get_settings
 
 

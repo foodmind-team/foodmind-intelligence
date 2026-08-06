@@ -1,4 +1,5 @@
 """P5-3: repair_schedule_node 与路由函数。"""
+
 from types import SimpleNamespace
 
 import pytest

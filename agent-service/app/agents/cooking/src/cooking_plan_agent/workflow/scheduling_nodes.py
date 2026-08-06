@@ -123,9 +123,7 @@ async def solve_schedule_node(
         from cooking_plan_agent.config.settings import get_settings
 
         overrides = state.get("solver_overrides", {})
-        optimization_level = str(
-            overrides.get("optimization_level") or get_settings().solver_optimization_level
-        )
+        optimization_level = str(overrides.get("optimization_level") or get_settings().solver_optimization_level)
 
         orchestrator = ScheduleOrchestrator()
         result, _ = await asyncio.to_thread(

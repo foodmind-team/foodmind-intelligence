@@ -57,9 +57,7 @@ async def repair_schedule_node(
     issue_codes = tuple(issue.code for issue in report.issues)
     history = state.get("repair_history", ())
     if action is None:
-        record = RepairAttemptRecord(
-            attempt=attempts + 1, issues=issue_codes, action="give_up", outcome="gave_up"
-        )
+        record = RepairAttemptRecord(attempt=attempts + 1, issues=issue_codes, action="give_up", outcome="gave_up")
         return {
             "repair_attempts": attempts + 1,
             "repair_history": history + (record,),

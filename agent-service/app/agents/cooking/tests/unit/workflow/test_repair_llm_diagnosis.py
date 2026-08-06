@@ -1,4 +1,5 @@
 """P5-3: LLM 诊断为加法能力，最终动作仍由规则裁决。"""
+
 from types import SimpleNamespace
 
 import pytest
