@@ -322,9 +322,7 @@ class TestCheckAllInventory:
         assert report.is_feasible is True
         assert len(report.ingredient_shortages) == 0
 
-    def test_satisfied_ingredients_keep_full_results(
-        self, chicken_demand, tomato_demand, chicken_lot, tomato_lot
-    ):
+    def test_satisfied_ingredients_keep_full_results(self, chicken_demand, tomato_demand, chicken_lot, tomato_lot):
         """READY 场景回归：满足的食材必须保留完整分配结果（completion_checklist 依赖）。"""
         report = check_all_inventory(
             (chicken_demand, tomato_demand),
@@ -340,9 +338,7 @@ class TestCheckAllInventory:
         assert chicken.proposed_allocations[0].quantity == Decimal(400)
         assert len(by_name["tomato"].proposed_allocations) == 1
 
-    def test_partial_shortage_keeps_results_for_satisfied(
-        self, chicken_demand, tomato_demand, tomato_lot
-    ):
+    def test_partial_shortage_keeps_results_for_satisfied(self, chicken_demand, tomato_demand, tomato_lot):
         """部分短缺：满足的食材仍保留分配结果，短缺条目只出现在 ingredient_shortages。"""
         report = check_all_inventory(
             (chicken_demand, tomato_demand),

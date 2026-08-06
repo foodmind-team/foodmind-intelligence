@@ -110,8 +110,7 @@ def allocate_fefo(
     matching = [
         lot
         for lot in lots
-        if normalise_ingredient_name(lot.canonical_name) == required_name
-        and is_lot_usable(lot, cooking_date)
+        if normalise_ingredient_name(lot.canonical_name) == required_name and is_lot_usable(lot, cooking_date)
     ]
 
     # Step 3: sort by expiry (earliest first, None last)
