@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from cooking_plan_agent.tooling.schemas import RegisteredTool
 from cooking_plan_agent.workflow.context import WorkflowContext
 
@@ -20,38 +18,35 @@ class ToolRegistry:
         self._tools: tuple[RegisteredTool, ...] = self._build()
 
     def _build(self) -> tuple[RegisteredTool, ...]:
-        """按 context 中可用的服务注册工具（当前：parse_recipe）。
+        """按 context 中可用的服务注册工具（P5-1）。"""
+        from cooking_plan_agent.tooling import (
+            feasibility_tool,
+            parse_recipe_tool,
+            research_gap_tool,
+            safety_tool,
+            scheduling_tool,
+        )
 
-        后续任务将把每个工具抽到独立模块（tooling/xxx_tool.py）；
-        本任务先内联最小实现，保证基座独立可交付。
-        """
         tools: list[RegisteredTool] = []
 
         extractor = getattr(self._context, "recipe_extractor", None)
         if extractor is not None:
-            tools.append(self._build_parse_recipe(extractor))
+            tools.append(parse_recipe_tool.build(extractor))
+
+        researcher = getattr(self._context, "recipe_researcher", None)
+        if researcher is not None:
+            tools.append(research_gap_tool.build(researcher))
+
+        safety_engine = getattr(self._context, "safety_engine", None)
+        if safety_engine is not None:
+            tools.append(safety_tool.build(safety_engine))
+
+        # 无状态工具总是注册。
+        tools.append(feasibility_tool.build())
+        tools.append(scheduling_tool.build_solve_schedule())
+        tools.append(scheduling_tool.build_verify_schedule())
 
         return tuple(tools)
-
-    @staticmethod
-    def _build_parse_recipe(extractor: object) -> RegisteredTool:
-        async def execute(arguments: dict[str, Any]) -> dict[str, Any]:
-            candidate = await extractor.extract(str(arguments["source_text"]))  # type: ignore[attr-defined]
-            dumped = candidate.model_dump() if hasattr(candidate, "model_dump") else candidate
-            return {"candidate": dumped}
-
-        return RegisteredTool(
-            name="parse_recipe",
-            description="Parse unstructured recipe text into a structured recipe candidate.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "source_text": {"type": "string", "description": "Raw recipe text to parse."}
-                },
-                "required": ["source_text"],
-            },
-            executor=execute,
-        )
 
     def specs(self) -> tuple[RegisteredTool, ...]:
         """暴露给 LLM 的完整工具描述（含 schema）。"""
