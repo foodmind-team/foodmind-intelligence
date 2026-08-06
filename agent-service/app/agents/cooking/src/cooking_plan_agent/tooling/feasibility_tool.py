@@ -23,8 +23,16 @@ def build() -> RegisteredTool:
         parameters={
             "type": "object",
             "properties": {
-                "demands": {"type": "array", "items": {"type": "object"}, "description": "Serialised IngredientDemand list."},
-                "lots": {"type": "array", "items": {"type": "object"}, "description": "Serialised InventoryLotSnapshot list."},
+                "demands": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Serialised IngredientDemand list.",
+                },
+                "lots": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Serialised InventoryLotSnapshot list.",
+                },
                 "cooking_date": {"type": ["string", "null"]},
             },
             "required": ["demands"],

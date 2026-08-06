@@ -1,4 +1,5 @@
 """P5-1: ToolRunner 分发。"""
+
 from types import SimpleNamespace
 
 import pytest

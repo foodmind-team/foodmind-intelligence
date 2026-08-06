@@ -18,9 +18,7 @@ def build(extractor: object) -> RegisteredTool:
         description="Parse unstructured recipe text into a structured recipe candidate.",
         parameters={
             "type": "object",
-            "properties": {
-                "source_text": {"type": "string", "description": "Raw recipe text to parse."}
-            },
+            "properties": {"source_text": {"type": "string", "description": "Raw recipe text to parse."}},
             "required": ["source_text"],
         },
         executor=execute,

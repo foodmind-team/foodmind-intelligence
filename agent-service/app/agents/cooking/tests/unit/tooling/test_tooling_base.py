@@ -1,4 +1,5 @@
 """P5-1: ToolSpec / ToolRegistry 基座。"""
+
 from types import SimpleNamespace
 
 import pytest
