@@ -173,26 +173,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             custom_domains=settings.allowed_research_domains,
         )
         provider: SearchProvider
-        if settings.tavily_api_key:
-            # P1-05: real, controlled Tavily search provider. Key is a
-            # SecretStr — never logged; the client is closed on shutdown.
-            from cooking_plan_agent.research.providers.tavily import TavilySearchProvider
-
-            provider = TavilySearchProvider(
-                api_key=settings.tavily_api_key,
-                base_url=settings.tavily_base_url,
-                search_depth=settings.tavily_search_depth,
-                max_results=settings.research_max_results_per_query,
-                connection_pool_size=settings.tavily_connection_pool_size,
-                timeout_seconds=settings.research_timeout_seconds,
-            )
-            _provider_clients.append(provider)
-            recipe_researcher = Researcher(
-                provider=provider,
-                allow_list=allow_list,
-                settings=settings,
-            )
-        elif llm_client is not None:
+        if llm_client is not None:
             # LLM knowledge research — fills gaps from model culinary knowledge
             # without web search (deterministic domain filtering still applies).
             recipe_researcher = LLMKnowledgeResearcher(llm_client)
