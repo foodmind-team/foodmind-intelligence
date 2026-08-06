@@ -607,6 +607,27 @@ class TestVerifierEdgeCases:
             assert not report.passed
             assert any(i.code == "RESOURCE_UNAVAILABLE" for i in report.issues)
 
+    def test_no_resource_model_is_non_blocking(self) -> None:
+        """P5-0: no kitchen resources supplied → equipment needs are soft.
+
+        The compat contract (Java baseline) sends no kitchen-resource model;
+        pattern-default equipment (e.g. stir-fry → stove+wok+spatula) must not
+        hard-fail verification in that case.
+        """
+        need_stove = ResourceNeed(resource_type="stove", quantity=1)
+        tasks = (_task("t1", duration=5, resources=(need_stove,)),)
+        problem = _make_problem(tasks, resources=())
+
+        result = ScheduleResult(
+            status=SolverStatus.OPTIMAL,
+            makespan_minutes=5,
+            intervals=(ScheduledInterval(task_id="t1", start_minute=0, end_minute=5),),
+        )
+        verifier = ScheduleVerifier()
+        report = verifier.verify(problem, result)
+        assert report.passed
+        assert not any(i.code == "RESOURCE_UNAVAILABLE" for i in report.issues)
+
     def test_extra_interval_rejected(self) -> None:
         """An interval for a non-existent task should be caught."""
         tasks = (_task("t1", duration=5),)
