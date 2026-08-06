@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 
@@ -21,6 +21,14 @@ logger = logging.getLogger(__name__)
 
 class LLMError(Exception):
     """Raised when an LLM call fails (network, HTTP, or malformed output)."""
+
+
+class ToolCall(NamedTuple):
+    """一次 LLM 请求的工具调用（P5-1）。"""
+
+    id: str
+    name: str
+    arguments: dict[str, object]
 
 
 class LLMClient:
@@ -160,3 +168,53 @@ class LLMClient:
         if not isinstance(parsed, dict):
             raise LLMError(f"LLM JSON response is not an object: {type(parsed).__name__}")
         return parsed
+
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, object]],
+    ) -> tuple[str | None, tuple[ToolCall, ...]]:
+        """OpenAI 兼容 tool-calling 请求（P5-1）。
+
+        Args:
+            messages: OpenAI 风格消息列表。
+            tools: OpenAI tool 格式的工具描述列表。
+
+        Returns:
+            (assistant_text, tool_calls)。无工具调用时 tool_calls 为空元组。
+            文本可能为 None（纯工具调用轮）。
+        """
+        payload: dict[str, object] = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": self._temperature,
+            "max_tokens": self._max_output_tokens,
+            "stream": False,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+        url = f"{self._base_url}/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+
+        response = await self._client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        message = data["choices"][0]["message"]
+        content = message.get("content")
+        calls: list[ToolCall] = []
+        for raw in message.get("tool_calls") or []:
+            fn = raw.get("function", {})
+            try:
+                arguments = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                arguments = {}
+            calls.append(
+                ToolCall(
+                    id=str(raw.get("id") or ""),
+                    name=str(fn.get("name") or ""),
+                    arguments=dict(arguments),
+                )
+            )
+        return (str(content).strip() if content else None, tuple(calls))
