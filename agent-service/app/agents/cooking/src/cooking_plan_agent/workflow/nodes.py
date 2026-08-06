@@ -15,6 +15,9 @@ from cooking_plan_agent.workflow.preparation_nodes import (
     _wire_prep_consumption,
     merge_preparation_node,
 )
+from cooking_plan_agent.workflow.repair_nodes import (
+    repair_schedule_node,
+)
 from cooking_plan_agent.workflow.research_nodes import (
     apply_research_evidence_node,
     research_missing_node,
@@ -58,6 +61,7 @@ __all__ = [
     "render_failed_response_node",
     "render_infeasible_response_node",
     "render_ready_response_node",
+    "repair_schedule_node",
     "research_missing_node",
     "solve_schedule_node",
     "validate_input_node",

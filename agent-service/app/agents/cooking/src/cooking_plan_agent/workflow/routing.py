@@ -209,8 +209,8 @@ def route_after_solve(
 
 def route_after_verification(
     state: PlanState,
-) -> Literal["explain_schedule", "render_failed_response"]:
-    """Verification passes -> explain (P4-01) then READY; fails -> FAILED.
+) -> Literal["explain_schedule", "repair_schedule", "render_failed_response"]:
+    """Verification passes -> explain; fails -> repair loop; else FAILED. (P5-3)
 
     The verifier checks constraint satisfaction independently from the solver,
     catching optimiser bugs before they reach the user. The explain node is
@@ -224,4 +224,17 @@ def route_after_verification(
     report = state.get("verification_report")
     if report is not None and report.passed:
         return "explain_schedule"
-    return "render_failed_response"
+    # P5-3: 验证失败先进入反思修复循环；gave_up 由 route_after_repair 落 FAILED。
+    return "repair_schedule"
+
+
+def route_after_repair(
+    state: PlanState,
+) -> Literal["solve_schedule", "render_failed_response"]:
+    """Repair 后：retrying -> 重新求解；gave_up -> FAILED。（P5-3）"""
+    if state.get("error") is not None:
+        return "render_failed_response"
+    history = state.get("repair_history", ())
+    if history and history[-1].outcome == "gave_up":
+        return "render_failed_response"
+    return "solve_schedule"
