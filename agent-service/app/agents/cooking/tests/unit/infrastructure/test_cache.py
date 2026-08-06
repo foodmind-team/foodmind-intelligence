@@ -130,13 +130,13 @@ def test_parse_key_changes_with_text_model_prompt_schema() -> None:
 
 
 def test_research_key_includes_provider_allowlist_policy() -> None:
-    base = dict(provider_tag="TavilySearchProvider", allow_list_fingerprint="f1", safety_policy_version="1")
+    base = dict(provider_tag="FakeSearchProvider", allow_list_fingerprint="f1", safety_policy_version="1")
     k1 = build_research_cache_key("query", **base)
     assert build_research_cache_key("query", **base) == k1
 
     variants = [
         build_research_cache_key("different-query", **base),
-        build_research_cache_key("query", **{**base, "provider_tag": "FakeSearchProvider"}),
+        build_research_cache_key("query", **{**base, "provider_tag": "OtherSearchProvider"}),
         build_research_cache_key("query", **{**base, "allow_list_fingerprint": "f2"}),
         build_research_cache_key("query", **{**base, "safety_policy_version": "2"}),
     ]

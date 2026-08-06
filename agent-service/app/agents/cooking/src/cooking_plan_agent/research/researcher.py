@@ -40,13 +40,13 @@ logger = logging.getLogger(__name__)
 
 
 class SearchProvider(Protocol):
-    """Protocol for concrete search providers (Fake, Tavily, Brave, etc.).
+    """Protocol for concrete search providers (Fake, Brave, etc.).
 
     Each provider normalises its results into SearchDocument,
     hiding provider-specific SDK details from the rest of the pipeline.
 
-    P1-05: ``include_domains`` is the request-side allow-list — providers that
-    support it (Tavily) pass it to the upstream API; others ignore it. The
+    ``include_domains`` is the request-side allow-list — providers that
+    support it pass it to the upstream API; others ignore it. The
     response-side allow-list filter always runs in the Researcher.
     """
 

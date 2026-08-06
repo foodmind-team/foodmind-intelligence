@@ -2,7 +2,7 @@
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import BeforeValidator, SecretStr
+from pydantic import BeforeValidator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # --- LLM integration (local Ollama via OpenAI-compatible API) ---
     # Provider-neutral: base_url + model are configurable so any OpenAI-
     # compatible endpoint (Ollama, localhost proxy, cloud) can be swapped in.
-    llm_enabled: bool = False  # master switch; False keeps rule-based pipeline
+    llm_enabled: bool = True  # master switch; False keeps rule-based pipeline
     llm_base_url: str = "https://api.deepseek.com"  # OpenAI-compatible base URL
     llm_model: str = "deepseek-chat"  # model name
     llm_api_key: str | None = None  # bearer token for cloud providers (Ollama: None)
@@ -133,19 +133,6 @@ class Settings(BaseSettings):
     # (handbook 10.7). If MAD exceeds this fraction of the median,
     # the result is flagged as needs_confirmation.
     research_disagreement_threshold: float = 0.5
-
-    # --- Tavily search provider (P1-05) ---
-    # A real, controlled search implementation behind the SearchProvider port.
-    # When tavily_api_key is set, the Researcher uses Tavily instead of the
-    # Fake provider. The key is a SecretStr: it must never appear in repr,
-    # logs, or error responses.
-    tavily_base_url: str = "https://api.tavily.com"
-    tavily_api_key: SecretStr | None = None
-    # Controlled search depth: "basic" (fast) or "advanced" (deeper crawl).
-    # Kept explicit so behaviour is deterministic and auditable.
-    tavily_search_depth: str = "basic"
-    # Connection pool size for the provider's lifecycle-level httpx client.
-    tavily_connection_pool_size: int = 10
 
     # --- Intermediate artifact cache (P1-06) ---
     # Caches stable parse/research artifacts (never final READY responses).

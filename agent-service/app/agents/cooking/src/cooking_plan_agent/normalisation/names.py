@@ -185,7 +185,35 @@ _RESOURCE_ALIASES: dict[str, str] = {
     "microwave": "microwave", "microwave oven": "microwave", "微波炉": "microwave",
     "blender": "blender", "food processor": "blender", "料理机": "blender", "搅拌机": "blender",
     "air fryer": "air_fryer", "空气炸锅": "air_fryer",
+    "rice cooker": "rice_cooker", "电饭煲": "rice_cooker", "电饭锅": "rice_cooker",
+    "锅": "pot",
+    "碗": "mixing_bowl",
+    "菜板": "cutting_board", "案板": "cutting_board",
 }
+
+# Resource types that the pipeline itself plans around — they appear in the
+# technique→resource inference table, the decomposition ResourceNeed set, or
+# the rule-based keyword extractor. The feasibility gate uses ONLY these: a
+# resources_hint that does not resolve to one of them — consumables (厨房纸),
+# containers (碗), accessories (锅盖), substitutable appliances (电饭煲), or
+# unknown LLM labels (剪刀) — is a soft hint and can never make a plan
+# infeasible on its own.  The per-task canonical ResourceNeed produced by
+# decomposition remains the authoritative scheduling contract.
+ESSENTIAL_RESOURCE_TYPES: frozenset[str] = frozenset(
+    {
+        "stove",
+        "oven",
+        "wok",
+        "frying_pan",
+        "pan",
+        "pot",
+        "knife",
+        "cutting_board",
+        "sink",
+        "spatula",
+        "steamer",
+    }
+)
 
 # Patterns to strip from ingredient names during normalisation.
 # Applied BEFORE alias mapping — removes quantity, unit, and prep notes
@@ -273,6 +301,30 @@ def normalise_resource_type(raw_type: str) -> str:
     resource_type = resource_type.replace("-", " ").replace("_", " ")
     resource_type = _RE_MULTI_SPACE.sub(" ", resource_type).strip()
     return _RESOURCE_ALIASES.get(resource_type, resource_type.replace(" ", "_"))
+
+
+def normalise_essential_resource(raw_type: str) -> str | None:
+    """Normalise a resource hint, returning its canonical type only when it
+    maps to an essential equipment type.
+
+    Hints that do not resolve to one of :data:`ESSENTIAL_RESOURCE_TYPES`
+    (consumables, containers, accessories, or labels outside the canonical
+    vocabulary) return ``None`` so the feasibility gate can ignore them —
+    e.g. a cutting step whose text mentions 剪刀/厨房纸/碗 must not become
+    infeasible when a knife is available.
+
+    Args:
+        raw_type: Raw resource label from a recipe hint or kitchen snapshot.
+
+    Returns:
+        Canonical essential type (capability suffix stripped), or None.
+    """
+    canonical = normalise_resource_type(raw_type)
+    # Strip capability suffix (e.g. "stove:induction" → "stove").
+    base = canonical.split(":", 1)[0].strip()
+    if base in ESSENTIAL_RESOURCE_TYPES:
+        return base
+    return None
 
 
 # =============================================================================

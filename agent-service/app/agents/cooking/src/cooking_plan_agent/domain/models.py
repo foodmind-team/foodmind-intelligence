@@ -270,7 +270,7 @@ class EvidenceResult(StrictModel):
 class SearchDocument(StrictModel):
     """Provider-neutral search result document.
 
-    Normalised from any concrete provider (Tavily, Brave, SerpAPI, Fake).
+    Normalised from any concrete provider (Brave, SerpAPI, Fake).
     No provider-specific fields — the rest of the code only sees this shape."""
 
     title: str

@@ -36,13 +36,15 @@ _RE_INGREDIENT_WESTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Chinese: "鸡胸肉 200g，切丁" or "番茄 2个"
-# Group 1: name  Group 2: quantity  Group 3: unit  Group 4 (optional): preparation
+# Chinese: "鸡胸肉 200g，切丁" or "番茄 2个" or "大蒜3-4瓣"
+# Group 1: name  Group 2: quantity (lo)  Group 3 (optional): range high
+# Group 4 (optional): unit  Group 5 (optional): preparation
 _RE_INGREDIENT_CHINESE = re.compile(
     r"^[-*•、\s]*"
     r"([\u4e00-\u9fff\w]+?)\s*"  # Name (Chinese characters or word chars)
-    r"(\d+(?:\.\d+)?)\s*"  # Quantity
-    r"(克|g|kg|mg|毫升|ml|l|升|个|根|颗|只|条|块|片|把|勺|汤匙|茶匙|杯|碗|两|斤)?\s*"  # Optional unit (Chinese or Latin)
+    r"(\d+(?:\.\d+)?)\s*"  # Quantity (low end)
+    r"(?:[-~—–至到]\s*(\d+(?:\.\d+)?)\s*)?"  # Optional quantity range high (e.g. "3-4")
+    r"(克|g|kg|mg|毫升|ml|l|升|个|根|颗|只|条|块|片|把|瓣|勺|汤匙|茶匙|杯|碗|两|斤)?\s*"  # Optional unit (Chinese or Latin)
     r"[，,]?\s*(.+)?$",  # Optional preparation note
 )
 
@@ -58,6 +60,7 @@ _CHINESE_UNIT_MAP: dict[str, str] = {
     "条": "piece",
     "块": "piece",
     "片": "piece",
+    "瓣": "piece",
     "把": "piece",
     "勺": "tbsp",
     "汤匙": "tbsp",
@@ -68,11 +71,27 @@ _CHINESE_UNIT_MAP: dict[str, str] = {
     "斤": "jin",
 }
 
-# Ingredients with no quantity — "to taste", "适量", "少许"
+# Ingredients with no quantity — "to taste", "适量", "少许", "老抽少许"
 _RE_NO_QUANTITY = re.compile(
     r"^(适量|少许|若干|to\s+taste|a\s+pinch|a\s+dash|salt\s+and\s+pepper)",
     re.IGNORECASE,
 )
+
+# Quantity qualifier appearing anywhere in a line ("适量", "少许", "少量",
+# "若干", "to taste", "a pinch", "a dash") — signals a no-quantity ingredient
+# even when the qualifier trails the name (e.g. "老抽少许").
+_RE_QUANTITY_QUALIFIER = re.compile(
+    r"(适量|少许|少量|若干|to\s+taste|a\s+pinch|a\s+dash)",
+    re.IGNORECASE,
+)
+
+# Ingredient-name noise to strip during cleaning (extractor stage):
+#   - parenthetical notes: "味精/鸡精（可选）" → "味精/鸡精"; "小米辣（依吃辣程度放）" → "小米辣"
+#   - trailing quantity qualifiers: "老抽少许" → "老抽"
+#   - trailing punctuation: "白胡椒粉、" → "白胡椒粉"
+_RE_PAREN_NOTE = re.compile(r"[（(][^）)]*[）)]")
+_RE_TRAILING_QUANTITY = re.compile(r"(?:少许|适量|少量|若干)$")
+_RE_TRAILING_PUNCT = re.compile(r"[、。，,;；·]+$")
 
 # Ingredient name + preparation note splitter
 # "chicken breast, diced" → name="chicken breast", prep="diced"

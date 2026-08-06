@@ -129,8 +129,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # ---- LLM wiring (local Ollama via OpenAI-compatible API) ----
     # Provider-neutral: any OpenAI-compatible endpoint can be swapped via
-    # COOKING_PLAN_LLM_* settings. When llm_enabled=False (default), the
-    # rule-based pipeline is preserved — CI stays offline-deterministic.
+    # COOKING_PLAN_LLM_* settings. LLM is enabled by default; set
+    # llm_enabled=False to keep the rule-based pipeline (e.g. CI stays
+    # offline-deterministic).
     from cooking_plan_agent.llm import (
         LLMClient,
         LLMKnowledgeResearcher,
@@ -172,26 +173,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             custom_domains=settings.allowed_research_domains,
         )
         provider: SearchProvider
-        if settings.tavily_api_key:
-            # P1-05: real, controlled Tavily search provider. Key is a
-            # SecretStr — never logged; the client is closed on shutdown.
-            from cooking_plan_agent.research.providers.tavily import TavilySearchProvider
-
-            provider = TavilySearchProvider(
-                api_key=settings.tavily_api_key,
-                base_url=settings.tavily_base_url,
-                search_depth=settings.tavily_search_depth,
-                max_results=settings.research_max_results_per_query,
-                connection_pool_size=settings.tavily_connection_pool_size,
-                timeout_seconds=settings.research_timeout_seconds,
-            )
-            _provider_clients.append(provider)
-            recipe_researcher = Researcher(
-                provider=provider,
-                allow_list=allow_list,
-                settings=settings,
-            )
-        elif llm_client is not None:
+        if llm_client is not None:
             # LLM knowledge research — fills gaps from model culinary knowledge
             # without web search (deterministic domain filtering still applies).
             recipe_researcher = LLMKnowledgeResearcher(llm_client)

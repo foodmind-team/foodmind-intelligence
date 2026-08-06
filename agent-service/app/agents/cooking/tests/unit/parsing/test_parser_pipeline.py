@@ -119,6 +119,49 @@ class TestRecipeExtractor:
         names = [i.name for i in candidate.ingredients]
         assert any("鸡翅" in n for n in names), f"Ingredient names: {names}"
 
+    @pytest.mark.asyncio
+    async def test_extract_noise_free_names(self) -> None:
+        """Spicy prawns: ingredient names are cleaned of optional markers,
+        trailing qualifiers, trailing punctuation, and parenthetical notes."""
+        extractor = RecipeExtractor()
+        candidate = await extractor.extract(GOLDEN_FIXTURES["spicy_prawns"])
+
+        names = [i.name for i in candidate.ingredients]
+        # 2. 可选标记剥离: "干辣椒（可选）"
+        assert "干辣椒" in names, f"干辣椒（可选） should drop the optional marker: {names}"
+        # 3. 尾量词剥离: "老抽少许"
+        assert "老抽" in names, f"老抽少许 should drop the qualifier: {names}"
+        # 5. 括号注释剥离且不再误判为步骤: "小米辣（依吃辣程度放）"
+        assert "小米辣" in names, f"小米辣（依吃辣程度放） should survive: {names}"
+        assert not any("（可选）" in n or "少许" in n or "（依" in n for n in names)
+
+    @pytest.mark.asyncio
+    async def test_extract_trailing_punctuation_cleaned(self) -> None:
+        """'白胡椒粉、' — a trailing Chinese comma must not stick to the name."""
+        extractor = RecipeExtractor()
+        candidate = await extractor.extract("香辣蟹\n食材：\n主料：\n蟹脚\n辅料：\n白胡椒粉、\n步骤：\n1. 翻炒调味。\n")
+        names = [i.name for i in candidate.ingredients]
+        assert "白胡椒粉" in names, f"白胡椒粉、 should be cleaned: {names}"
+        assert not any("、" in n for n in names)
+
+    @pytest.mark.asyncio
+    async def test_extract_quantity_range_and_slash_alternatives(self) -> None:
+        """Spicy prawns: '大蒜3-4瓣' parses quantity range with 瓣 unit, and
+        '味精/鸡精（可选）' splits into independent alternatives."""
+        extractor = RecipeExtractor()
+        candidate = await extractor.extract(GOLDEN_FIXTURES["spicy_prawns"])
+
+        # 4. 数量范围取上限 + 瓣→piece
+        garlic = [i for i in candidate.ingredients if i.name == "大蒜"]
+        assert garlic, "大蒜 should be present"
+        assert garlic[0].quantity == Decimal(4), f"3-4瓣 should take the upper bound: {garlic[0]}"
+        assert garlic[0].unit == "piece", f"瓣 should map to piece: {garlic[0]}"
+
+        # 2. / 候选拆分: "味精/鸡精" → 味精 + 鸡精
+        names = [i.name for i in candidate.ingredients]
+        assert "味精" in names and "鸡精" in names, f"味精/鸡精 should split: {names}"
+        assert not any("/" in n for n in names), f"No slash should remain: {names}"
+
 
 def test_frying_step_with_marinated_food_is_not_a_marination_step() -> None:
     """“腌好的鸡翅下锅煎制” describes frying, not another marinade wait."""
@@ -127,9 +170,7 @@ def test_frying_step_with_marinated_food_is_not_a_marination_step() -> None:
         dish_name="香辣鸡翅",
         original_servings=Decimal(2),
         source_language="zho",
-        ingredients=(
-            ExtractedIngredient(raw_text="鸡翅中", name="鸡翅中", quantity=Decimal(15), unit="个"),
-        ),
+        ingredients=(ExtractedIngredient(raw_text="鸡翅中", name="鸡翅中", quantity=Decimal(15), unit="个"),),
         steps=(
             ExtractedStep(
                 step_number=1,

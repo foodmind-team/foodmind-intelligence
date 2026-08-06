@@ -22,7 +22,11 @@ from cooking_plan_agent.parsing.extractor_patterns import (
     _RE_INGREDIENT_WESTERN,
     _RE_NAME_PREP_SPLIT,
     _RE_NO_QUANTITY,
+    _RE_PAREN_NOTE,
+    _RE_QUANTITY_QUALIFIER,
     _RE_STEP_NUMBER,
+    _RE_TRAILING_PUNCT,
+    _RE_TRAILING_QUANTITY,
     _RESOURCE_KEYWORDS,
     _STEP_HEADER_PATTERNS,
     _TECHNIQUE_PATTERNS,
@@ -53,9 +57,12 @@ class RecipeExtractor:
         # Separate ingredient and step sections
         ingredient_lines, step_lines = self._split_sections(lines)
 
-        # Parse each section
+        # Parse each section; expand "味精/鸡精" style slash alternatives
+        # into separate ingredient candidates so inventory matching works.
         parsed_ingredients = tuple(self._parse_ingredient(line) for line in ingredient_lines)
-        ingredients = tuple(i for i in parsed_ingredients if i is not None)
+        ingredients = tuple(
+            sub for ing in parsed_ingredients if ing is not None for sub in self._expand_slash_alternatives(ing)
+        )
 
         steps = tuple(self._parse_step(i + 1, line) for i, line in enumerate(step_lines))
 
@@ -209,15 +216,16 @@ class RecipeExtractor:
         )
 
     def _try_chinese(self, line: str) -> ExtractedIngredient | None:
-        """Try Chinese-style ingredient pattern: '鸡胸肉 200g，切丁'."""
+        """Try Chinese-style ingredient pattern: '鸡胸肉 200g，切丁' or '大蒜3-4瓣'."""
         match = _RE_INGREDIENT_CHINESE.match(line.strip())
         if not match:
             return None
 
         name = match.group(1).strip()
-        quantity_str = match.group(2)
-        unit_raw = match.group(3)
-        prep_raw = match.group(4)
+        quantity_lo = match.group(2)
+        quantity_hi = match.group(3)
+        unit_raw = match.group(4)
+        prep_raw = match.group(5)
 
         # Validate name
         if not name or len(name) < 1:
@@ -225,6 +233,10 @@ class RecipeExtractor:
 
         # Map Chinese units
         unit = _normalise_unit(unit_raw.strip()) if unit_raw else "piece"
+
+        # Quantity ranges ("3-4瓣") take the upper bound — conservative so the
+        # plan never under-supplies (mirrors serving-range handling).
+        quantity = Decimal(quantity_hi) if quantity_hi else Decimal(quantity_lo)
 
         # Clean preparation
         prep = prep_raw.strip() if prep_raw else None
@@ -234,7 +246,7 @@ class RecipeExtractor:
         return ExtractedIngredient(
             raw_text=line.strip(),
             name=name,
-            quantity=Decimal(quantity_str),
+            quantity=quantity,
             unit=unit,
             preparation=prep or None,
             extraction_source="EXPLICIT",
@@ -242,23 +254,32 @@ class RecipeExtractor:
         )
 
     def _try_no_quantity(self, line: str) -> ExtractedIngredient | None:
-        """Handle ingredients with no quantity: 'salt to taste', '适量盐'."""
+        """Handle ingredients with no quantity: 'salt to taste', '适量盐', '老抽少许'."""
         stripped = line.strip()
+        if not stripped:
+            return None
 
-        # Check if it looks like a no-quantity ingredient
-        if _RE_NO_QUANTITY.search(stripped):
+        # Clean name noise BEFORE classification: parenthetical notes
+        # ("味精/鸡精（可选）", "小米辣（依吃辣程度放）"), trailing qualifiers
+        # ("老抽少许"), and trailing punctuation ("白胡椒粉、").
+        cleaned = self._clean_ingredient_name(stripped)
+        if not cleaned:
+            return None
+
+        # Any quantity qualifier anywhere in the line ("适量", "少许", ...)
+        # marks this as a no-quantity ingredient line.
+        if _RE_NO_QUANTITY.search(stripped) or _RE_QUANTITY_QUALIFIER.search(stripped):
             return ExtractedIngredient(
                 raw_text=stripped,
-                name=stripped,
+                name=cleaned,
                 extraction_source="EXPLICIT",
                 confidence=Decimal("0.7"),
             )
 
-        # If it's a short text (likely an ingredient name without quantity),
-        # treat it as a free-text ingredient
-        # But skip things that look like step instructions
-        if len(stripped) < 60 and not _RE_STEP_NUMBER.match(stripped):
-            # Skip lines with step-like language
+        # Short text (likely a bare ingredient name) that doesn't read like a
+        # step instruction → free-text ingredient. Classification runs on the
+        # cleaned name so parenthetical notes never trigger step indicators.
+        if len(cleaned) < 60 and not _RE_STEP_NUMBER.match(stripped):
             step_indicators = (
                 "heat",
                 "add",
@@ -277,18 +298,64 @@ class RecipeExtractor:
                 "蒸",
                 "拌",
             )
-            lower = stripped.lower()
+            lower = cleaned.lower()
             if any(ind in lower for ind in step_indicators):
                 return None
 
             return ExtractedIngredient(
                 raw_text=stripped,
-                name=stripped,
+                name=cleaned,
                 extraction_source="EXPLICIT",
                 confidence=Decimal("0.6"),
             )
 
         return None
+
+    @staticmethod
+    def _expand_slash_alternatives(ingredient: ExtractedIngredient) -> tuple[ExtractedIngredient, ...]:
+        """Expand "味精/鸡精" style alternatives into separate ingredients.
+
+        A slash in a no-quantity Chinese ingredient line usually means "or"
+        ("味精/鸡精" = MSG or chicken powder). Splitting into one demand per
+        alternative lets each match inventory independently; a lone slash with
+        no CJK either side (e.g. "A/B sauce") is left untouched.
+        """
+        name = ingredient.name
+        if "/" not in name:
+            return (ingredient,)
+
+        parts = [part.strip() for part in name.split("/") if part.strip()]
+        if len(parts) < 2 or not all(any("\u4e00" <= ch <= "\u9fff" for ch in part) for part in parts):
+            return (ingredient,)
+
+        return tuple(
+            ExtractedIngredient(
+                raw_text=ingredient.raw_text,
+                name=part,
+                quantity=ingredient.quantity,
+                unit=ingredient.unit,
+                preparation=ingredient.preparation,
+                extraction_source=ingredient.extraction_source,
+                confidence=ingredient.confidence,
+            )
+            for part in parts
+        )
+
+    @staticmethod
+    def _clean_ingredient_name(text: str) -> str:
+        """Strip parenthetical notes, trailing qualifiers, and trailing punctuation.
+
+        Applied to no-quantity ingredient lines so downstream inventory
+        matching sees clean canonical names:
+          "味精/鸡精（可选）"  → "味精/鸡精"
+          "小米辣（依吃辣程度放）" → "小米辣"
+          "老抽少许"           → "老抽"
+          "白胡椒粉、"          → "白胡椒粉"
+        """
+        name = _RE_PAREN_NOTE.sub("", text).strip()
+        name = _RE_TRAILING_QUANTITY.sub("", name).strip()
+        name = _RE_TRAILING_PUNCT.sub("", name).strip()
+        return name
 
     @staticmethod
     def _split_name_prep(text: str) -> tuple[str, str | None]:
