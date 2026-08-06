@@ -90,3 +90,8 @@ class PlanState(TypedDict, total=False):
     # Set by any node that encounters a recoverable/terminal error;
     # the graph uses this to route to error terminal nodes
     error: WorkflowError
+
+    # --- P5: agent trace (shared by all agentic phases) ---
+    # 每步 agent 决策（repair / tool_call / question）的留痕，保持可序列化。
+    # 元素为 plain dict（{"step": int, "action": str, "detail": dict}）。
+    agent_trace: tuple[dict[str, object], ...]
