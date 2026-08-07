@@ -13,10 +13,13 @@ from recommendation_agent.api.errors import register_exception_handlers
 from recommendation_agent.api.health import router as health_router
 from recommendation_agent.api.middleware import BoundaryMiddleware
 from recommendation_agent.api.router import router as agent_router
+from recommendation_agent.api.v1_compat import router as v1_compat_router
 from recommendation_agent.application.ports import AgentWorkflow
 from recommendation_agent.application.service import RecommendationAgentService
 from recommendation_agent.clients.inference import RecommendationInferenceHttpClient
 from recommendation_agent.config.settings import Settings, get_settings
+from recommendation_agent.llm.client import LLMClient
+from recommendation_agent.llm.ranker import LLMRanker
 from recommendation_agent.observability.logging import configure_logging
 from recommendation_agent.observability.metrics import MetricsRegistry
 from recommendation_agent.reasons.deriver import DeterministicReasonDeriver
@@ -33,6 +36,7 @@ def create_app(
     workflow: AgentWorkflow | None = None,
     workflow_complete: bool = False,
     inference_http_client: httpx.AsyncClient | None = None,
+    llm_client: LLMClient | None = None,
     install_default_workflow: bool = True,
 ) -> FastAPI:
     """Build the app without network, filesystem, model, or database access."""
@@ -57,13 +61,35 @@ def create_app(
             settings=resolved_settings,
             metrics_registry=metrics_registry,
         )
+        active_llm_client = llm_client
+        api_key = (
+            resolved_settings.llm_api_key.get_secret_value()
+            if resolved_settings.llm_api_key is not None
+            else None
+        )
+        if active_llm_client is None and resolved_settings.llm_enabled and api_key:
+            active_llm_client = LLMClient(
+                base_url=resolved_settings.llm_base_url,
+                model=resolved_settings.llm_model,
+                api_key=api_key,
+                timeout_seconds=resolved_settings.llm_timeout_seconds,
+                max_retries=resolved_settings.llm_max_retries,
+                temperature=resolved_settings.llm_temperature,
+                max_output_tokens=resolved_settings.llm_max_output_tokens,
+                connection_pool_size=resolved_settings.llm_connection_pool_size,
+            )
+        ranker = (
+            LLMRanker(client=active_llm_client, settings=resolved_settings)
+            if active_llm_client is not None
+            else inference_client
+        )
         active_workflow = workflow
         active_workflow_complete = workflow is not None and workflow_complete
         policies_loaded = False
         if active_workflow is None and install_default_workflow:
             active_workflow = BoundedRecommendationWorkflow(
                 WorkflowContext(
-                    inference=inference_client,
+                    inference=ranker,
                     selector=DeterministicResultSelector(),
                     reason_deriver=DeterministicReasonDeriver(),
                     renderer=DeterministicExplanationRenderer(),
@@ -76,6 +102,8 @@ def create_app(
             policies_loaded = True
         application.state.settings = resolved_settings
         application.state.inference_client = inference_client
+        application.state.llm_client = active_llm_client
+        application.state.ranking_provider = "llm" if active_llm_client is not None else "inference"
         application.state.inference_configured = True
         application.state.metrics = metrics_registry
         application.state.policies_loaded = policies_loaded
@@ -95,6 +123,8 @@ def create_app(
             await application.state.request_limiter.wait_for_drain(resolved_settings.shutdown_drain_seconds)
             await application.state.agent_service.aclose()
             await inference_client.aclose()
+            if active_llm_client is not None:
+                await active_llm_client.aclose()
 
     application = FastAPI(
         title="FoodMind Recommendation Agent",
@@ -115,6 +145,8 @@ def create_app(
             expose_headers=["X-Request-ID", "X-Trace-ID"],
         )
     application.include_router(agent_router)
+    if resolved_settings.enable_v1_compatibility:
+        application.include_router(v1_compat_router)
     application.include_router(health_router)
     register_exception_handlers(application)
     return application
@@ -124,7 +156,7 @@ app = create_app()
 
 
 def run() -> None:
-    uvicorn.run("recommendation_agent.main:app", host="0.0.0.0", port=8000, log_config=None)  # noqa: S104
+    uvicorn.run("recommendation_agent.main:app", host="0.0.0.0", port=8001, log_config=None)  # noqa: S104
 
 
 if __name__ == "__main__":

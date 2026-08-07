@@ -1,0 +1,42 @@
+services:
+  recommendation:
+    build: ./recommendation
+    ports:
+      - "8001:8000"
+    environment:
+      RECOMMENDATION_AGENT_APP_ENV: local
+      RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN: local-recommendation-token
+      RECOMMENDATION_AGENT_LLM_ENABLED: "true"
+      RECOMMENDATION_AGENT_LLM_BASE_URL: https://api.deepseek.com
+      RECOMMENDATION_AGENT_LLM_MODEL: deepseek-chat
+      RECOMMENDATION_AGENT_LLM_API_KEY: ${DEEPSEEK_API_KEY:-}
+    restart: unless-stopped
+
+  cooking:
+    build: ./cooking
+    ports:
+      - "8003:8000"
+    environment:
+      COOKING_PLAN_ENVIRONMENT: local
+      COOKING_PLAN_INTERNAL_SERVICE_TOKEN: local-cooking-token
+      COOKING_PLAN_SAFETY_POLICY_REGION: SG
+      COOKING_PLAN_LLM_ENABLED: "true"
+      COOKING_PLAN_LLM_BASE_URL: https://api.deepseek.com
+      COOKING_PLAN_LLM_MODEL: deepseek-chat
+      COOKING_PLAN_LLM_API_KEY: ${DEEPSEEK_API_KEY:-}
+      COOKING_PLAN_TASK_API_ENABLED: "true"
+    restart: unless-stopped
+
+  chatbot:
+    build: ./chatbot
+    ports:
+      - "8004:8004"
+    environment:
+      CHAT_AGENT_ENVIRONMENT: local
+      CHAT_AGENT_INTERNAL_SERVICE_TOKEN: local-chat-token
+      CHAT_AGENT_LLM_ENABLED: "true"
+      CHAT_AGENT_LLM_BASE_URL: https://api.deepseek.com
+      CHAT_AGENT_LLM_MODEL: deepseek-chat
+      CHAT_AGENT_LLM_API_KEY: ${DEEPSEEK_API_KEY:-}
+    restart: unless-stopped
+

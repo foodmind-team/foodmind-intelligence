@@ -95,11 +95,37 @@ class FixtureInference:
             payload = copy.deepcopy(load_json(FIXTURES / "valid-cold-start.json"))
         elif request_id == "req-sparse-group-001":
             payload = _sparse_group_response()
+        elif request_id.startswith("30000000-"):
+            payload = _dynamic_success_response(request)
         else:
             payload = copy.deepcopy(load_json(FIXTURES / "valid-hybrid.json"))
         payload["requestId"] = request_id
         payload["traceId"] = request["traceId"]
         return payload
+
+
+def _dynamic_success_response(request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "contractVersion": "recommendation-inference-v1",
+        "requestId": request["requestId"],
+        "traceId": request["traceId"],
+        "status": "success",
+        "modelVersion": "hybrid-ranking-v1",
+        "modelPackageVersion": "recommendation-package-v1",
+        "featureSchemaVersion": "recommendation-features-v2",
+        "modelKeyVersion": "hmac-sha256-v1",
+        "predictions": [
+            {
+                "candidateId": candidate["candidateId"],
+                "probability": 0.9 - index * 0.08,
+                "modelScore": 2.0 - index * 0.25,
+                "userCf": {"available": False, "score": None, "neighborSupport": 0},
+                "itemCf": {"available": False, "score": None, "supportingItemCount": 0},
+                "signals": candidate["evidence"],
+            }
+            for index, candidate in enumerate(request["candidates"])
+        ],
+    }
 
 
 def _sparse_group_response() -> dict[str, Any]:
@@ -137,6 +163,7 @@ def fixture_agent_client(
     scenario: Scenario = "success",
     *,
     inference_max_response_bytes: int = 262_144,
+    enable_v1_compatibility: bool = False,
 ) -> Iterator[tuple[TestClient, FixtureInference]]:
     fake = FixtureInference(scenario)
     raw = httpx.AsyncClient(base_url="http://fixture-inference.test", transport=httpx.MockTransport(fake.handler))
@@ -145,6 +172,7 @@ def fixture_agent_client(
         internal_service_token=SecretStr("e2e-agent-token"),
         inference_service_token=SecretStr("e2e-inference-token"),
         inference_max_response_bytes=inference_max_response_bytes,
+        enable_v1_compatibility=enable_v1_compatibility,
     )
     with TestClient(create_app(settings=settings, inference_http_client=raw)) as client:
         yield client, fake

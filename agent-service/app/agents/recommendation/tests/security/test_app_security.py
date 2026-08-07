@@ -11,6 +11,7 @@ def test_production_disables_interactive_docs_and_keeps_health_safe() -> None:
         internal_service_token=SecretStr("production-agent-token-value"),
         inference_service_token=SecretStr("production-inference-token-value"),
         inference_base_url="https://inference.internal",
+        llm_enabled=False,
     )
     with TestClient(create_app(settings=settings)) as client:
         assert client.get("/docs").status_code == 404

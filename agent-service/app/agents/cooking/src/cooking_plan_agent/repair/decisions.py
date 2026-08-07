@@ -150,7 +150,12 @@ def validate_approved_decisions(
     """
     issues: list[str] = []
     seen_option_ids: set[str] = set()
-    seen_types: set[str] = set()
+    # Most repair kinds are scoped to a particular ingredient, dish, or
+    # resource, so several decisions of the same type can be valid in one
+    # submission (for example, purchasing three different missing
+    # ingredients). Only the two plan-wide scalar changes are inherently
+    # mutually exclusive with another decision of the same kind.
+    seen_global_types: set[str] = set()
 
     for decision in decisions:
         if not decision.option_id.strip():
@@ -163,12 +168,10 @@ def validate_approved_decisions(
             issues.append(
                 f"unsupported option_type {decision.option_type!r}; supported: {sorted(SUPPORTED_DECISION_TYPES)}"
             )
-        else:
-            # Conflicting decisions: e.g. reduce_servings + replace_dish both
-            # change portions. Reject mutually exclusive combinations.
-            if decision.option_type in seen_types:
+        elif decision.option_type in {"reduce_servings", "extend_time"}:
+            if decision.option_type in seen_global_types:
                 issues.append(f"conflicting decisions of type {decision.option_type}")
-            seen_types.add(decision.option_type)
+            seen_global_types.add(decision.option_type)
 
         if decision.plan_revision is not None and current_plan_revision is not None:
             if decision.plan_revision != current_plan_revision:

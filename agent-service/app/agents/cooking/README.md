@@ -16,7 +16,7 @@
 
 ```bash
 uv sync
-uv run uvicorn cooking_plan_agent.main:app --reload --host 127.0.0.1 --port 8000
+uv run uvicorn cooking_plan_agent.main:app --reload --host 127.0.0.1 --port 8003
 ```
 
 健康检查：`GET /health/live`、`GET /health/ready`、`GET /health/load`（绕过背压限流器）。
