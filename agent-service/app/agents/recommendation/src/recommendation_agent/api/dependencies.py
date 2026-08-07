@@ -45,6 +45,7 @@ async def require_internal_service(
     scheme, separator, credential = authorization.partition(" ")
     if scheme.lower() != "bearer" or not separator or not credential:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"code": "INVALID_AUTHORIZATION_SCHEME"})
+    credential = credential.strip()
     settings = get_request_settings(request)
     expected = settings.internal_service_token.get_secret_value()
     if not compare_digest(credential, expected):
