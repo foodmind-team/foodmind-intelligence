@@ -4,6 +4,13 @@ Implementations are split by pipeline stage so each module owns one cohesive
 responsibility.  Keep these re-exports stable for graph wiring and extensions.
 """
 
+from cooking_plan_agent.workflow.controller_nodes import (
+    agent_controller_node,
+    run_tool_node,
+)
+from cooking_plan_agent.workflow.conversation_nodes import (
+    apply_confirmation_node,
+)
 from cooking_plan_agent.workflow.input_parsing import (
     detect_gaps_node,
     infer_local_node,
@@ -49,6 +56,8 @@ __all__ = [
     "_max_parallel_active",
     "_solver_timeout",
     "_wire_prep_consumption",
+    "agent_controller_node",
+    "apply_confirmation_node",
     "apply_research_evidence_node",
     "build_confirmation_response_node",
     "build_task_graph_node",
@@ -63,6 +72,7 @@ __all__ = [
     "render_ready_response_node",
     "repair_schedule_node",
     "research_missing_node",
+    "run_tool_node",
     "solve_schedule_node",
     "validate_input_node",
     "validate_recipe_ir_node",

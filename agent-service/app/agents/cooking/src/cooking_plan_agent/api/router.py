@@ -23,7 +23,12 @@ from cooking_plan_agent.api.dependencies import (
     require_internal_service,
 )
 from cooking_plan_agent.application import GenerateCookingPlanService
-from cooking_plan_agent.domain.models import ErrorEnvelope, GeneratePlanRequest, PlanResponse
+from cooking_plan_agent.domain.models import (
+    ConfirmationAnswersRequest,
+    ErrorEnvelope,
+    GeneratePlanRequest,
+    PlanResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,3 +106,47 @@ async def generate_plan(
 
     thread_id = build_thread_id(body.request_id, body.plan_revision)
     return await service.execute(body, thread_id=thread_id)
+
+
+# ---------------------------------------------------------------------------
+# P5-4: Confirm endpoint — resume a paused NEEDS_CONFIRMATION dialog
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/plans/{plan_id}/confirm",
+    response_model=PlanResponse,
+    responses={
+        401: {"model": ErrorEnvelope, "description": "Authentication failed."},
+        422: {"model": ErrorEnvelope, "description": "Request validation failed."},
+        503: {"model": ErrorEnvelope, "description": "Overloaded or shutting down."},
+    },
+)
+async def confirm_plan(
+    plan_id: str,
+    body: ConfirmationAnswersRequest,
+    service: Annotated[GenerateCookingPlanService, Depends(get_generate_service)],
+    _correlation_id: Annotated[str, Depends(extract_correlation_id)],
+) -> PlanResponse:
+    """Resume a NEEDS_CONFIRMATION plan with the user's answers (P5-4).
+
+    Accepts the ConfirmationQuestion answers submitted against the
+    confirmation form returned by a prior generation (``plan_revision``
+    echoes the confirmation the client is answering). The answers resume
+    the same checkpoint thread, so the dialog continues toward READY or
+    another confirmation turn.
+
+    Requires ``confirmation_dialog_enabled=true`` and an active
+    checkpointer; otherwise there is no paused dialog to resume and the
+    service returns FAILED.
+    """
+    logger.info(
+        "Resuming confirmation | plan_id=%s | answers=%d | revision=%s",
+        plan_id,
+        len(body.answers),
+        body.plan_revision,
+    )
+    from cooking_plan_agent.infrastructure.checkpointer import build_thread_id
+
+    thread_id = build_thread_id(body.plan_id, body.plan_revision)
+    return await service.continue_after_confirmation(body, thread_id=thread_id)

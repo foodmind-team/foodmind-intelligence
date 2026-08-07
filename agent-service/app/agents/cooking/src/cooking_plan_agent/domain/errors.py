@@ -201,6 +201,11 @@ class DomainErrorCode(StrEnum):
     # System-level errors
     # ------------------------------------------------------------------
 
+    # P5-4: the confirmation dialog was not enabled / no checkpointer, so
+    # there is no paused conversation to resume. A stable FAILED outcome,
+    # never a silent re-run.
+    CONFIRMATION_DIALOG_UNAVAILABLE = "CONFIRMATION_DIALOG_UNAVAILABLE"
+
     # An unexpected internal error that cannot be classified into any of the
     # above categories. Reserved for the FastAPI global exception handler as a
     # last resort; workflow nodes should prefer more specific error codes.
@@ -357,6 +362,9 @@ _PUBLIC_MESSAGES: dict[str, str] = {
     DomainErrorCode.SCHEDULE_MODEL_INVALID.value: ("The scheduling model is invalid."),
     DomainErrorCode.SCHEDULE_VERIFICATION_FAILED.value: ("The generated schedule failed verification."),
     DomainErrorCode.EXTERNAL_PROVIDER_UNAVAILABLE.value: ("An external service is temporarily unavailable."),
+    DomainErrorCode.CONFIRMATION_DIALOG_UNAVAILABLE.value: (
+        "The confirmation dialog is not available for this request."
+    ),
     DomainErrorCode.INTERNAL_ERROR.value: "An unexpected internal error occurred.",
 }
 

@@ -19,6 +19,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from cooking_plan_agent.domain.errors import DomainErrorCode, public_message_for
 from cooking_plan_agent.domain.models import (
+    ConfirmationAnswersRequest,
     FailedPlanResponse,
     GeneratePlanRequest,
     PlanResponse,
@@ -108,3 +109,57 @@ class GenerateCookingPlanService:
             )
 
         return response
+
+    async def continue_after_confirmation(
+        self,
+        body: ConfirmationAnswersRequest,
+        thread_id: str | None = None,
+    ) -> PlanResponse:
+        """Resume a paused NEEDS_CONFIRMATION dialog with user answers (P5-4).
+
+        Re-enters the same checkpoint thread with the user's answers so
+        ``apply_confirmation`` consumes them and the graph resumes toward
+        READY (or another confirmation turn). The original GeneratePlanRequest
+        lives in the checkpoint state, so the client only resubmits answers.
+
+        Requires ``confirmation_dialog_enabled`` AND a checkpointer; otherwise
+        the graph was compiled with the terminal-confirmation edge and there
+        is nothing to resume — the service returns a FAILED response rather
+        than silently re-running.
+        """
+        # P5-4 预检：无 checkpointer（interrupt 必需）→ 稳定 FAILED，绝不静默重跑。
+        if self._graph.checkpointer is None:
+            return FailedPlanResponse(
+                status="FAILED",
+                error_code=DomainErrorCode.CONFIRMATION_DIALOG_UNAVAILABLE.value,
+                correlation_id=body.plan_id,
+                message=public_message_for(DomainErrorCode.CONFIRMATION_DIALOG_UNAVAILABLE.value),
+            )
+
+        invoke_config: RunnableConfig = {"recursion_limit": 30}
+        if thread_id is not None:
+            invoke_config["configurable"] = {"thread_id": thread_id}
+
+        from langgraph.types import Command
+
+        result = await self._graph.ainvoke(
+            Command(resume=[answer.model_dump(mode="json") for answer in body.answers]),
+            context=self._context,
+            config=invoke_config,
+        )
+
+        response = result.get("response")
+        if isinstance(response, PlanResponse):
+            return response
+        # Resumed but no terminal response — defensive FAILED fallback.
+        logger.error(
+            "Confirmation resume completed without a response | plan_id=%s | state_keys=%s",
+            body.plan_id,
+            list(result.keys()),
+        )
+        return FailedPlanResponse(
+            status="FAILED",
+            error_code=DomainErrorCode.INTERNAL_ERROR.value,
+            correlation_id=body.plan_id,
+            message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
+        )
