@@ -1,0 +1,40 @@
+[project]
+name = "chat-agent"
+version = "0.1.0"
+description = "Grounded FoodMind chatbot backed by an OpenAI-compatible LLM"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.116.0,<1.0",
+    "httpx>=0.28.1,<1.0",
+    "pydantic>=2.11.0,<3.0",
+    "pydantic-settings>=2.10.0,<3.0",
+    "uvicorn>=0.35.0,<1.0",
+]
+
+[project.scripts]
+chat-agent = "chat_agent.main:run"
+
+[build-system]
+requires = ["uv_build>=0.9.8,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3,<10.0",
+    "pytest-asyncio>=1.0.0,<2.0",
+    "ruff>=0.12.0,<1.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "BLE", "FURB", "PIE", "ASYNC", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106"]

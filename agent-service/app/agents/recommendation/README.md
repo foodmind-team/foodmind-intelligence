@@ -12,7 +12,7 @@ uv run ruff format --check .
 uv run ruff check .
 uv run mypy src tests
 uv run pytest -v
-uv run uvicorn recommendation_agent.main:app --host 127.0.0.1 --port 8000
+uv run uvicorn recommendation_agent.main:app --host 127.0.0.1 --port 8001
 ```
 
 The private generation boundary is
@@ -23,7 +23,26 @@ only while configuration, the inference client, immutable policies, workflow,
 and shutdown state are ready; otherwise it is a safe `503`. `/health/live`
 remains `200` and bypasses backpressure.
 
+For local end-to-end migration testing only, setting
+`RECOMMENDATION_AGENT_ENABLE_V1_COMPATIBILITY=true` exposes
+`POST /internal/compat/v1/recommendations/generate`. That isolated route maps
+the Backend's frozen v1 envelope into the canonical v2 workflow and maps the
+validated result back to v1. Configuration rejects this route outside
+local/test/CI, and the canonical v2 contract remains unchanged.
+
 All configuration uses the `RECOMMENDATION_AGENT_` prefix:
+
+Set `LLM_ENABLED=true`, `LLM_BASE_URL=https://api.deepseek.com`,
+`LLM_MODEL=deepseek-chat`, and `LLM_API_KEY` to rank the frozen evidence
+features with DeepSeek. The agent still owns candidate validation, diversity,
+reason derivation, and response shaping; the LLM can only return bounded
+scores for the supplied opaque candidate IDs. Without an API key the existing
+private inference client remains the ranking provider.
+
+The canonical `/internal/v1/recommendations/generate` route accepts the
+Backend's v1 envelope during migration and translates it into the same strict
+v2 workflow. The `/internal/compat/...` alias remains local-only and is no
+longer needed by the Backend configuration.
 
 - `APP_ENV`, `LOG_LEVEL`, `INTERNAL_SERVICE_TOKEN`,
   `MIN_SERVICE_TOKEN_LENGTH`;

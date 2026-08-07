@@ -24,6 +24,7 @@ def _parse_comma_separated_list(value: object) -> list[str]:
 # NoDecode stops pydantic-settings from JSON-decoding the env value first
 # (tuple is treated as a complex type); the raw string reaches the validator.
 CommaSeparatedList = Annotated[tuple[str, ...], NoDecode, BeforeValidator(_parse_comma_separated_list)]
+LOCAL_SERVICE_TOKEN = "local-cooking-token"  # noqa: S105 - rejected outside local
 
 
 # define the settings model
@@ -31,7 +32,7 @@ class Settings(BaseSettings):
     app_name: str = "FoodMind Cooking Plan Agent"
     environment: str = "local"
     log_level: str = "INFO"
-    internal_service_token: str
+    internal_service_token: str = LOCAL_SERVICE_TOKEN
     solver_timeout_seconds: float = 5.0  # the solver timeout in seconds
     max_recipe_count: int = 6  # the maximum number of recipes to return
     max_task_count: int = 100  # the maximum number of tasks to process
@@ -196,7 +197,6 @@ class Settings(BaseSettings):
         env_file=".env",
         extra="forbid",  # if the env file contains extra variables, throw an error
     )
-
 
 @lru_cache
 def get_settings() -> Settings:

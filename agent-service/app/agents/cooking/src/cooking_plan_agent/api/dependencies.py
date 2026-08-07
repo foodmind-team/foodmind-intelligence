@@ -14,7 +14,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
-from cooking_plan_agent.config.settings import Settings, get_settings
+from cooking_plan_agent.config.settings import LOCAL_SERVICE_TOKEN, Settings, get_settings
 
 # ---------------------------------------------------------------------------
 # Safe characters for correlation IDs: alphanumeric, hyphens, underscores.
@@ -57,7 +57,9 @@ def _check_credential(
     # Token strength (P0-08 rule 4): non-local environments require a
     # token at least min_service_token_length chars. local/CI may use
     # short test tokens.
-    if settings.environment != "local" and len(expected) < settings.min_service_token_length:
+    if settings.environment != "local" and (
+        expected == LOCAL_SERVICE_TOKEN or len(expected) < settings.min_service_token_length
+    ):
         return _AUTH_ERROR_CODES["weak"]
     return None
 

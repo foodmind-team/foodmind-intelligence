@@ -1,0 +1,2 @@
+"""Chat Agent domain contracts."""
+

@@ -18,7 +18,7 @@ def _comma_separated(value: object) -> tuple[str, ...]:
 
 
 CommaSeparatedTuple = Annotated[tuple[str, ...], NoDecode, BeforeValidator(_comma_separated)]
-_LOCAL_TOKEN = "local-development-only"  # noqa: S105 - explicit non-production sentinel
+_LOCAL_TOKEN = "local-recommendation-token"  # noqa: S105 - explicit non-production sentinel
 _LOCAL_INFERENCE_TOKEN = "local-inference-only"  # noqa: S105 - explicit non-production sentinel
 
 
@@ -53,9 +53,21 @@ class Settings(BaseSettings):
     accepted_model_key_version: Literal["hmac-sha256-v1"] = "hmac-sha256-v1"
     accepted_model_version: Literal["hybrid-ranking-v1"] = "hybrid-ranking-v1"
     accepted_model_package_version: Literal["recommendation-package-v1"] = "recommendation-package-v1"
+    llm_enabled: bool = True
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-chat"
+    llm_api_key: SecretStr | None = None
+    llm_timeout_seconds: float = Field(default=55.0, gt=0.0, le=120.0)
+    llm_max_retries: int = Field(default=2, ge=0, le=4)
+    llm_temperature: float = Field(default=0.1, ge=0.0, le=1.0)
+    llm_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
+    llm_connection_pool_size: int = Field(default=10, ge=1, le=100)
+    enable_v1_compatibility: bool = False
+    compatibility_model_key_secret: SecretStr = SecretStr("local-v1-compatibility-model-key")
 
     model_config = SettingsConfigDict(
         env_prefix="RECOMMENDATION_AGENT_",
+        env_file=".env",
         extra="forbid",
         frozen=True,
     )
@@ -81,12 +93,22 @@ class Settings(BaseSettings):
             raise ValueError("inference endpoint path is invalid")
         if self.deadline_guard_ms >= self.min_deadline_budget_ms:
             raise ValueError("deadline guard must be smaller than the minimum budget")
+        llm_origin = urlsplit(self.llm_base_url)
+        if llm_origin.scheme not in {"http", "https"} or not llm_origin.hostname:
+            raise ValueError("LLM base URL must use HTTP(S) and include a host")
+        if llm_origin.username or llm_origin.password or llm_origin.query or llm_origin.fragment:
+            raise ValueError("LLM base URL must not contain credentials, query, or fragment")
         inference_token = self.inference_service_token.get_secret_value()
+        if self.enable_v1_compatibility and self.app_env not in {"local", "test", "ci"}:
+            raise ValueError("the recommendation-agent-v1 compatibility route is local/test only")
         if self.app_env not in {"local", "test", "ci"}:
             if parsed.scheme != "https" or not _private_hostname(parsed.hostname):
                 raise ValueError("non-local inference origin must be private HTTPS")
             if inference_token == _LOCAL_INFERENCE_TOKEN or len(inference_token) < self.min_service_token_length:
                 raise ValueError("a strong explicit inference service token is required")
+            llm_key = self.llm_api_key.get_secret_value() if self.llm_api_key is not None else ""
+            if self.llm_enabled and not llm_key:
+                raise ValueError("an LLM API key is required when LLM ranking is enabled")
         return self
 
 
