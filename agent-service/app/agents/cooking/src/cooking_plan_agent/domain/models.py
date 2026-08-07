@@ -748,6 +748,19 @@ class FailedPlanResponse(StrictModel):
     message: str
 
 
+class ConfirmationAnswersRequest(StrictModel):
+    """P5-4: 确认续答请求体 —— 用户对 ConfirmationQuestion 的答复集。
+
+    延续 GeneratePlanRequest 的契约风格：新增字段全可选、不破坏既有
+    请求。user_id 未提供时不启用长期偏好记忆（零回归）。
+    """
+
+    plan_id: str
+    answers: tuple["QuestionAnswer", ...]
+    user_id: str | None = None
+    plan_revision: str | None = None
+
+
 class ErrorEnvelope(StrictModel):
     """Unified protocol-error envelope (P3-05).
 

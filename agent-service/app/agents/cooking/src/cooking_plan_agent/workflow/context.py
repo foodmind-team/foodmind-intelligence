@@ -83,6 +83,19 @@ class RepairDiagnoser(Protocol):
     async def diagnose(self, context: dict[str, object]) -> dict[str, object]: ...
 
 
+@runtime_checkable
+class AgentController(Protocol):
+    """P5-2: LLM 控制器 —— 决定下一步动作。
+
+    Returns 结构化决策：
+      {"type": "tool_call", "tool": str, "arguments": dict} |
+      {"type": "final", "response": dict} |
+      {"type": "fallback"}   # 控制器主动放弃，交回确定性 DAG
+    """
+
+    async def decide(self, state_summary: dict[str, object]) -> dict[str, object]: ...
+
+
 # ---------------------------------------------------------------------------
 # Context dataclass
 # ---------------------------------------------------------------------------
@@ -115,5 +128,9 @@ class WorkflowContext:
     explainer: PlanExplainer | None = None
     # P5-3: 可选 LLM 诊断器（加法能力，缺失则纯规则修复）。
     repair_diagnoser: "RepairDiagnoser | None" = None
+    # P5-2: 可选 ReAct 控制器。缺失或未启用时图直接走确定性 DAG。
+    agent_controller: "AgentController | None" = None
+    # P5-4: 可选长期偏好存储。缺失或请求无 user_id 时不注入记忆（零回归）。
+    preference_store: "object | None" = None
     # Future services (all optional until fully implemented):
     # optimiser: ScheduleOptimiser | None = None

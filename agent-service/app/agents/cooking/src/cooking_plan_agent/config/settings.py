@@ -125,6 +125,14 @@ class Settings(BaseSettings):
     # 重试前是否允许 LLM 做诊断摘要（仅建议，最终动作仍由规则裁决）。
     schedule_repair_llm_enabled: bool = False
 
+    # P5-2: ReAct 控制器循环上限；0 表示不启用控制器（保持原 DAG）。
+    agent_max_steps: int = 5
+    agent_controller_enabled: bool = False
+
+    # P5-4: 多轮确认对话。NEEDS_CONFIRMATION 由终态升级为中间态：
+    # 用户 answers 后经 apply_confirmation 续接重排。默认关闭保持原终态。
+    confirmation_dialog_enabled: bool = False
+
     # --- Bounded web research controls (handbook 10.1, 10.9) ---
     # Per-query timeout in seconds — search fails to confirmation on timeout
     research_timeout_seconds: float = 10.0
@@ -203,6 +211,7 @@ class Settings(BaseSettings):
         env_file=".env",
         extra="forbid",  # if the env file contains extra variables, throw an error
     )
+
 
 @lru_cache
 def get_settings() -> Settings:

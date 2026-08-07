@@ -10,12 +10,45 @@ from cooking_plan_agent.domain.errors import DomainErrorCode
 from cooking_plan_agent.domain.models import (
     Assumption,
     ExtractedRecipeCandidate,
+    GeneratePlanRequest,
     RecipeGap,
     RecipeIR,
     WorkflowError,
 )
 from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.state import PlanState
+
+# P5-4: 长期偏好字段 —— 仅这些字段从记忆注入，且显式请求值优先。
+_PREFERENCE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("dietary_restrictions", "dietary_restrictions"),
+    ("user_allergens", "allergens"),
+)
+
+
+def merge_preferences_into_request(
+    request: GeneratePlanRequest | dict[str, object],
+    preferences: dict[str, object],
+) -> dict[str, object]:
+    """把用户已确认的长期偏好合并进请求（P5-4）。
+
+    合并规则：显式请求值 > 记忆值。用户当场提交的字段（即使为空元组）
+    视为显式值，覆盖记忆中的对应字段；仅当请求未携带该字段时才注入
+    记忆值。无 user_id / 无记忆时为空操作（零回归）。
+    """
+    if not preferences:
+        if isinstance(request, GeneratePlanRequest):
+            return request.model_dump()
+        return dict(request)
+
+    merged = request.model_dump() if isinstance(request, GeneratePlanRequest) else dict(request)
+    for request_field, memory_field in _PREFERENCE_FIELDS:
+        # 请求中显式声明过（含空元组）则不注入记忆值。
+        if request_field in merged and merged[request_field] is not None:
+            continue
+        memory_value = preferences.get(memory_field)
+        if isinstance(memory_value, (list, tuple)):
+            merged[request_field] = tuple(memory_value)
+    return merged
 
 
 async def validate_input_node(
@@ -40,6 +73,15 @@ async def validate_input_node(
 
     request = state["request"]
     settings = get_settings()
+
+    # --- P5-4: 长期偏好注入（仅当 context 提供 PreferenceStore 且请求带 user_id）。
+    # 显式请求值优先；无 user_id / 无记忆时为零操作（零回归）。
+    preference_store = getattr(runtime.context, "preference_store", None)
+    if preference_store is not None and request.user_id:
+        preferences = preference_store.get(request.user_id)
+        if preferences:
+            merged = merge_preferences_into_request(request, preferences)
+            request = GeneratePlanRequest.model_validate(merged)
 
     # 1. Non-empty recipes — keep the original request error code (P0-03:
     #    must not be overwritten by downstream SCHEDULE_INFEASIBLE).

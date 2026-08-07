@@ -11,6 +11,8 @@ from langgraph.graph.state import CompiledStateGraph
 
 from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.nodes import (
+    agent_controller_node,
+    apply_confirmation_node,
     apply_research_evidence_node,
     build_confirmation_response_node,
     build_task_graph_node,
@@ -25,6 +27,7 @@ from cooking_plan_agent.workflow.nodes import (
     render_ready_response_node,
     repair_schedule_node,
     research_missing_node,
+    run_tool_node,
     solve_schedule_node,
     validate_input_node,
     validate_recipe_ir_node,
@@ -32,6 +35,8 @@ from cooking_plan_agent.workflow.nodes import (
     verify_schedule_node,
 )
 from cooking_plan_agent.workflow.routing import (
+    route_after_confirmation,
+    route_after_controller,
     route_after_feasibility,
     route_after_gap_detection,
     route_after_local_inference,
@@ -84,6 +89,11 @@ def build_cooking_plan_graph(
     builder.add_node("verify_schedule", verify_schedule_node)
     # P5-3: 反思修复节点 —— 验证失败后降级重试（唯一的 back-edge 起点）。
     builder.add_node("repair_schedule", repair_schedule_node)
+    # P5-2: ReAct 控制器节点 —— LLM 编排（软决策），失败回退确定性 DAG。
+    builder.add_node("agent_controller", agent_controller_node)
+    builder.add_node("run_tool", run_tool_node)
+    # P5-4: 确认对话中间态 —— 消费用户 answers 后续接重排。
+    builder.add_node("apply_confirmation", apply_confirmation_node)
     # P4-01: additive schedule explanation (verify → explain → READY render).
     builder.add_node("explain_schedule", explain_schedule_node)
     builder.add_node("render_ready_response", render_ready_response_node)
@@ -93,7 +103,29 @@ def build_cooking_plan_graph(
     # ------------------------------------------------------------------
     # 8.7 Fixed edges — linear pipeline sections
     # ------------------------------------------------------------------
-    builder.add_edge(START, "validate_input")
+    # P5-2: 控制器入口由配置门控。启用时 START 先走控制器循环；
+    # 禁用时保持原 START -> validate_input 路径（零回归）。
+    from cooking_plan_agent.config.settings import get_settings
+
+    if get_settings().agent_controller_enabled:
+        builder.add_edge(START, "agent_controller")
+    else:
+        builder.add_edge(START, "validate_input")
+
+    # P5-2: 控制器循环 —— LLM 决策（think）→ 工具执行（act）→ 观察回填
+    # （observe）→ 回到控制器。agent_max_steps / agent_mode=deterministic
+    # 双重保证终止；error 短路 FAILED。
+    builder.add_conditional_edges(
+        "agent_controller",
+        route_after_controller,
+        {
+            "run_tool": "run_tool",
+            "validate_input": "validate_input",
+            "render_failed_response": "render_failed_response",
+        },
+    )
+    # back-edge：观察后回到控制器，形成 ReAct 循环。
+    builder.add_edge("run_tool", "agent_controller")
 
     # ------------------------------------------------------------------
     # 8.6 P0-03 error short-circuit — every error-capable node routes to
@@ -244,7 +276,26 @@ def build_cooking_plan_graph(
     # 8.7 Terminal edges — every response node ends the graph
     # ------------------------------------------------------------------
     builder.add_edge("render_ready_response", END)
-    builder.add_edge("build_confirmation_response", END)
+    # P5-4: 确认对话启用时，NEEDS_CONFIRMATION 不再是终态 —— 用户在
+    # apply_confirmation 处 interrupt 挂起，answers 续接后重排；禁用或
+    # 未注入 checkpointer（interrupt 必需）时保持原终态（零回归）。
+    from cooking_plan_agent.config.settings import get_settings
+
+    if get_settings().confirmation_dialog_enabled and checkpointer is not None:
+        builder.add_edge("build_confirmation_response", "apply_confirmation")
+        builder.add_conditional_edges(
+            "apply_confirmation",
+            route_after_confirmation,
+            {
+                "parse_recipes": "parse_recipes",
+                "solve_schedule": "solve_schedule",
+                "build_confirmation_response": "build_confirmation_response",
+                "render_ready_response": "render_ready_response",
+                "render_failed_response": "render_failed_response",
+            },
+        )
+    else:
+        builder.add_edge("build_confirmation_response", END)
     builder.add_edge("render_infeasible_response", END)
     builder.add_edge("render_failed_response", END)
 

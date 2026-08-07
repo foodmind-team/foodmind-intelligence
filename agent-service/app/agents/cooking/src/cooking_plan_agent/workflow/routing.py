@@ -238,3 +238,61 @@ def route_after_repair(
     if history and history[-1].outcome == "gave_up":
         return "render_failed_response"
     return "solve_schedule"
+
+
+# ---------------------------------------------------------------------------
+# 8.6 P5-2 Routing after the ReAct controller
+# ---------------------------------------------------------------------------
+
+
+def route_after_controller(
+    state: PlanState,
+) -> Literal["run_tool", "validate_input", "render_failed_response"]:
+    """P5-2: 控制器决策路由。
+
+    - 模式回退 / 控制器输出 final / 步数耗尽 → 确定性 DAG（validate_input）
+    - 有待执行工具 → run_tool
+    - error 短路 → FAILED
+    """
+    if state.get("error") is not None:
+        return "render_failed_response"
+    if state.get("agent_mode") == "deterministic":
+        return "validate_input"
+    if state.get("pending_decision", {}).get("type") == "tool_call":
+        return "run_tool"
+    # final / 无待执行决策 → 确定性 DAG（渐进式降级：LLM 只做软决策）。
+    return "validate_input"
+
+
+# ---------------------------------------------------------------------------
+# 8.6 P5-4 Routing after confirmation answers applied
+# ---------------------------------------------------------------------------
+
+
+def route_after_confirmation(
+    state: PlanState,
+) -> Literal[
+    "parse_recipes",
+    "solve_schedule",
+    "build_confirmation_response",
+    "render_ready_response",
+    "render_failed_response",
+]:
+    """P5-4: 根据确认答复的效果路由。
+
+    - 答复应用后仍有 critical gap / 新确认问题 → 再次确认
+    - 答复改变了 request 内容 → 从 parse_recipes 重新推进
+    - 答复仅调整约束（extend_time / reduce_servings）→ 直接 solve_schedule
+    - 全部满足 → READY
+    - error 短路 → FAILED（P0-03）
+    """
+    if state.get("error") is not None:
+        return "render_failed_response"
+    if state.get("needs_confirmation"):
+        return "build_confirmation_response"
+    route = state.get("confirmation_route")
+    if route == "parse_recipes":
+        return "parse_recipes"
+    if route == "solve_schedule":
+        return "solve_schedule"
+    return "render_ready_response"

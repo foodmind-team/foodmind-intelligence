@@ -14,6 +14,7 @@ from cooking_plan_agent.domain.models import (
     FeasibilityReport,
     GeneratePlanRequest,
     PlanResponse,
+    QuestionAnswer,
     RecipeGap,
     RecipeIR,
     ReconciledEvidence,
@@ -106,3 +107,29 @@ class PlanState(TypedDict, total=False):
     repair_history: tuple[RepairAttemptRecord, ...]
     # 请求级求解覆盖（如 {"optimization_level": "phase12"}）——不污染全局 Settings。
     solver_overrides: dict[str, object]
+
+    # --- P5-2: ReAct controller ---
+    # 对话/推理消息（role/content），供 LLM 控制器与未来对话阶段复用。
+    messages: tuple[dict[str, str], ...]
+    # 当前循环步数；超过 agent_max_steps 强制落回确定性 DAG。
+    agent_step: int
+    # "controller"（LLM 编排）| "deterministic"（回退 DAG）。
+    agent_mode: str
+    # 每轮工具调用与观察留痕（agent_trace 的具体化）。
+    tool_calls: tuple[dict[str, object], ...]
+    observations: tuple[dict[str, object], ...]
+    # 控制器上一步决策（{"type": "tool_call"|"final"|"fallback", ...}），
+    # 由 run_tool_node 消费后清空。
+    pending_decision: dict[str, object]
+
+    # --- P5-4: confirmation dialog (multi-turn) ---
+    # 用户提交的确认答复（question_id -> value），由 apply_confirmation
+    # 校验并映射为 approved decisions。
+    confirmation_answers: tuple[QuestionAnswer, ...]
+    # 答复是否已成功应用（校验通过并产出新 request）。
+    confirmation_applied: bool
+    # 答复应用后的续接方向："parse_recipes" | "solve_schedule" |
+    # "render_ready_response"。
+    confirmation_route: str
+    # 字段级校验错误（复用 ConfirmationAnswersError 的 issue 列表）。
+    confirmation_error: tuple[str, ...]
