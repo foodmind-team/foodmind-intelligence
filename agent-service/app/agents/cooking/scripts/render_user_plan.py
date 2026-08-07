@@ -17,11 +17,11 @@ sys.path.insert(0, "scripts")
 
 from demo_comprehensive_workflow import (  # noqa: E402
     RECIPES,
-    KITCHEN_RESOURCES,
     build_lots_from_candidates,
     make_request,
     run_one,
 )
+
 from cooking_plan_agent.parsing.extractor import RecipeExtractor  # noqa: E402
 from cooking_plan_agent.workflow.context import WorkflowContext  # noqa: E402
 from cooking_plan_agent.workflow.graph import build_cooking_plan_graph  # noqa: E402
