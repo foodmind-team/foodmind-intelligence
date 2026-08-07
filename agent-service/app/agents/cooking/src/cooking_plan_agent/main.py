@@ -195,6 +195,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         explainer=app.state.llm_explainer,
     )
 
+    # P5-2: wire the LLM ReAct controller when the agentic mode is enabled.
+    # The ToolRegistry is built from the context (its tools mirror the
+    # injectable services), so the controller is constructed after the base
+    # context and re-assembled via dataclasses.replace — no circular DI.
+    if settings.agent_controller_enabled and llm_client is not None:
+        import dataclasses
+
+        from cooking_plan_agent.llm import LLMReActController
+        from cooking_plan_agent.tooling.registry import ToolRegistry
+
+        registry = ToolRegistry(workflow_context)
+        controller = LLMReActController(llm_client, tools=registry.specs())
+        workflow_context = dataclasses.replace(workflow_context, agent_controller=controller)
+        logger.info(
+            "ReAct agent controller enabled | tools=%d | max_steps=%d",
+            len(registry.specs()),
+            settings.agent_max_steps,
+        )
+
+    # P5-4: wire the long-term preference store when persistence is enabled.
+    # Missing user_id on a request keeps behaviour identical (zero regression).
+    if settings.confirmation_dialog_enabled:
+        import dataclasses
+
+        from cooking_plan_agent.infrastructure.preferences import PreferenceStore
+
+        store = PreferenceStore(f"{settings.checkpoint_sqlite_path}.prefs")
+        workflow_context = dataclasses.replace(workflow_context, preference_store=store)
+
     # Build and compile the LangGraph workflow graph once at startup.
     try:
         # P2-06: inject the checkpointer when persistence is enabled so
