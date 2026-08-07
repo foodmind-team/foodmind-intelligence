@@ -71,18 +71,6 @@ def find_recipe_gaps(candidate: ExtractedRecipeCandidate) -> tuple[RecipeGap, ..
     return tuple(gaps)
 
 
-def classify_recipe_gap(gap: RecipeGap) -> str:
-    """Return the severity class for a gap.
-
-    Args:
-        gap: A RecipeGap to classify.
-
-    Returns:
-        One of GapClass constants.
-    """
-    return gap.gap_class
-
-
 # =============================================================================
 # Internal check helpers
 # =============================================================================

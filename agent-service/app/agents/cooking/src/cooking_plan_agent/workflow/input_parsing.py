@@ -342,8 +342,8 @@ async def detect_gaps_node(
 ) -> dict[str, object]:
     """Identify missing/inferred fields in extracted candidates.
 
-    Runs gap detection (find_recipe_gaps + classify_recipe_gap) on every
-    extracted candidate. Aggregates all gaps across recipes.
+    Runs gap detection (find_recipe_gaps) on every extracted candidate.
+    Aggregates all gaps across recipes.
     """
     from cooking_plan_agent.parsing.gaps import find_recipe_gaps
 

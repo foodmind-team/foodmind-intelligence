@@ -6,6 +6,14 @@ dist/
 wheels/
 *.egg-info
 
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# macOS Finder metadata
+.DS_Store
+
 # Virtual environments
 .venv
 .env

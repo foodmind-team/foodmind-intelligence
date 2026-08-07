@@ -14,7 +14,8 @@ models and are never disguised as protocol errors.
 
 Handbook 8.10 three-level error boundary:
   Layer 1: domain/application services raise WorkflowException.
-  Layer 2: LangGraph workflow nodes catch them, produce NodeExecutionError in state.
+  Layer 2: LangGraph workflow nodes catch them and write a typed
+    WorkflowError into the state, routing to an error terminal node.
   Layer 3 (this file): FastAPI exception handler catches unhandled exceptions
     and returns a stable ErrorEnvelope.
 
