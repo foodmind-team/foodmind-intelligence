@@ -28,10 +28,6 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 
 
-class OverloadedError(Exception):
-    """Raised when the limiter rejects a request (queue full / timeout)."""
-
-
 @dataclass(frozen=True)
 class LimiterSnapshot:
     """Point-in-time load view for /health/load and logs.

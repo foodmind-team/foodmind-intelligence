@@ -227,9 +227,9 @@ class WorkflowException(Exception):
       Layer 1 (this layer): domain/application services raise
         WorkflowException carrying a DomainErrorCode and a human-readable
         description.
-      Layer 2: LangGraph workflow nodes catch WorkflowException, convert it
-        to NodeExecutionError, and route to the appropriate terminal response
-        node.
+      Layer 2: LangGraph workflow nodes catch WorkflowException and write a
+        typed WorkflowError into the state, routing to the appropriate
+        terminal response node.
       Layer 3: the FastAPI global exception handler catches unexpected
         exceptions, logs the correlation_id, and returns a generic
         INTERNAL_ERROR.
