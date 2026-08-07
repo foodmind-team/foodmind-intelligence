@@ -1,0 +1,54 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "inference-service :8002",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--host", "127.0.0.1", "--port", "8002"],
+      "cwd": "${workspaceFolder}/inference-service",
+      "python": "${workspaceFolder}/inference-service/.venv/Scripts/python.exe",
+      "env": {
+        "INFERENCE_APP_ENV": "local",
+        "INFERENCE_INTERNAL_SERVICE_TOKEN": "local-inference-only",
+        "INFERENCE_MODEL_PACKAGE_DIR": "D:\\DevRepo\\MyProjects\\FoodMind\\.tmp\\model-package"
+      }
+    },
+    {
+      "name": "recommendation-agent :8001",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["recommendation_agent.main:app", "--host", "127.0.0.1", "--port", "8001"],
+      "cwd": "${workspaceFolder}/agent-service/app/agents/recommendation",
+      "python": "${workspaceFolder}/agent-service/app/agents/recommendation/.venv/Scripts/python.exe",
+      "env": {
+        "RECOMMENDATION_AGENT_APP_ENV": "local",
+        "RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN": "local-development-token",
+        "RECOMMENDATION_AGENT_INFERENCE_BASE_URL": "http://127.0.0.1:8002",
+        "RECOMMENDATION_AGENT_INFERENCE_SERVICE_TOKEN": "local-inference-only",
+        "RECOMMENDATION_AGENT_ENABLE_V1_COMPATIBILITY": "true",
+        "RECOMMENDATION_AGENT_COMPATIBILITY_MODEL_KEY_SECRET": "local-v1-compatibility-model-key"
+      }
+    },
+    {
+      "name": "cooking-agent :8003",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["cooking_plan_agent.main:app", "--host", "127.0.0.1", "--port", "8003"],
+      "cwd": "${workspaceFolder}/agent-service/app/agents/cooking",
+      "python": "${workspaceFolder}/agent-service/app/agents/cooking/.venv/Scripts/python.exe",
+      "env": {
+        "COOKING_PLAN_ENVIRONMENT": "local",
+        "COOKING_PLAN_INTERNAL_SERVICE_TOKEN": "local-cooking-token",
+        "COOKING_PLAN_LLM_ENABLED": "false",
+        "COOKING_PLAN_WEB_RESEARCH_ENABLED": "false",
+        "COOKING_PLAN_EXPLANATION_ENABLED": "false",
+        "COOKING_PLAN_TASK_API_ENABLED": "true",
+        "COOKING_PLAN_TASK_DB_PATH": "D:\\DevRepo\\MyProjects\\FoodMind\\.tmp\\cooking-tasks.sqlite"
+      }
+    }
+  ]
+}

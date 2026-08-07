@@ -428,7 +428,6 @@ class ScheduleVerifier:
         # declared-but-unavailable oven — are still caught by the verifier.
         if not problem.resources:
             return issues
-
         available_types = {normalise_resource_type(r.resource_type) for r in problem.resources if r.available}
 
         for task in problem.tasks:
