@@ -117,9 +117,14 @@ def context():
     return WorkflowContext(recipe_extractor=_FixedExtractor())
 
 
-def _decision(option_type: str, payload: dict, revision: str | None = "decision-req-001:v1") -> ApprovedDecision:
+def _decision(
+    option_type: str,
+    payload: dict,
+    revision: str | None = "decision-req-001:v1",
+    option_id: str | None = None,
+) -> ApprovedDecision:
     return ApprovedDecision(
-        option_id=f"d_{option_type}",
+        option_id=option_id or f"d_{option_type}",
         option_type=option_type,
         payload=payload,
         plan_revision=revision,
@@ -178,6 +183,18 @@ class TestDecisionBuilders:
             current_plan_revision="decision-req-001:v1",
         )
         assert any("conflicting decisions" in i for i in issues)
+
+    def test_validate_allows_multiple_independent_purchase_decisions(self) -> None:
+        from cooking_plan_agent.repair.options import validate_approved_decisions
+
+        issues = validate_approved_decisions(
+            (
+                _decision("purchase", {}, option_id="purchase-tofu"),
+                _decision("purchase", {}, option_id="purchase-noodles"),
+            ),
+            current_plan_revision="decision-req-001:v1",
+        )
+        assert issues == ()
 
     def test_validate_rejects_stale_revision(self) -> None:
         from cooking_plan_agent.repair.options import validate_approved_decisions
