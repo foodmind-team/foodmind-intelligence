@@ -80,5 +80,5 @@ uv run python scripts/export_openapi.py --check
 
 - 开发计划：`docs/development-plans/`（P0 正确性 → P1 韧性 → P2 能力 → P3 架构）
 - 交付清单：`docs/development-plans/05-delivery-checklist.md`
-- 测试报告：`tests/TESTING_REPORT.md`
+- 测试报告：`docs/test-reports/`（历史验收与清理报告归档）
 - 运维 Runbook：`runbook.md`
