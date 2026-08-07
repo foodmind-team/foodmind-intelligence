@@ -27,16 +27,13 @@ _TERMINAL_STATUSES = ("READY", "NEEDS_CONFIRMATION", "INFEASIBLE", "FAILED")
 
 
 @pytest.fixture(autouse=True)
-def _set_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _set_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     from cooking_plan_agent.config.settings import get_settings
 
     get_settings.cache_clear()
     monkeypatch.setenv("COOKING_PLAN_INTERNAL_SERVICE_TOKEN", _TEST_TOKEN)
     monkeypatch.setenv("COOKING_PLAN_TASK_API_ENABLED", "true")
-    monkeypatch.setenv(
-        "COOKING_PLAN_TASK_DB_PATH",
-        f"/tmp/p4-04-sse-test-{uuid.uuid4().hex}.sqlite",
-    )
+    monkeypatch.setenv("COOKING_PLAN_TASK_DB_PATH", str(tmp_path / "tasks.sqlite"))
 
 
 @pytest.fixture

@@ -39,6 +39,7 @@ from cooking_plan_agent.domain.models import (
     ExtractedStep,
     GeneratePlanRequest,
     InventoryLotSnapshot,
+    KitchenResourceSnapshot,
     PlanResponse,
     ReadyPlanResponse,
     RecipeInput,
@@ -51,6 +52,27 @@ _MAX_WARNINGS = 10
 
 # Warning allow-list members we may emit (subset of the Java enum).
 _BUDGET_ESTIMATE_ONLY = "BUDGET_ESTIMATE_ONLY"
+
+
+def _compatibility_kitchen_resources() -> tuple[KitchenResourceSnapshot, ...]:
+    """Supply the standard-kitchen assumption required by the frozen v1 DTO.
+
+    The Backend v1 contract predates explicit kitchen-resource snapshots. The
+    compatibility workflow must therefore retain its original semantics: it
+    evaluates controlled recipe candidates against a small standard kitchen,
+    while native v2 callers continue to send their actual resource inventory.
+    """
+    from cooking_plan_agent.normalisation.names import ESSENTIAL_RESOURCE_TYPES
+
+    return tuple(
+        KitchenResourceSnapshot(
+            resource_id=f"compat-{resource_type}",
+            resource_type=resource_type,
+            capacity=Decimal(4 if resource_type == "stove" else 1),
+            capacity_unit="burners" if resource_type == "stove" else None,
+        )
+        for resource_type in sorted(ESSENTIAL_RESOURCE_TYPES)
+    )
 
 
 # ===========================================================================
@@ -153,7 +175,7 @@ def build_internal_request(compat: CompatCookingRequest) -> GeneratePlanRequest:
         user_allergens=request_snapshot.constraints.avoidAllergenCodes,
         time_limit_minutes=request_snapshot.maxMinutes,
         inventory_lots=_to_inventory_lots(compat),
-        kitchen_resources=(),
+        kitchen_resources=_compatibility_kitchen_resources(),
         approved_decisions=(),
         schema_version="1.0",
         preparsed_candidates=candidates,

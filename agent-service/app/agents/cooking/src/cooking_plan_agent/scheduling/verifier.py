@@ -421,11 +421,7 @@ class ScheduleVerifier:
     ) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
 
-        available_types = {
-            normalise_resource_type(r.resource_type)
-            for r in problem.resources
-            if r.available
-        }
+        available_types = {normalise_resource_type(r.resource_type) for r in problem.resources if r.available}
 
         for task in problem.tasks:
             for need in task.resources:

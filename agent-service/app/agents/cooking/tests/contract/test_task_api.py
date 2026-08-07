@@ -18,7 +18,7 @@ _TEST_TOKEN = "test-internal-token-abc123"
 
 
 @pytest.fixture(autouse=True)
-def _set_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _set_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     from cooking_plan_agent.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -26,10 +26,7 @@ def _set_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COOKING_PLAN_TASK_API_ENABLED", "true")
     # Unique DB per test run avoids cross-test file contention on the
     # in-process worker's SQLite store.
-    monkeypatch.setenv(
-        "COOKING_PLAN_TASK_DB_PATH",
-        f"/tmp/p3-01-task-test-{uuid.uuid4().hex}.sqlite",
-    )
+    monkeypatch.setenv("COOKING_PLAN_TASK_DB_PATH", str(tmp_path / "tasks.sqlite"))
 
 
 @pytest.fixture

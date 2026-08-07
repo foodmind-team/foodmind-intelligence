@@ -50,7 +50,11 @@ def _resource_needs(task: dict[str, Any]) -> Counter[str]:
     # Backward compatibility with READY responses created before
     # ``resource_needs`` was added.
     resources = task.get("resources", ())
-    return Counter(item for item in resources if isinstance(item, str)) if isinstance(resources, (list, tuple)) else Counter()
+    return (
+        Counter(item for item in resources if isinstance(item, str))
+        if isinstance(resources, (list, tuple))
+        else Counter()
+    )
 
 
 def _resource_capacities(raw_resources: object) -> Counter[str]:
@@ -99,7 +103,9 @@ def build_execution_snapshot(
             continue
         needs = _resource_needs(task)
         resource_blocked = tuple(
-            resource for resource, quantity in needs.items() if capacities[resource] and used[resource] + quantity > capacities[resource]
+            resource
+            for resource, quantity in needs.items()
+            if capacities[resource] and used[resource] + quantity > capacities[resource]
         )
         if resource_blocked:
             blocked.append({"task_id": task_id, "blocked_by_resources": resource_blocked})
@@ -143,7 +149,9 @@ def transition_execution_state(
         else set()
     )
     if current == PENDING and task_id not in available_ids:
-        raise ExecutionStateError("TASK_NOT_READY", f"Cooking task '{task_id}' is blocked by a dependency, cook, or resource.")
+        raise ExecutionStateError(
+            "TASK_NOT_READY", f"Cooking task '{task_id}' is blocked by a dependency, cook, or resource."
+        )
     if target_status == COMPLETED and current == PENDING and task_id not in available_ids:
         raise ExecutionStateError("TASK_NOT_READY", f"Cooking task '{task_id}' cannot be completed before it is ready.")
     next_states[task_id] = target_status

@@ -271,9 +271,14 @@ async def get_execution_state(
     """Return tasks that are executable now, based on actual completion state."""
     record, snapshot = await service.execution_snapshot(task_id)
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "TASK_NOT_FOUND", "message": "Task not found."})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"code": "TASK_NOT_FOUND", "message": "Task not found."}
+        )
     if snapshot is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "PLAN_NOT_READY_FOR_EXECUTION", "message": "Plan is not READY for execution."})
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "PLAN_NOT_READY_FOR_EXECUTION", "message": "Plan is not READY for execution."},
+        )
     return _execution_response(record, snapshot)
 
 
@@ -299,9 +304,14 @@ async def update_execution_state(
         body.expected_event_id,
     )
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "TASK_NOT_FOUND", "message": "Task not found."})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"code": "TASK_NOT_FOUND", "message": "Task not found."}
+        )
     if error_code is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": error_code, "message": "Cooking task transition is not currently allowed."})
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": error_code, "message": "Cooking task transition is not currently allowed."},
+        )
     assert snapshot is not None
     return _execution_response(record, snapshot)
 

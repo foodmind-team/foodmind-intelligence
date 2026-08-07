@@ -125,14 +125,10 @@ def build_task_graph(
         added = deps_by_successor.get(task.task_id, [])
         existing = {dep.predecessor_id for dep in task.dependencies}
         new_dependencies = tuple(
-            TaskDependency(predecessor_id=predecessor_id)
-            for predecessor_id in added
-            if predecessor_id not in existing
+            TaskDependency(predecessor_id=predecessor_id) for predecessor_id in added if predecessor_id not in existing
         )
         materialised_tasks.append(
-            task.model_copy(update={"dependencies": task.dependencies + new_dependencies})
-            if new_dependencies
-            else task
+            task.model_copy(update={"dependencies": task.dependencies + new_dependencies}) if new_dependencies else task
         )
 
     return TaskGraph(tasks=tuple(materialised_tasks), edges=tuple(unique_edges))
