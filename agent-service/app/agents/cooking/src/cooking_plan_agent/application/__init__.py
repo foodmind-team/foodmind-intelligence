@@ -15,11 +15,13 @@ from cooking_plan_agent.application.ports import (
     RecipeExtractor,
     RecipeResearcher,
 )
+from cooking_plan_agent.application.recipe_import_service import ParseRecipeImportService
 from cooking_plan_agent.application.service import GenerateCookingPlanService
 
 __all__ = [
     "Clock",
     "GenerateCookingPlanService",
+    "ParseRecipeImportService",
     "RecipeExtractor",
     "RecipeResearcher",
 ]

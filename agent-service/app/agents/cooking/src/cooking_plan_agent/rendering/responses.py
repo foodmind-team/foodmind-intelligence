@@ -153,6 +153,63 @@ def _stable_question_key(*parts: str) -> str:
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+def _servings_option_label(payload: dict[str, object]) -> str:
+    servings = payload.get("servings")
+    if servings is None:
+        return "Reduce servings"
+    count = int(str(servings))
+    noun = "serving" if count == 1 else "servings"
+    return f"Reduce to {count} {noun}"
+
+
+def _append_repair_strategy_question(
+    questions: list[ConfirmationQuestion],
+    decisions: tuple[ApprovedDecision, ...],
+) -> set[str]:
+    """Collapse purchase + reduce_servings into one inventory strategy choice.
+
+    Creates a strategy question whenever a purchase or reduce_servings
+    decision exists. Individual per-item repair
+    questions are suppressed when a strategy question is emitted so the
+    user never sees a long list of Apply/Do-not-apply items.
+    """
+    purchase = next((decision for decision in decisions if decision.option_type == "purchase"), None)
+    reduce = next((decision for decision in decisions if decision.option_type == "reduce_servings"), None)
+    if purchase is None and reduce is None:
+        return set()
+
+    options: list[QuestionOption] = []
+    suggested_value: str | None = None
+    if reduce is not None:
+        options.append(QuestionOption(value=reduce.option_id, label=_servings_option_label(reduce.payload), suggested=True))
+        suggested_value = reduce.option_id
+    if purchase is not None:
+        options.append(QuestionOption(value=purchase.option_id, label="Buy missing ingredients", suggested=reduce is None))
+        if suggested_value is None:
+            suggested_value = purchase.option_id
+    # Strategy question is emitted whenever a plan-level repair exists —
+    # even a single one (e.g. only purchase) — so the user always decides
+    # at plan level and never sees per-item Apply/Do-not-apply questions.
+    prompt = "Some ingredients are missing. Choose how to continue."
+    questions.append(
+        ConfirmationQuestion(
+            question_id="repair:strategy",
+            field_path="repair_strategy",
+            prompt=prompt,
+            response_type=QuestionResponseType.CHOICE,
+            options=tuple(options),
+            required=True,
+            suggested_value=suggested_value,
+        )
+    )
+    grouped_ids: set[str] = set()
+    if purchase is not None:
+        grouped_ids.add(purchase.option_id)
+    if reduce is not None:
+        grouped_ids.add(reduce.option_id)
+    return grouped_ids
+
+
 def _build_confirmation_questions(
     state: PlanState,
     repair_options: tuple[RepairOption, ...],
@@ -179,59 +236,77 @@ def _build_confirmation_questions(
     """
     questions: list[ConfirmationQuestion] = []
 
+    # P: Backend-preprocessed requests (preparsed_candidates) already went
+    # through the agent's NL parsing + gap-filling pipeline via the
+    # /preprocess endpoint. Their candidates are complete, so gap and
+    # assumption questions are never re-asked — only strategy-level repair
+    # questions remain. The agent stays focused on planning.
+    request = state.get("request")
+    backend_preprocessed = bool(request and request.preparsed_candidates)
+
     # 1. Blocking gaps → one required TEXT question per gap (one-to-one).
-    for gap in state.get("gaps", ()):
-        if gap.gap_class not in ("critical", "safety_critical"):
-            continue
-        questions.append(
-            ConfirmationQuestion(
-                question_id=f"gap:{_stable_question_key(gap.recipe_id, gap.field_path)}",
-                field_path=gap.field_path,
-                prompt=(
-                    f"The {gap.field_path} for recipe '{gap.recipe_id}' is missing "
-                    f"({gap.description}). Please provide the correct value."
-                ),
-                response_type=QuestionResponseType.TEXT,
-                required=True,
-                suggested_value=gap.current_value,
+    #    Skipped for backend-preprocessed requests (gaps already filled).
+    if not backend_preprocessed:
+        for gap in state.get("gaps", ()):
+            if gap.gap_class not in ("critical", "safety_critical"):
+                continue
+            questions.append(
+                ConfirmationQuestion(
+                    question_id=f"gap:{_stable_question_key(gap.recipe_id, gap.field_path)}",
+                    field_path=gap.field_path,
+                    prompt=(
+                        f"The {gap.field_path} for recipe '{gap.recipe_id}' is missing "
+                        f"({gap.description}). Please provide the correct value."
+                    ),
+                    response_type=QuestionResponseType.TEXT,
+                    required=True,
+                    suggested_value=gap.current_value,
+                )
             )
-        )
 
     # 2. Assumptions → one required CHOICE question per surfaced assumption.
-    for recipe_id, assumption in _confirmation_assumptions(state):
-        questions.append(
-            ConfirmationQuestion(
-                question_id=f"assumption:{_stable_question_key(recipe_id, assumption.text)}",
-                field_path=f"recipe.{recipe_id}.assumptions",
-                prompt=f"Assumption: {assumption.text}. Accept this suggested value?",
-                response_type=QuestionResponseType.CHOICE,
-                options=(
-                    QuestionOption(value="accept", label="Accept suggested value", suggested=True),
-                    QuestionOption(value="provide_alternative", label="Provide an alternative value"),
-                ),
-                required=True,
-                suggested_value=assumption.text,
+    #    Skipped for backend-preprocessed requests (assumptions accepted).
+    if not backend_preprocessed:
+        for recipe_id, assumption in _confirmation_assumptions(state):
+            questions.append(
+                ConfirmationQuestion(
+                    question_id=f"assumption:{_stable_question_key(recipe_id, assumption.text)}",
+                    field_path=f"recipe.{recipe_id}.assumptions",
+                    prompt=f"Assumption: {assumption.text}. Accept this suggested value?",
+                    response_type=QuestionResponseType.CHOICE,
+                    options=(
+                        QuestionOption(value="accept", label="Accept suggested value", suggested=True),
+                        QuestionOption(value="provide_alternative", label="Provide an alternative value"),
+                    ),
+                    required=True,
+                    suggested_value=assumption.text,
+                )
             )
-        )
 
-    # 3. Repair options → one CHOICE question per supported decision.
+    # 3. Repair options → strategy question when any plan-level repair
+    # (purchase / reduce_servings / substitute) exists; otherwise one CHOICE
+    # question per supported decision. When a strategy question is emitted,
+    # per-item repair questions are never shown — the user decides at plan
+    # level only.
     label_by_option_id = {option.option_id: option.description for option in repair_options}
-    for decision in decisions:
-        label = label_by_option_id.get(decision.option_id, decision.option_type)
-        questions.append(
-            ConfirmationQuestion(
-                question_id=f"repair:{decision.option_id}",
-                field_path="repair_options",
-                prompt=f"Apply the repair option '{label}'?",
-                response_type=QuestionResponseType.CHOICE,
-                options=(
-                    QuestionOption(value=decision.option_id, label="Apply", suggested=True),
-                    QuestionOption(value="__skip__", label="Do not apply"),
-                ),
-                required=False,
-                suggested_value=decision.option_id,
+    grouped_decision_ids = _append_repair_strategy_question(questions, decisions)
+    if not grouped_decision_ids:
+        for decision in decisions:
+            label = label_by_option_id.get(decision.option_id, decision.option_type)
+            questions.append(
+                ConfirmationQuestion(
+                    question_id=f"repair:{decision.option_id}",
+                    field_path="repair_options",
+                    prompt=f"Apply the repair option '{label}'?",
+                    response_type=QuestionResponseType.CHOICE,
+                    options=(
+                        QuestionOption(value=decision.option_id, label="Apply", suggested=True),
+                        QuestionOption(value="__skip__", label="Do not apply"),
+                    ),
+                    required=False,
+                    suggested_value=decision.option_id,
+                )
             )
-        )
 
     return tuple(questions)
 

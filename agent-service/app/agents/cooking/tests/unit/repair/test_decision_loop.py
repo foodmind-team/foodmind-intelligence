@@ -148,6 +148,7 @@ class TestDecisionBuilders:
                 description="Reduce servings from 2 to 1",
                 changes=("Scale down",),
                 effects=("Fixed",),
+                payload={"servings": 1},
             ),
             RepairOption(
                 option_id="repair_time_45",
@@ -155,6 +156,7 @@ class TestDecisionBuilders:
                 description="Extend cooking time from 30 to 45 minutes",
                 changes=("Extend",),
                 effects=("Fixed",),
+                payload={"time_limit_minutes": 45},
             ),
         )
         decisions = build_approved_decisions(options, "rev-1")
@@ -336,12 +338,7 @@ class TestDecisionLoop:
 
     @pytest.mark.asyncio
     async def test_purchase_decision_roundtrip(self, graph, context) -> None:
-        """回归：'外出采购'选项可走结构化确认闭环（生成决策+问题，回传不再被拒）。
-
-        此前 purchase 不在 SUPPORTED_DECISION_TYPES：无 ApprovedDecision、无结构化
-        问题，且回传会被判 INVALID_APPROVED_DECISION。采购语义为 no-op——用户购买后
-        由后端更新库存快照并重提请求。
-        """
+        """Purchase approval must never fabricate inventory inside the Agent."""
         # peanut 无库存且无替代品 → purchase 选项；chicken 库存充足。
         request = _base_request(
             inventory_lots=(
@@ -361,12 +358,11 @@ class TestDecisionLoop:
 
         purchase_decisions = [d for d in resp.decisions if d.option_type == "purchase"]
         assert purchase_decisions, "确认响应必须携带可回传的 purchase 决策"
-        purchase_q = [
-            q for q in resp.confirmation_questions if q.question_id == f"repair:{purchase_decisions[0].option_id}"
-        ]
+        purchase_q = [q for q in resp.confirmation_questions if q.question_id == "repair:strategy"]
         assert purchase_q, "结构化问题单必须包含 purchase 选项"
 
-        # 回传 purchase 决策（模拟客户端选择采购）：不得报 INVALID_APPROVED_DECISION。
+        # A direct resubmission remains blocked until Backend provides a fresh,
+        # persisted inventory snapshot.
         resolved = request.model_copy(
             update={
                 "approved_decisions": (purchase_decisions[0],),
@@ -376,7 +372,9 @@ class TestDecisionLoop:
         second = await graph.ainvoke({"request": resolved}, context=context, config={"recursion_limit": 30})
         assert second.get("error") is None, second.get("error")
         second_resp = second.get("response")
-        assert isinstance(second_resp, ConfirmationPlanResponse)  # 库存未变 → 仍需确认
+        assert second_resp is not None
+        assert second_resp.status == "NEEDS_CONFIRMATION"
+        assert second["request"].inventory_lots == request.inventory_lots
 
     @pytest.mark.asyncio
     async def test_tampered_payload_rejected(self, graph, context) -> None:

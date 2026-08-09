@@ -176,7 +176,11 @@ _TECHNIQUE_PATTERNS: list[tuple[str, str, str]] = [
     ("roast", r"\broast(?:ing|ed)?\b", r"烤|烘"),
     ("grill", r"\bgrill(?:ing|ed)?\b", r"煎|烧烤"),
     ("marinate", r"\bmarinat(?:e|ing|ed)\b", r"腌|腌制"),
-    ("sauté", r"\bsauté(?:ing|ed)?\b", r"煎|煸"),
+    (
+        "sauté",
+        r"\b(?:pan[-\s]?fr(?:y|ied|ying)|saut(?:é|e)(?:ing|ed)?)\b",
+        r"煎|煸",
+    ),
     ("sear", r"\bsear(?:ing|ed)?\b", r"煎|封"),
     ("braise", r"\bbrais(?:e|ing|ed)\b", r"红烧|卤"),
     ("poach", r"\bpoach(?:ing|ed)?\b", r"水煮|清煮"),

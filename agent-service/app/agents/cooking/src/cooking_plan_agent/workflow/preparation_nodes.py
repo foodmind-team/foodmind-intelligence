@@ -139,7 +139,7 @@ async def merge_preparation_node(
             gather_task = CookingTask(
                 task_id="prep_gather_all_ingredients",
                 dish_id="shared",
-                instruction="[Mise en place] 一次取出所有食材、调料和所需工具",
+                instruction="[Mise en place] Gather all ingredients, seasonings, and required tools",
                 duration_minutes=5,
                 work_mode=WorkMode.ACTIVE,
                 category="preparation",
@@ -153,7 +153,7 @@ async def merge_preparation_node(
             ready_task = CookingTask(
                 task_id="prep_mise_en_place_complete",
                 dish_id="shared",
-                instruction="[Mise en place] 确认清洗、切配与调料分装完成",
+                instruction="[Mise en place] Confirm that washing, cutting, and seasoning portions are ready",
                 duration_minutes=1,
                 work_mode=WorkMode.ACTIVE,
                 category="preparation",

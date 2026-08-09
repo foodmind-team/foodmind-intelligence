@@ -95,6 +95,8 @@ SUPPORTED_DECISION_TYPES = frozenset(
     }
 )
 
+_PURCHASE_BUNDLE_OPTION_ID = "repair_purchase_bundle"
+
 
 def build_approved_decisions(
     repair_options: tuple[RepairOption, ...],
@@ -102,31 +104,40 @@ def build_approved_decisions(
 ) -> tuple[ApprovedDecision, ...]:
     """Convert presented RepairOptions into structured, submittable decisions.
 
-    Every supported option becomes an ApprovedDecision whose payload is
-    populated from the option's structured description. The client can
-    resubmit these verbatim; the server re-validates them (P0-06 rule 2).
+    Every supported option becomes an ApprovedDecision using the option's
+    machine-readable payload. Human-facing descriptions are never parsed
+    back into business data.
     """
-    import re as _re
-
     decisions: list[ApprovedDecision] = []
+    purchase_items: list[dict[str, object]] = []
     for option in repair_options:
         if option.option_type not in SUPPORTED_DECISION_TYPES:
             continue
-        payload: dict[str, object] = {}
-        if option.option_type == "extend_time":
-            match = _re.search(r"to (\d+) minutes", option.description)
-            if match:
-                payload["time_limit_minutes"] = int(match.group(1))
-        elif option.option_type == "reduce_servings":
-            match = _re.search(r"from ([\d.]+) to ([\d.]+)", option.description)
-            if match:
-                # 削减后的新份量始终为整数（to_integral_value），故保留 int 语义
-                payload["servings"] = int(Decimal(match.group(2)))
+        if option.option_type == "purchase":
+            payload = option.payload
+            if all(payload.get(key) is not None for key in ("ingredient_name", "quantity", "unit")):
+                purchase_items.append(
+                    {
+                        "ingredient_name": payload["ingredient_name"],
+                        "quantity": payload["quantity"],
+                        "unit": payload["unit"],
+                    }
+                )
+            continue
         decisions.append(
             ApprovedDecision(
                 option_id=option.option_id,
                 option_type=option.option_type,
-                payload=payload,
+                payload=dict(option.payload),
+                plan_revision=plan_revision,
+            )
+        )
+    if purchase_items:
+        decisions.append(
+            ApprovedDecision(
+                option_id=_PURCHASE_BUNDLE_OPTION_ID,
+                option_type="purchase",
+                payload={"items": tuple(purchase_items)},
                 plan_revision=plan_revision,
             )
         )
@@ -190,10 +201,10 @@ def apply_approved_decisions_structured(
     GeneratePlanRequest with the applicable constraints updated:
       - reduce_servings   → target_servings of every recipe
       - extend_time       → time_limit_minutes
-      - substitute_ingredient → recorded in approved payload for the IR
-        builder (ingredient substitution applied downstream as a patch)
       - alternative_equipment → kitchen resource snapshot adjusted
       - replace_dish      → recipe removed from the request
+      - purchase          → no request mutation; the backend must persist
+        real inventory and submit a fresh inventory snapshot
     """
     new_request = request
     new_kitchen: list[object] = list(request.kitchen_resources)
@@ -241,15 +252,11 @@ def apply_approved_decisions_structured(
             )
             new_kitchen = kept
 
-        # substitute_ingredient is handled as a patch by the IR builder
-        # (payload: {recipe_id, ingredient, substitute}) — see
-        # apply_ingredient_substitutions_patch.
-
         elif decision.option_type == "purchase":
-            # 外出采购：决策本身不改变排程输入（agent 无法代购）。
-            # 用户购买后由后端更新库存快照（inventory_lots）并重新提交请求；
-            # 若库存未变，重跑仍会返回 NEEDS_CONFIRMATION（可再次选择）。
-            pass  # no-op：继续到最终 model_copy（保留 approved_decisions）
+            # Purchase approval is an external workflow boundary. The Agent
+            # never fabricates inventory; Backend persists checked purchases,
+            # queries inventory again, then submits a fresh request.
+            continue
 
     new_request = new_request.model_copy(update={"kitchen_resources": tuple(new_kitchen)})
     return new_request

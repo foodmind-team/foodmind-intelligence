@@ -17,7 +17,7 @@ from starlette.responses import JSONResponse, Response
 from cooking_plan_agent.api import register_exception_handlers
 from cooking_plan_agent.api import router as agent_router
 from cooking_plan_agent.api.compat_router import router as compat_router
-from cooking_plan_agent.application import GenerateCookingPlanService
+from cooking_plan_agent.application import GenerateCookingPlanService, ParseRecipeImportService
 from cooking_plan_agent.observability.logging import RedactingJsonFormatter, configure_structured_logging
 from cooking_plan_agent.safety.engine import SafetyEngine
 from cooking_plan_agent.workflow.context import WorkflowContext
@@ -137,6 +137,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         LLMKnowledgeResearcher,
         LLMPlanExplainer,
         LLMRecipeExtractor,
+        LLMRecipeImportExtractor,
     )
 
     llm_client: LLMClient | None = None
@@ -163,6 +164,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # RecipeExtractor: LLM-backed when enabled, otherwise rule-based fallback.
     recipe_extractor = LLMRecipeExtractor(llm_client) if llm_client is not None else None
+
+    # Recipe import is a separate application boundary: it extracts multiple
+    # partial recipes and asks only for facts required before persistence.
+    from cooking_plan_agent.parsing.recipe_imports import DeterministicRecipeImportExtractor
+
+    deterministic_importer = DeterministicRecipeImportExtractor()
+    recipe_import_extractor = (
+        LLMRecipeImportExtractor(llm_client, deterministic_importer)
+        if llm_client is not None
+        else deterministic_importer
+    )
+    app.state.recipe_import_service = ParseRecipeImportService(recipe_import_extractor)
 
     # Wire RecipeResearcher when web research is enabled (handbook 10.1).
     recipe_researcher: Researcher | LLMKnowledgeResearcher | None = None

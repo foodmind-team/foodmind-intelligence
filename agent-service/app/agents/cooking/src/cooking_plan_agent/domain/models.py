@@ -515,6 +515,9 @@ class RepairOption(StrictModel):
     description: str
     changes: tuple[str, ...]
     effects: tuple[str, ...]
+    # Machine-readable values used to build ApprovedDecision payloads. UI
+    # prose is deliberately never parsed back into business data.
+    payload: dict[str, object] = {}
     revalidation_status: str = "validated"
 
 
@@ -580,6 +583,31 @@ class RecipeInput(StrictModel):
     recipe_id: str = Field(min_length=1, max_length=128)
     text: str = Field(min_length=1, max_length=1_000_000)
     target_servings: PositiveDecimal
+
+
+class PreprocessRecipesRequest(StrictModel):
+    """Request to the preprocess endpoint.
+
+    The Spring Boot backend sends raw recipe text BEFORE generate() and
+    receives fully-populated ``ExtractedRecipeCandidate`` snapshots back
+    (NL parsing + gap filling done once, reusing the agent pipeline).
+    Those candidates are then passed back on the generate request as
+    ``preparsed_candidates`` so the workflow never re-parses or re-asks
+    about gaps.
+    """
+
+    request_id: str = Field(min_length=1, max_length=128)
+    recipes: tuple[RecipeInput, ...]
+
+
+class PreprocessRecipesResponse(StrictModel):
+    """Response from the preprocess endpoint.
+
+    ``recipes`` carries one populated candidate per input recipe — missing
+    durations/heat/temperature/resources already inferred via local rules.
+    """
+
+    recipes: tuple[ExtractedRecipeCandidate, ...]
 
 
 class GeneratePlanRequest(StrictModel):

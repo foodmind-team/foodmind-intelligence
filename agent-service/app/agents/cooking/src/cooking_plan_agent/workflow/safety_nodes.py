@@ -137,19 +137,16 @@ async def check_feasibility_node(
     # --- Generate repair options when infeasible ---
     repair_options: tuple[RepairOption, ...] = ()
     if not is_feasible:
+        # 削减份量以用户请求的份量为基准（取各菜谱 target_servings 的最大值），
+        # 而非固定默认 2——否则 4 人份菜单会错误地建议「from 2 to 1」。
+        from decimal import Decimal as _Decimal
+
         from cooking_plan_agent.repair.options import (
-            propose_dish_replacements,
             propose_equipment_alternatives,
             propose_ingredient_substitutions,
             propose_portion_adjustments,
             rank_repair_options,
         )
-
-        recipe_names = tuple(r.dish_name for r in parsed_recipes)
-
-        # 削减份量以用户请求的份量为基准（取各菜谱 target_servings 的最大值），
-        # 而非固定默认 2——否则 4 人份菜单会错误地建议「from 2 to 1」。
-        from decimal import Decimal as _Decimal
 
         base_servings: _Decimal = max(
             (r.target_servings for r in parsed_recipes),
@@ -159,7 +156,6 @@ async def check_feasibility_node(
         opts = list(propose_ingredient_substitutions(ingredient_report.ingredient_shortages))
         opts.extend(propose_portion_adjustments(ingredient_report.ingredient_shortages, base_servings))
         opts.extend(propose_equipment_alternatives(tuple(missing_resources)))
-        opts.extend(propose_dish_replacements(ingredient_report.ingredient_shortages, recipe_names))
         repair_options = rank_repair_options(tuple(opts))
 
     return {

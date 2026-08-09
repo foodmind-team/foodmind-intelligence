@@ -515,10 +515,11 @@ async def test_structured_confirmation_closed_loop() -> None:
     assert response.confirmation_questions, "confirmation must carry structured questions"
     assert response.plan_revision is not None
 
-    # Answer the repair-option question with a presented option value.
-    repair_question = next(q for q in response.confirmation_questions if q.field_path == "repair_options")
-    answer_value = next(o.value for o in repair_question.options if o.value != "__skip__")
-    answers = (QuestionAnswer(question_id=repair_question.question_id, value=answer_value),)
+    # Answer the strategy question with a presented option value. Per-item
+    # repair questions are collapsed into one plan-level strategy choice.
+    strategy_question = next(q for q in response.confirmation_questions if q.field_path == "repair_strategy")
+    answer_value = next(o.value for o in strategy_question.options)
+    answers = (QuestionAnswer(question_id=strategy_question.question_id, value=answer_value),)
     decisions = answers_to_approved_decisions(
         response.confirmation_questions,
         answers,

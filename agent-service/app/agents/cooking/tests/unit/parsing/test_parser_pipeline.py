@@ -145,6 +145,34 @@ class TestRecipeExtractor:
         assert not any("、" in n for n in names)
 
     @pytest.mark.asyncio
+    async def test_pan_fry_is_inferred_as_a_complete_heating_step(self) -> None:
+        """A common pan-fry spelling must not create an empty confirmation."""
+        extractor = RecipeExtractor()
+        candidate = await extractor.extract(
+            "Ginger Tofu Bowl\n"
+            "4 servings\n"
+            "Ingredients: 400 g tofu, 20 g ginger, 1 tbsp oil\n"
+            "Steps:\n"
+            "1. Slice the tofu and ginger, then pan-fry until the tofu is golden.\n"
+        )
+
+        assert candidate.steps[0].category == "heating"
+
+        gaps = find_recipe_gaps(candidate)
+        inferred = infer_local(candidate, gaps)
+        unresolved_critical = [
+            gap
+            for gap in inferred.unresolved_gaps
+            if gap.gap_class in (GapClass.CRITICAL, GapClass.SAFETY_CRITICAL)
+        ]
+        assert unresolved_critical == []
+
+        merged = merge_inference(candidate, inferred)
+        step = merged.steps[0]
+        assert step.heat_level == HeatLevel.MEDIUM
+        assert step.active_duration_minutes is not None or step.passive_duration_minutes is not None
+
+    @pytest.mark.asyncio
     async def test_extract_quantity_range_and_slash_alternatives(self) -> None:
         """Spicy prawns: '大蒜3-4瓣' parses quantity range with 瓣 unit, and
         '味精/鸡精（可选）' splits into independent alternatives."""

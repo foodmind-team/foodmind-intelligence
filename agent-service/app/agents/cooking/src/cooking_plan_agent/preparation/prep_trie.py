@@ -583,7 +583,7 @@ def _batch_wash_tasks(tasks: list[CookingTask]) -> list[CookingTask]:
         update={
             "task_id": "prep_batch_wash_fresh_ingredients",
             "dish_id": "shared",
-            "instruction": f"[Prep] 集中清洗并沥干：{'、'.join(names)}",
+            "instruction": f"[Prep] Rinse and drain together: {', '.join(names)}",
             "duration_minutes": duration,
             "resources": (ResourceNeed(quantity=1, resource_type="sink"),),
             "produces_states": produced_states,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from uuid import uuid4
 
 from cooking_plan_agent.domain.models import FeasibilityReport, IngredientFeasibility, RepairOption
@@ -51,6 +51,13 @@ def calculate_exact_shortages(
     return tuple(shortages)
 
 
+def _json_number(value: Decimal) -> int | float:
+    """Return a JSON-native number without losing integral quantities."""
+    if value == value.to_integral_value():
+        return int(value)
+    return float(value)
+
+
 # =============================================================================
 # 5.18  Ingredient substitution proposal
 # =============================================================================
@@ -59,62 +66,44 @@ def calculate_exact_shortages(
 def propose_ingredient_substitutions(
     shortages: tuple[IngredientFeasibility, ...],
 ) -> tuple[RepairOption, ...]:
-    """Propose ingredient substitutions for each shortage.
+    """Build one purchase item for every ingredient shortage.
 
-    Looks up common substitutions from the built-in table. Only returns
-    options for ingredients that have known substitutes — unknown
-    ingredients are left for the "purchase" option (deferred to rendering).
+    The public name is retained for compatibility with existing imports, but
+    ingredient substitution is intentionally not offered in the Cooking Plan
+    shortage flow. The only inventory strategies are purchase and (when the
+    request is above one serving) portion reduction.
 
     Args:
         shortages: Ingredient shortages from FeasibilityReport.
 
     Returns:
-        One or more RepairOption per shortage (may be empty if no
-        substitute is known).
+        Exactly one purchase RepairOption per shortage.
     """
     options: list[RepairOption] = []
 
     for shortage in shortages:
-        name_lower = shortage.ingredient_name.lower().strip()
-        subs = _INGREDIENT_SUBSTITUTIONS.get(name_lower)
-
-        if not subs:
-            # No known substitution — flag as needing purchase
-            options.append(
-                RepairOption(
-                    option_id=f"repair_purchase_{shortage.ingredient_name}_{uuid4().hex[:6]}",
-                    option_type="purchase",
-                    description=(
-                        f"Purchase {shortage.shortage} {shortage.unit} of "
-                        f"'{shortage.ingredient_name}' (no known substitute available)"
-                    ),
-                    changes=(
-                        f"Add {shortage.shortage} {shortage.unit} of {shortage.ingredient_name} to shopping list",
-                    ),
-                    effects=(
-                        f"Increase {shortage.ingredient_name} availability by {shortage.shortage} {shortage.unit}",
-                    ),
-                    revalidation_status="validated",
-                )
+        options.append(
+            RepairOption(
+                option_id=f"repair_purchase_{shortage.ingredient_name}_{uuid4().hex[:6]}",
+                option_type="purchase",
+                description=(
+                    f"Purchase {shortage.shortage} {shortage.unit} of "
+                    f"'{shortage.ingredient_name}'"
+                ),
+                changes=(
+                    f"Add {shortage.shortage} {shortage.unit} of {shortage.ingredient_name} to shopping list",
+                ),
+                effects=(
+                    "Add the purchased quantity to real inventory before revalidation",
+                ),
+                payload={
+                    "ingredient_name": shortage.ingredient_name,
+                    "quantity": _json_number(shortage.shortage),
+                    "unit": shortage.unit,
+                },
+                revalidation_status="validated",
             )
-            continue
-
-        for sub_name, note in subs:
-            options.append(
-                RepairOption(
-                    option_id=f"repair_sub_{shortage.ingredient_name}_{sub_name.split()[0]}_{uuid4().hex[:6]}",
-                    option_type="substitute_ingredient",
-                    description=(f"Substitute '{shortage.ingredient_name}' with '{sub_name}': {note}"),
-                    changes=(
-                        f"Replace {shortage.ingredient_name} ({shortage.shortage} {shortage.unit}) with {sub_name}",
-                    ),
-                    effects=(
-                        f"Resolves {shortage.shortage} {shortage.unit} shortage of "
-                        f"'{shortage.ingredient_name}'. {note}",
-                    ),
-                    revalidation_status="validated",
-                )
-            )
+        )
 
     return tuple(options)
 
@@ -167,7 +156,7 @@ def propose_portion_adjustments(
     if min_ratio >= Decimal(1):
         return ()  # No reduction needed (should not happen with shortages)
 
-    new_servings = max(Decimal(1), (original * min_ratio).to_integral_value())
+    new_servings = max(Decimal(1), (original * min_ratio).to_integral_value(rounding=ROUND_FLOOR))
 
     if new_servings >= original:
         return ()
@@ -186,7 +175,8 @@ def propose_portion_adjustments(
                 f"Scale all ingredient quantities to {_fmt_servings(new_servings)} servings "
                 f"(was {_fmt_servings(original)})",
             ),
-            effects=(f"All ingredient shortages resolved by scaling down to {_fmt_servings(new_servings)} servings",),
+            effects=(f"Recheck inventory for {_fmt_servings(new_servings)} servings before generating the plan",),
+            payload={"servings": int(new_servings)},
             revalidation_status="validated",
         ),
     )

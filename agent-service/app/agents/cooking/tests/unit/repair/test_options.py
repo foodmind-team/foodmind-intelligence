@@ -112,9 +112,13 @@ class TestProposeIngredientSubstitutions:
             ),
         )
         options = propose_ingredient_substitutions(shortages)
-        assert len(options) >= 2  # chicken thigh + tofu
-        types = {o.option_type for o in options}
-        assert "substitute_ingredient" in types
+        assert len(options) == 1
+        assert options[0].option_type == "purchase"
+        assert options[0].payload == {
+            "ingredient_name": "chicken breast",
+            "quantity": 200,
+            "unit": "g",
+        }
 
     def test_unknown_ingredient_falls_back_to_purchase(self):
         shortages = (
@@ -241,8 +245,8 @@ class TestProposePortionAdjustments:
         )
         options = propose_portion_adjustments(shortages, original_servings=Decimal("3.5"))
         assert len(options) == 1
-        # 50% of 3.5 = 1.75 → ROUND_HALF_EVEN 取整为 2
-        assert "from 3.5 to 2" in options[0].description
+        # Serving reductions are conservative: 50% of 3.5 floors to 1.
+        assert "from 3.5 to 1" in options[0].description
         assert options[0].option_type == "reduce_servings"
 
     def test_servings_base_matches_requested(self):

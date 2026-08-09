@@ -306,6 +306,20 @@ _CHINESE_TECHNIQUE_KEYWORDS: dict[str, str] = {
     "红烧": "braise",
 }
 
+# Common English spellings whose surface form differs from the canonical
+# inference-map key. Keep these aliases next to the language-specific lookup
+# so extraction and local gap filling agree on the same technique.
+_ENGLISH_TECHNIQUE_ALIASES: dict[str, str] = {
+    "pan-fry": "sauté",
+    "pan fry": "sauté",
+    "pan-fried": "sauté",
+    "pan fried": "sauté",
+    "saute": "sauté",
+    "sauteed": "sauté",
+    "sauté": "sauté",
+    "sautéed": "sauté",
+}
+
 
 # =============================================================================
 # Internal inference helpers
@@ -333,6 +347,10 @@ def _detect_primary_technique(candidate: ExtractedRecipeCandidate) -> str:
         for tech in _TECHNIQUE_HEAT_MAP:
             term = tech.replace("_", " ")
             if term in instruction or tech.replace("_", "-") in instruction:
+                technique_counts[tech] += 1
+
+        for keyword, tech in _ENGLISH_TECHNIQUE_ALIASES.items():
+            if keyword in instruction:
                 technique_counts[tech] += 1
 
         # Check Chinese technique keywords

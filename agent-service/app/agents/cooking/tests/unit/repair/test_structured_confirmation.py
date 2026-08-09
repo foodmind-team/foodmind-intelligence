@@ -62,12 +62,31 @@ def _repair_option(
     option_type: str = "reduce_servings",
     description: str = "Reduce servings from 2 to 1",
 ) -> RepairOption:
+    payload: dict[str, object]
+    if option_type == "purchase":
+        import re
+
+        match = re.search(r"Purchase\s+([\d.]+)\s+(\S+)\s+of\s+'([^']+)'", description)
+        payload = (
+            {
+                "ingredient_name": match.group(3),
+                "quantity": int(Decimal(match.group(1))),
+                "unit": match.group(2),
+            }
+            if match
+            else {}
+        )
+    elif option_type == "reduce_servings":
+        payload = {"servings": 1}
+    else:
+        payload = {}
     return RepairOption(
         option_id=option_id,
         option_type=option_type,
         description=description,
         changes=("Scale down",),
         effects=("Fixed",),
+        payload=payload,
         revalidation_status="validated",
     )
 
@@ -97,27 +116,66 @@ def _assumption(text: str = "Assumed 200C for baking", confidence: str = "0.4") 
 
 
 class TestStructuredQuestionGeneration:
-    def test_repair_options_produce_choice_questions(self) -> None:
-        """Each supported RepairOption becomes one CHOICE question whose apply
-        option value is the presented decision's option_id (D9)."""
+    def test_purchase_and_reduce_options_collapse_into_one_strategy_question(self) -> None:
+        """缺料场景不再逐个 repair 确认，而是聚合成一个高层策略题。"""
+        options = (
+            _repair_option(
+                option_id="repair_purchase_broccoli",
+                option_type="purchase",
+                description="Purchase 90 g of 'Broccoli' (no known substitute available)",
+            ),
+            _repair_option(
+                option_id="repair_purchase_tomato",
+                option_type="purchase",
+                description="Purchase 200 g of 'Canned tomatoes' (no known substitute available)",
+            ),
+            _repair_option(),
+        )
+
+        response = render_confirmation_response(_state(repair_options=options))
+
+        strategy_questions = [q for q in response.confirmation_questions if q.field_path == "repair_strategy"]
+        assert len(strategy_questions) == 1
+        question = strategy_questions[0]
+        assert question.question_id == "repair:strategy"
+        assert question.response_type == QuestionResponseType.CHOICE
+        assert question.required is True
+        assert len(question.options) == 2
+        option_values = {o.value for o in question.options}
+        assert "repair_servings_1_abc" in option_values
+        assert "repair_purchase_bundle" in option_values
+        assert any("Reduce" in option.label for option in question.options)
+        assert any("Buy" in option.label for option in question.options)
+
+        purchase_decisions = [d for d in response.decisions if d.option_type == "purchase"]
+        assert len(purchase_decisions) == 1
+        assert purchase_decisions[0].option_id == "repair_purchase_bundle"
+        assert purchase_decisions[0].payload == {
+            "items": (
+                {"ingredient_name": "Broccoli", "quantity": 90, "unit": "g"},
+                {"ingredient_name": "Canned tomatoes", "quantity": 200, "unit": "g"},
+            )
+        }
+
+    def test_single_repair_option_still_collapses_to_strategy_question(self) -> None:
+        """Even a single plan-level repair (e.g. only reduce_servings) is
+        collapsed into the strategy question — never a per-item Apply/Do-not-
+        apply list. The user always decides at plan level."""
         options = (_repair_option(),)
         response = render_confirmation_response(_state(repair_options=options))
 
         assert isinstance(response, ConfirmationPlanResponse)
         assert response.confirmation_questions
 
-        repair_questions = [q for q in response.confirmation_questions if q.field_path == "repair_options"]
-        assert len(repair_questions) == 1
-        question = repair_questions[0]
-        assert question.question_id == "repair:repair_servings_1_abc"
+        strategy_questions = [q for q in response.confirmation_questions if q.field_path == "repair_strategy"]
+        assert len(strategy_questions) == 1
+        question = strategy_questions[0]
+        assert question.question_id == "repair:strategy"
         assert question.response_type == QuestionResponseType.CHOICE
-        assert question.required is False  # repair options may be skipped
         option_values = {o.value for o in question.options}
         assert "repair_servings_1_abc" in option_values
-        assert "__skip__" in option_values
-        # Apply option carries the exact decision payload reference.
-        apply_option = next(o for o in question.options if o.value == "repair_servings_1_abc")
-        assert apply_option.suggested is True
+        # No per-item repair questions remain.
+        assert not any(q.field_path == "repair_options" for q in response.confirmation_questions)
 
     def test_blocking_gaps_produce_one_required_question_each(self) -> None:
         """Every unresolved critical gap → exactly one required TEXT question,
@@ -150,6 +208,59 @@ class TestStructuredQuestionGeneration:
 
         assert [q.question_id for q in first] == [q.question_id for q in second]
         assert len({q.question_id for q in first}) == len(first)  # no collisions
+
+    def test_backend_preprocessed_request_skips_gap_and_assumption_questions(self) -> None:
+        """When the backend preprocesses recipes (preparsed_candidates set),
+        gap + assumption questions are not re-asked — only strategy-level
+        repair questions remain. The agent stays focused on planning."""
+        from cooking_plan_agent.domain.models import ExtractedIngredient, ExtractedRecipeCandidate, ExtractedStep
+
+        gaps = (
+            _gap(),
+            _gap(recipe_id="r1", field_path="recipe.r1.step_2.temperature"),
+        )
+        assumptions_recipe = RecipeIR(
+            recipe_id="r1",
+            dish_name="Dish",
+            original_servings=2,
+            target_servings=2,
+            source_language="en",
+            ingredients=(
+                IngredientDemand(
+                    canonical_name="salt",
+                    raw_name="salt",
+                    quantity=Decimal(1),
+                    unit="g",
+                    confidence=Decimal("1.0"),
+                ),
+            ),
+            steps=(RecipeStep(step_number=1, instruction="Bake"),),
+            assumptions=(_assumption(confidence="0.4"),),
+        )
+        candidate = ExtractedRecipeCandidate(
+            recipe_id="r1",
+            dish_name="Dish",
+            original_servings=Decimal(2),
+            source_language="en",
+            ingredients=(ExtractedIngredient(raw_text="salt", name="salt", quantity=Decimal(1), unit="g"),),
+            steps=(ExtractedStep(step_number=1, instruction="Bake"),),
+        )
+        request = GeneratePlanRequest(
+            request_id="req-1",
+            user_id="user-1",
+            recipes=({"recipe_id": "r1", "text": "test", "target_servings": 2},),
+            preparsed_candidates=(candidate,),
+        )
+        state = _state(gaps=gaps, parsed_recipes=(assumptions_recipe,), repair_options=(_repair_option(),))
+        state["request"] = request  # type: ignore[arg-type]
+
+        response = render_confirmation_response(state)
+
+        question_ids = [q.question_id for q in response.confirmation_questions]
+        # No gap:… or assumption:… questions for preprocessed requests.
+        assert not any(qid.startswith(("gap:", "assumption:")) for qid in question_ids)
+        # Strategy-level repair questions still surface.
+        assert any(qid.startswith("repair:") for qid in question_ids)
 
     def test_low_confidence_assumptions_produce_choice_questions(self) -> None:
         """Assumptions below the confidence threshold surface as required
@@ -218,7 +329,7 @@ class TestAnswersToApprovedDecisions:
     def _questions_and_decisions(
         self,
     ) -> tuple[tuple[ConfirmationQuestion, ...], tuple[ApprovedDecision, ...]]:
-        """One repair option → its CHOICE question plus presented decisions."""
+        """One repair option → strategy question plus presented decisions."""
         options = (_repair_option(),)
         decisions = build_approved_decisions(options, "req-1:v1")
         state = _state(repair_options=options)
@@ -230,7 +341,7 @@ class TestAnswersToApprovedDecisions:
         payload is preserved verbatim (D9)."""
         questions, decisions = self._questions_and_decisions()
         decision = decisions[0]
-        answers = (QuestionAnswer(question_id="repair:repair_servings_1_abc", value=decision.option_id),)
+        answers = (QuestionAnswer(question_id="repair:strategy", value=decision.option_id),)
 
         mapped = answers_to_approved_decisions(questions, answers, "req-1:v1", presented_decisions=decisions)
 
@@ -240,16 +351,55 @@ class TestAnswersToApprovedDecisions:
         assert mapped[0].payload == decision.payload  # verbatim, no rewriting
         assert mapped[0].payload == {"servings": 1}
 
-    def test_skip_option_produces_no_decision(self) -> None:
-        questions, decisions = self._questions_and_decisions()
-        answers = (QuestionAnswer(question_id="repair:repair_servings_1_abc", value="__skip__"),)
+    def test_strategy_answer_maps_to_aggregated_purchase_decision(self) -> None:
+        options = (
+            _repair_option(
+                option_id="repair_purchase_broccoli",
+                option_type="purchase",
+                description="Purchase 90 g of 'Broccoli' (no known substitute available)",
+            ),
+            _repair_option(option_id="repair_purchase_tomato", option_type="purchase", description="Purchase 200 g of 'Tomato' (no known substitute available)"),
+            _repair_option(),
+        )
+        response = render_confirmation_response(_state(repair_options=options))
+        answers = (QuestionAnswer(question_id="repair:strategy", value="repair_purchase_bundle"),)
 
-        mapped = answers_to_approved_decisions(questions, answers, "req-1:v1", presented_decisions=decisions)
+        mapped = answers_to_approved_decisions(
+            response.confirmation_questions,
+            answers,
+            "req-1:v1",
+            presented_decisions=response.decisions,
+        )
+
+        assert len(mapped) == 1
+        assert mapped[0].option_type == "purchase"
+        assert mapped[0].payload == {
+            "items": (
+                {"ingredient_name": "Broccoli", "quantity": 90, "unit": "g"},
+                {"ingredient_name": "Tomato", "quantity": 200, "unit": "g"},
+            )
+        }
+
+    def test_no_answers_maps_to_no_decisions(self) -> None:
+        # A non-required question (repair option) submitted with no answers
+        # maps to no decisions — it may be skipped.
+        optional_question = ConfirmationQuestion(
+            question_id="repair:r1",
+            field_path="repair_options",
+            prompt="Apply the repair option 'x'?",
+            response_type=QuestionResponseType.CHOICE,
+            options=(QuestionOption(value="d1", label="Apply"), QuestionOption(value="__skip__", label="Do not apply")),
+            required=False,
+        )
+        decision = ApprovedDecision(option_id="d1", option_type="reduce_servings", payload={}, plan_revision="req-1:v1")
+        mapped = answers_to_approved_decisions(
+            (optional_question,), (), "req-1:v1", presented_decisions=(decision,)
+        )
         assert mapped == ()
 
     def test_invalid_option_rejected(self) -> None:
         questions, decisions = self._questions_and_decisions()
-        answers = (QuestionAnswer(question_id="repair:repair_servings_1_abc", value="not-an-option"),)
+        answers = (QuestionAnswer(question_id="repair:strategy", value="not-an-option"),)
 
         with pytest.raises(ConfirmationAnswersError) as exc_info:
             answers_to_approved_decisions(questions, answers, "req-1:v1", presented_decisions=decisions)
@@ -281,8 +431,8 @@ class TestAnswersToApprovedDecisions:
     def test_duplicate_answer_rejected(self) -> None:
         questions, decisions = self._questions_and_decisions()
         answers = (
-            QuestionAnswer(question_id="repair:repair_servings_1_abc", value=decisions[0].option_id),
-            QuestionAnswer(question_id="repair:repair_servings_1_abc", value="__skip__"),
+            QuestionAnswer(question_id="repair:strategy", value=decisions[0].option_id),
+            QuestionAnswer(question_id="repair:strategy", value="__skip__"),
         )
 
         with pytest.raises(ConfirmationAnswersError) as exc_info:
@@ -325,7 +475,7 @@ class TestAnswersToApprovedDecisions:
         current one — a metadata update, never a payload rewrite (D9)."""
         questions, decisions = self._questions_and_decisions()
         decision = decisions[0]
-        answers = (QuestionAnswer(question_id="repair:repair_servings_1_abc", value=decision.option_id),)
+        answers = (QuestionAnswer(question_id="repair:strategy", value=decision.option_id),)
 
         mapped = answers_to_approved_decisions(questions, answers, "req-1:v2", presented_decisions=decisions)
         assert mapped[0].plan_revision == "req-1:v2"

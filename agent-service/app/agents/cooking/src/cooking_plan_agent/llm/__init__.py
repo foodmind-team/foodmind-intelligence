@@ -11,6 +11,7 @@ from cooking_plan_agent.llm.client import LLMClient, LLMError
 from cooking_plan_agent.llm.controller import LLMReActController
 from cooking_plan_agent.llm.explainer import LLMPlanExplainer
 from cooking_plan_agent.llm.extractor import LLMRecipeExtractor
+from cooking_plan_agent.llm.recipe_importer import LLMRecipeImportExtractor
 from cooking_plan_agent.llm.researcher import LLMKnowledgeResearcher
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "LLMPlanExplainer",
     "LLMReActController",
     "LLMRecipeExtractor",
+    "LLMRecipeImportExtractor",
     "LLMKnowledgeResearcher",
 ]

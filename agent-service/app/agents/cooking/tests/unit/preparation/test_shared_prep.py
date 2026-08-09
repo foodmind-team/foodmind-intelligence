@@ -176,6 +176,7 @@ def test_different_fresh_ingredients_share_one_batched_wash() -> None:
         "onion:wash:shared",
     }
     assert batch.duration_minutes < 15
+    assert batch.instruction == "[Prep] Rinse and drain together: cabbage, carrot, onion"
 
 
 def test_branching_split_500_into_three_cuts() -> None:
@@ -306,6 +307,13 @@ async def test_shared_prep_produces_non_empty_prep_tasks(monkeypatch) -> None:
     assert result["prep_observations"], "expected merge observations"
     prep_ids = {task.task_id for task in result["prep_tasks"]}
     assert {"prep_gather_all_ingredients", "prep_mise_en_place_complete"} <= prep_ids
+    instructions = {task.task_id: task.instruction for task in result["prep_tasks"]}
+    assert instructions["prep_gather_all_ingredients"] == (
+        "[Mise en place] Gather all ingredients, seasonings, and required tools"
+    )
+    assert instructions["prep_mise_en_place_complete"] == (
+        "[Mise en place] Confirm that washing, cutting, and seasoning portions are ready"
+    )
 
 
 @pytest.mark.asyncio
