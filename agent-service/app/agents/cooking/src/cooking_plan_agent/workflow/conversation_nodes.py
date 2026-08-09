@@ -38,8 +38,7 @@ def _resolve_route(decisions: object) -> str:
 
     - 修改 request 内容 → "parse_recipes"（重新走解析/IR）
     - 仅调整约束 → "solve_schedule"（直接重排）
-    - purchase is an external backend boundary and never resumes in-process
-    - 无决策 → "render_ready_response"
+    - purchase / 无决策 → "render_ready_response"（无需修改）
     """
     if not isinstance(decisions, tuple):
         return "render_ready_response"
