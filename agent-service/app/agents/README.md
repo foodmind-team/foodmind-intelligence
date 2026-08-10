@@ -1,5 +1,8 @@
 # FoodMind local AI agents
 
+Local environment variables live in this directory at `app/agents/.env`.
+Individual agent directories must not keep their own `.env` files.
+
 The Spring Boot local defaults expect Recommendation on port 8001, Cooking on
 8003, and Chat on 8004. To start the matching services with one DeepSeek key:
 
@@ -13,4 +16,3 @@ known token values outside local development.
 
 Each service also has its own `.env.example` for running directly with `uv`.
 No real API key belongs in Git.
-

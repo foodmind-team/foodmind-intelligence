@@ -1,5 +1,6 @@
 # import the required modules
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import BeforeValidator
@@ -25,6 +26,7 @@ def _parse_comma_separated_list(value: object) -> list[str]:
 # (tuple is treated as a complex type); the raw string reaches the validator.
 CommaSeparatedList = Annotated[tuple[str, ...], NoDecode, BeforeValidator(_parse_comma_separated_list)]
 LOCAL_SERVICE_TOKEN = "local-cooking-token"  # noqa: S105 - rejected outside local
+AGENTS_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 
 
 # define the settings model
@@ -217,7 +219,7 @@ class Settings(BaseSettings):
     # define the model config
     model_config = SettingsConfigDict(
         env_prefix="COOKING_PLAN_",
-        env_file=".env",
+        env_file=AGENTS_ENV_FILE,
         extra="forbid",  # if the env file contains extra variables, throw an error
     )
 
