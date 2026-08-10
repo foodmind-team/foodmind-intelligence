@@ -19,6 +19,7 @@ from cooking_plan_agent.parsing.extractor_patterns import (
     _RE_DURATION_RANGE,
     _RE_DURATION_SINGLE,
     _RE_INGREDIENT_CHINESE,
+    _RE_INGREDIENT_CJK_QUANTITY_FIRST,
     _RE_INGREDIENT_WESTERN,
     _RE_NAME_PREP_SPLIT,
     _RE_NO_QUANTITY,
@@ -182,8 +183,33 @@ class RecipeExtractor:
                 return None
 
         # Try Western pattern first, then Chinese
-        result = self._try_western(line) or self._try_chinese(line) or self._try_no_quantity(line)
+        result = (
+            self._try_cjk_quantity_first(line)
+            or self._try_western(line)
+            or self._try_chinese(line)
+            or self._try_no_quantity(line)
+        )
         return result
+
+    def _try_cjk_quantity_first(self, line: str) -> ExtractedIngredient | None:
+        """Parse compact quantity-first CJK ingredients such as ``400克豆腐``."""
+        match = _RE_INGREDIENT_CJK_QUANTITY_FIRST.match(line.strip())
+        if not match:
+            return None
+        quantity, unit_raw, rest = match.groups()
+        name, prep = self._split_name_prep(rest)
+        name = self._clean_ingredient_name(name)
+        if not name:
+            return None
+        return ExtractedIngredient(
+            raw_text=line.strip(),
+            name=name,
+            quantity=Decimal(quantity),
+            unit=_normalise_unit(unit_raw),
+            preparation=prep.strip() if prep else None,
+            extraction_source="EXPLICIT",
+            confidence=Decimal("0.9"),
+        )
 
     def _try_western(self, line: str) -> ExtractedIngredient | None:
         """Try Western-style ingredient pattern: '200g chicken breast, diced'."""

@@ -171,11 +171,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     deterministic_importer = DeterministicRecipeImportExtractor()
     recipe_import_extractor = (
-        LLMRecipeImportExtractor(llm_client, deterministic_importer)
+        LLMRecipeImportExtractor(
+            llm_client,
+            deterministic_importer,
+            timeout_seconds=settings.recipe_import_llm_timeout_seconds,
+            max_output_tokens=settings.recipe_import_max_output_tokens,
+        )
         if llm_client is not None
         else deterministic_importer
     )
-    app.state.recipe_import_service = ParseRecipeImportService(recipe_import_extractor)
+    app.state.recipe_import_service = ParseRecipeImportService(
+        recipe_import_extractor,
+        answer_normaliser=(
+            recipe_import_extractor if isinstance(recipe_import_extractor, LLMRecipeImportExtractor) else None
+        ),
+    )
 
     # Wire RecipeResearcher when web research is enabled (handbook 10.1).
     recipe_researcher: Researcher | LLMKnowledgeResearcher | None = None

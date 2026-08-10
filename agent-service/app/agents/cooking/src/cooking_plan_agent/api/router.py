@@ -87,7 +87,7 @@ async def parse_recipe_import(
     _correlation_id: Annotated[str, Depends(extract_correlation_id)],
     _lease: Annotated[None, Depends(request_lease)] = None,
 ) -> ParseRecipeImportResponse:
-    """Parse an English multi-dish text and return structured follow-ups."""
+    """Parse multilingual recipe text into English drafts and structured follow-ups."""
 
     try:
         return await service.execute(body)

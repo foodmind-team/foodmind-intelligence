@@ -110,6 +110,15 @@ class Settings(BaseSettings):
     # Overall envelope timeout for the whole multi-recipe extraction batch.
     # Per-call timeout is llm_timeout_seconds; this bounds the gather.
     llm_overall_timeout_seconds: float = 240.0
+    # Recipe import is an interactive request served through a Backend client
+    # with a 30-second read deadline. Fall back before that boundary instead
+    # of allowing the shared LLM retry budget to exhaust the HTTP request.
+    recipe_import_llm_timeout_seconds: float = 20.0
+    # Multi-dish import asks the LLM to emit one JSON object with a recipes
+    # array (or a fully structured dish). A pasted set of ~6 dishes needs more
+    # than the shared 2048-token cap; truncation used to force the weak rule
+    # fallback, which merged dishes into one draft or crashed on step limits.
+    recipe_import_max_output_tokens: int = 8192
 
     # --- Schedule explanation (P2-02 / P4-01) ---
     # READY responses may carry a short "why this schedule" explanation

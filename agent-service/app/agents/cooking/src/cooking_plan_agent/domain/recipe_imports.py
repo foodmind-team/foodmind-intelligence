@@ -2,36 +2,11 @@
 
 from __future__ import annotations
 
-import unicodedata
 from enum import StrEnum
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 
 from cooking_plan_agent.domain.models import StrictModel
-
-ENGLISH_ONLY_MESSAGE = "Please use English only. Chinese or mixed-language input is not supported."
-
-
-def contains_non_latin_letters(value: str) -> bool:
-    """Return whether text contains a letter outside the Latin script.
-
-    Digits, punctuation, measurement symbols, combining marks, and emoji are
-    allowed. This is the product's deterministic input policy, not a
-    statistical language detector.
-    """
-
-    for character in value:
-        if not unicodedata.category(character).startswith("L"):
-            continue
-        if "LATIN" not in unicodedata.name(character, ""):
-            return True
-    return False
-
-
-def require_english_script(value: str) -> str:
-    if contains_non_latin_letters(value):
-        raise ValueError(ENGLISH_ONLY_MESSAGE)
-    return value
 
 
 class RecipeImportStatus(StrEnum):
@@ -42,29 +17,6 @@ class RecipeImportStatus(StrEnum):
 class RecipeImportAnswer(StrictModel):
     question_id: str = Field(min_length=1, max_length=160)
     value: str = Field(min_length=1, max_length=20_000)
-
-    @field_validator("value")
-    @classmethod
-    def english_only(cls, value: str) -> str:
-        return require_english_script(value)
-
-
-class ParseRecipeImportRequest(StrictModel):
-    request_id: str = Field(min_length=1, max_length=128)
-    text: str = Field(min_length=1, max_length=100_000)
-    answers: tuple[RecipeImportAnswer, ...] = Field(default=(), max_length=24)
-
-    @field_validator("text")
-    @classmethod
-    def english_only(cls, value: str) -> str:
-        return require_english_script(value)
-
-    @model_validator(mode="after")
-    def unique_answers(self) -> ParseRecipeImportRequest:
-        identifiers = [answer.question_id for answer in self.answers]
-        if len(identifiers) != len(set(identifiers)):
-            raise ValueError("Duplicate recipe-import question IDs are not allowed.")
-        return self
 
 
 class RecipeImportDraft(StrictModel):
@@ -83,6 +35,29 @@ class RecipeImportQuestion(StrictModel):
     response_type: str = "TEXT"
     required: bool = True
     suggested_value: str | None = Field(default=None, max_length=500)
+
+
+class ParseRecipeImportRequest(StrictModel):
+    request_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=100_000)
+    answers: tuple[RecipeImportAnswer, ...] = Field(default=(), max_length=24)
+    drafts: tuple[RecipeImportDraft, ...] = Field(default=(), max_length=6)
+    questions: tuple[RecipeImportQuestion, ...] = Field(default=(), max_length=24)
+
+    @model_validator(mode="after")
+    def valid_resume_snapshot(self) -> ParseRecipeImportRequest:
+        answer_identifiers = [answer.question_id for answer in self.answers]
+        if len(answer_identifiers) != len(set(answer_identifiers)):
+            raise ValueError("Duplicate recipe-import question IDs are not allowed.")
+        draft_identifiers = [draft.draft_id for draft in self.drafts]
+        if len(draft_identifiers) != len(set(draft_identifiers)):
+            raise ValueError("Duplicate recipe-import draft IDs are not allowed.")
+        question_identifiers = [question.question_id for question in self.questions]
+        if len(question_identifiers) != len(set(question_identifiers)):
+            raise ValueError("Duplicate recipe-import question IDs are not allowed.")
+        if self.questions and not self.drafts:
+            raise ValueError("Recipe-import questions require their draft snapshot.")
+        return self
 
 
 class ParseRecipeImportResponse(StrictModel):

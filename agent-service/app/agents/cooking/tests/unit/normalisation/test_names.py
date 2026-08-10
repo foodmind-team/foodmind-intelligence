@@ -3,11 +3,38 @@
 from __future__ import annotations
 
 from cooking_plan_agent.normalisation.names import (
+    clean_dish_name,
     match_catalogue_item,
     normalise_essential_resource,
     normalise_ingredient_name,
     normalise_resource_type,
 )
+
+
+class TestCleanDishName:
+    """Dish display titles — quantities/notes/prep stripped, aliases NOT applied."""
+
+    def test_plain_title_preserved(self):
+        assert clean_dish_name("Crab legs") == "Crab legs"
+        assert clean_dish_name("Salt and Pepper Chicken") == "Salt and Pepper Chicken"
+
+    def test_parenthetical_notes_stripped(self):
+        assert clean_dish_name("Fresh shrimp (， remove head， tail， and thread， and cut in half)") == "Fresh shrimp"
+        assert clean_dish_name("Large-sized prawns 500 grams (select larger ones)") == "Large-sized prawns"
+
+    def test_trailing_and_leading_quantities_stripped(self):
+        assert clean_dish_name("Large-sized prawns 500 grams") == "Large-sized prawns"
+        assert clean_dish_name("15 chicken wings") == "chicken wings"
+
+    def test_prep_suffix_stripped(self):
+        assert clean_dish_name("Chicken Wings, Fried") == "Chicken Wings"
+
+    def test_untitled_placeholder_kept(self):
+        # "Untitled Recipe" is handled by callers; the cleaner must not drop it.
+        assert clean_dish_name("Untitled Recipe") == "Untitled Recipe"
+
+    def test_empty_input_returns_cleaned_form(self):
+        assert clean_dish_name("   ") == ""
 
 
 class TestNormaliseIngredientName:

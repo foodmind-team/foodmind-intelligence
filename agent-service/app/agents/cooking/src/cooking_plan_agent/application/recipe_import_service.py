@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
+from typing import Protocol
 
 from cooking_plan_agent.config.settings import get_settings
 from cooking_plan_agent.domain.recipe_imports import (
     ParseRecipeImportRequest,
     ParseRecipeImportResponse,
+    RecipeImportAnswer,
     RecipeImportDraft,
     RecipeImportQuestion,
     RecipeImportStatus,
@@ -21,14 +23,29 @@ class InvalidRecipeImportAnswers(ValueError):
     """Raised when answers do not match the current structured questions."""
 
 
+class RecipeImportAnswerNormaliser(Protocol):
+    """Converts free-text clarification answers into English."""
+
+    async def normalise_answers(
+        self,
+        questions: tuple[RecipeImportQuestion, ...],
+        answers: tuple[RecipeImportAnswer, ...],
+    ) -> tuple[RecipeImportAnswer, ...]: ...
+
+
 class ParseRecipeImportService:
     """Extract drafts, apply field-scoped answers, and produce questions."""
 
-    def __init__(self, extractor: RecipeImportExtractor) -> None:
+    def __init__(
+        self,
+        extractor: RecipeImportExtractor,
+        answer_normaliser: RecipeImportAnswerNormaliser | None = None,
+    ) -> None:
         self._extractor = extractor
+        self._answer_normaliser = answer_normaliser
 
     async def execute(self, request: ParseRecipeImportRequest) -> ParseRecipeImportResponse:
-        drafts = await self._extractor.extract(request.text)
+        drafts = request.drafts or await self._extractor.extract(request.text)
         settings = get_settings()
         if not drafts:
             drafts = (RecipeImportDraft(draft_id="dish-1"),)
@@ -37,17 +54,56 @@ class ParseRecipeImportService:
                 f"A maximum of {settings.max_recipe_count} recipes can be imported at once."
             )
 
-        current_questions = self._questions(drafts)
+        derived_questions = self._questions(drafts)
+        current_questions = request.questions or derived_questions
+        if request.questions and not self._same_questions(request.questions, derived_questions):
+            raise InvalidRecipeImportAnswers("The recipe-import resume snapshot is stale or inconsistent.")
         allowed = {question.question_id: question for question in current_questions}
         answers = {answer.question_id: answer.value for answer in request.answers}
         unknown = sorted(set(answers) - set(allowed))
         if unknown:
             raise InvalidRecipeImportAnswers("One or more answers do not match the current questions.")
+        answers_requiring_normalisation = tuple(
+            answer
+            for answer in request.answers
+            if not self._is_valid_numeric_servings_answer(allowed[answer.question_id], answer.value)
+        )
+        if answers_requiring_normalisation and self._answer_normaliser is not None:
+            normalised_answers = await self._answer_normaliser.normalise_answers(
+                current_questions,
+                answers_requiring_normalisation,
+            )
+            answers = {answer.question_id: answer.value for answer in normalised_answers}
+            answers.update(
+                (answer.question_id, answer.value)
+                for answer in request.answers
+                if answer not in answers_requiring_normalisation
+            )
 
         updated = tuple(self._apply_answers(draft, allowed, answers) for draft in drafts)
         questions = self._questions(updated)
         status = RecipeImportStatus.NEEDS_CLARIFICATION if questions else RecipeImportStatus.READY
         return ParseRecipeImportResponse(status=status, drafts=updated, questions=questions)
+
+    @staticmethod
+    def _is_valid_numeric_servings_answer(question: RecipeImportQuestion, value: str) -> bool:
+        if question.field_path != "servings":
+            return False
+        stripped = value.strip()
+        return stripped.isascii() and stripped.isdecimal() and 1 <= int(stripped) <= 50
+
+    @staticmethod
+    def _same_questions(
+        supplied: tuple[RecipeImportQuestion, ...],
+        derived: tuple[RecipeImportQuestion, ...],
+    ) -> bool:
+        return {
+            (question.question_id, question.draft_id, question.field_path)
+            for question in supplied
+        } == {
+            (question.question_id, question.draft_id, question.field_path)
+            for question in derived
+        }
 
     @staticmethod
     def _apply_answers(
