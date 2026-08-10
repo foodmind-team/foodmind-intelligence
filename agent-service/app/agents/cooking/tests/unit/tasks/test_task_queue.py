@@ -70,7 +70,12 @@ def _valid_request(request_id: str = "req-queue-001") -> GeneratePlanRequest:
 class _FakeGeneration:
     """Stands in for GenerateCookingPlanService — instant READY plan."""
 
-    async def execute(self, request: GeneratePlanRequest, thread_id: str | None = None):
+    async def execute(
+        self,
+        request: GeneratePlanRequest,
+        thread_id: str | None = None,
+        progress_callback=None,
+    ):
         return ReadyPlanResponse(
             plan_id="plan-queue-1",
             solver_status="OPTIMAL",

@@ -74,7 +74,12 @@ def _record(request_id: str = "req-r", status: TaskStatus = TaskStatus.QUEUED) -
 class _FakeGeneration:
     """Stands in for GenerateCookingPlanService — instant READY plan."""
 
-    async def execute(self, request: GeneratePlanRequest, thread_id: str | None = None):
+    async def execute(
+        self,
+        request: GeneratePlanRequest,
+        thread_id: str | None = None,
+        progress_callback=None,
+    ):
         return ReadyPlanResponse(
             plan_id="plan-1",
             solver_status="OPTIMAL",

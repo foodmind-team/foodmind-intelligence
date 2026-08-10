@@ -13,6 +13,8 @@ CPU-bound solver concern (handbook 9.7):
 """
 
 import logging
+from collections.abc import Awaitable, Callable
+from typing import cast
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
@@ -120,6 +122,7 @@ class GenerateCookingPlanService:
         self,
         request: GeneratePlanRequest,
         thread_id: str | None = None,
+        progress_callback: Callable[[str, int], Awaitable[None]] | None = None,
     ) -> PlanResponse:
         """Run the cooking plan generation workflow for the given request.
 
@@ -130,6 +133,8 @@ class GenerateCookingPlanService:
                 (P2-06). When provided, node-boundary state is stored under
                 this thread so a restarted process can resume it. When None,
                 the graph runs stateless.
+            progress_callback: Optional safe node-boundary observer. Receives
+                only the public node name and completed-node count.
 
         Returns:
             PlanResponse: One of ReadyPlanResponse, ConfirmationPlanResponse,
@@ -146,11 +151,40 @@ class GenerateCookingPlanService:
         if thread_id is not None:
             invoke_config["configurable"] = {"thread_id": thread_id}
 
-        result = await self._graph.ainvoke(
-            initial_state,
-            context=self._context,
-            config=invoke_config,
-        )
+        result: PlanState
+        if progress_callback is None:
+            result = cast(
+                PlanState,
+                await self._graph.ainvoke(
+                    initial_state,
+                    context=self._context,
+                    config=invoke_config,
+                ),
+            )
+        else:
+            # ``updates`` reliably emits each completed node even when the
+            # production graph uses a persistent checkpointer; ``values``
+            # provides the authoritative graph state. Only the node name and
+            # a monotonic counter leave this service: prompts, model output,
+            # update payloads, and hidden reasoning are never exposed.
+            result = initial_state
+            completed_steps = 0
+            async for stream_mode, payload in self._graph.astream(
+                initial_state,
+                context=self._context,
+                config=invoke_config,
+                stream_mode=["updates", "values"],
+            ):
+                if stream_mode == "values":
+                    result = cast(PlanState, payload)
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                for node_name in payload:
+                    if not isinstance(node_name, str):
+                        continue
+                    completed_steps += 1
+                    await progress_callback(node_name, completed_steps)
 
         response = result.get("response")
         if not isinstance(response, PlanResponse):

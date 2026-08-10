@@ -9,7 +9,9 @@ integration so a verified READY flow carries the explanation.
 from __future__ import annotations
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 
+from cooking_plan_agent.application.service import GenerateCookingPlanService
 from cooking_plan_agent.domain.enums import SolverStatus, WorkMode
 from cooking_plan_agent.domain.models import (
     CookingTask,
@@ -292,15 +294,22 @@ async def test_ready_flow_carries_explanation(monkeypatch: pytest.MonkeyPatch) -
     _patch_settings(monkeypatch, enabled=True)
     explainer = _FakeExplainer(text="Parallel cooking finishes the last dish on time.")
     context = WorkflowContext(recipe_extractor=_FakeRecipeExtractor(), explainer=explainer)
-    graph = build_cooking_plan_graph()
+    graph = build_cooking_plan_graph(checkpointer=InMemorySaver())
 
-    result = await graph.ainvoke(
-        {"request": _valid_request()},
-        context=context,
-        config={"recursion_limit": 30},
+    reported: list[tuple[str, int]] = []
+
+    async def _capture_progress(node: str, completed_steps: int) -> None:
+        reported.append((node, completed_steps))
+
+    response = await GenerateCookingPlanService(graph, context).execute(
+        _valid_request(),
+        thread_id="progress-test:0",
+        progress_callback=_capture_progress,
     )
-
-    response = result["response"]
     assert isinstance(response, ReadyPlanResponse), f"expected READY, got {type(response).__name__}"
     assert response.explanation == "Parallel cooking finishes the last dish on time."
     assert response.explanation_source == "llm"
+    assert reported[0] == ("validate_input", 1)
+    assert any(node == "solve_schedule" for node, _ in reported)
+    assert any(node == "explain_schedule" for node, _ in reported)
+    assert [count for _, count in reported] == sorted(count for _, count in reported)

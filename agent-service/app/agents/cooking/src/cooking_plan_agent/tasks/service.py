@@ -387,10 +387,18 @@ class AsyncTaskService:
         while True:
             try:
                 await self._expire_stale_tasks()
-                # Each iteration claims up to `worker_concurrency` tasks and
-                # runs them concurrently; the atomic claim guarantees no two
-                # workers execute the same task (D2).
-                tasks = [asyncio.create_task(self._execute_claimed()) for _ in range(self._worker_concurrency)]
+                # SQLite uses one connection for the MVP repository. Claim a
+                # batch sequentially before running records concurrently so a
+                # second BEGIN IMMEDIATE cannot race the first task's initial
+                # progress write on that shared connection.
+                claimed: list[TaskRecord] = []
+                for _ in range(self._worker_concurrency):
+                    record = await self._queue.claim_available(self._lease_seconds)
+                    if record is None:
+                        break
+                    self._notify(record)
+                    claimed.append(record)
+                tasks = [asyncio.create_task(self._execute_record(record)) for record in claimed]
                 for task in tasks:
                     try:
                         await task
@@ -445,6 +453,11 @@ class AsyncTaskService:
         if record is None:
             return
         self._notify(record)  # P4-04: QUEUED -> RUNNING is a progress event
+
+        await self._execute_record(record)
+
+    async def _execute_record(self, record: TaskRecord) -> None:
+        """Execute one already-claimed record and conditionally finish it."""
 
         heartbeat = asyncio.create_task(self._renew_heartbeat(record.task_id))
         try:
@@ -561,19 +574,59 @@ class AsyncTaskService:
         crash mid-flight resumes from the last node boundary on retry.
         """
         request = GeneratePlanRequest.model_validate(record.request_payload)
+
+        async def _report_progress(node: str, completed_steps: int) -> None:
+            # Re-read before every write so the heartbeat's latest lease and
+            # any concurrent cancellation are preserved. A terminal/cancelled
+            # task simply stops accepting progress updates.
+            current = await self._repo.get(record.task_id)
+            if current is None or current.status != TaskStatus.RUNNING:
+                logger.debug(
+                    "Progress update skipped | task_id=%s | node=%s | status=%s",
+                    record.task_id,
+                    node,
+                    current.status.value if current is not None else "missing",
+                )
+                return
+            progressed = current.model_copy(
+                update={
+                    "updated_at": utc_now(),
+                    "progress": TaskProgress(
+                        node=node,
+                        completed_steps=completed_steps,
+                        message=_public_node_message(node),
+                    ),
+                }
+            )
+            updated = await self._repo.update(progressed, expected_status=TaskStatus.RUNNING)
+            if updated is not None:
+                self._notify(updated)
+                logger.info(
+                    "Task progress | task_id=%s | node=%s | completed_steps=%d",
+                    record.task_id,
+                    node,
+                    completed_steps,
+                )
+
+        # Publish an immediate stage before entering LangGraph so even a
+        # provider that delays its first stream event never looks idle.
+        await _report_progress("validate_input", 0)
         response: PlanResponse = await self._generation.execute(
             request,
             thread_id=record.thread_id,
+            progress_callback=_report_progress,
         )
         status = _status_for_response(response.status)
-        return record.model_copy(
+        latest = await self._repo.get(record.task_id)
+        base = latest if latest is not None and latest.status == TaskStatus.RUNNING else record
+        return base.model_copy(
             update={
                 "status": status,
                 "updated_at": utc_now(),
                 "result": json.loads(response.model_dump_json()),
                 "progress": TaskProgress(
                     node="done",
-                    completed_steps=1,
+                    completed_steps=base.progress.completed_steps + 1,
                     message=_progress_message(status),
                 ),
             }
@@ -597,3 +650,32 @@ def _progress_message(status: TaskStatus) -> str:
         TaskStatus.INFEASIBLE: "No feasible plan under current constraints",
         TaskStatus.FAILED: "Plan generation failed",
     }.get(status, "Task finished")
+
+
+def _public_node_message(node: str) -> str:
+    """Return safe workflow status text without exposing model reasoning."""
+    messages = {
+        "validate_input": "Checking your recipes and preferences…",
+        "parse_recipes": "Structuring ingredients and instructions…",
+        "detect_gaps": "Checking recipe details…",
+        "infer_local": "Completing recipe details…",
+        "research_missing": "Checking missing cooking details…",
+        "apply_research_evidence": "Applying verified cooking details…",
+        "validate_recipe_ir": "Validating recipe structure…",
+        "validate_safety": "Checking food-safety requirements…",
+        "check_feasibility": "Checking inventory and kitchen resources…",
+        "build_confirmation_response": "Preparing a question for you…",
+        "merge_preparation": "Organising ingredient preparation…",
+        "build_task_graph": "Building the cooking workflow…",
+        "solve_schedule": "Optimising the cooking order…",
+        "verify_schedule": "Verifying timing and kitchen constraints…",
+        "repair_schedule": "Adjusting the cooking schedule…",
+        "agent_controller": "Reviewing the plan…",
+        "run_tool": "Checking a planning detail…",
+        "apply_confirmation": "Applying your answers…",
+        "explain_schedule": "Writing a concise plan summary…",
+        "render_ready_response": "Finishing your cooking plan…",
+        "render_infeasible_response": "Preparing planning feedback…",
+        "render_failed_response": "Preparing an error summary…",
+    }
+    return messages.get(node, "Building your cooking plan…")

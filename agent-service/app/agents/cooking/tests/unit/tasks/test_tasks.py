@@ -235,7 +235,12 @@ class _FakeGeneration:
     def __init__(self) -> None:
         self.executed: list[tuple[str, str]] = []
 
-    async def execute(self, request: GeneratePlanRequest, thread_id: str | None = None):
+    async def execute(
+        self,
+        request: GeneratePlanRequest,
+        thread_id: str | None = None,
+        progress_callback=None,
+    ):
         self.executed.append((request.request_id, thread_id or "none"))
 
         return ReadyPlanResponse(

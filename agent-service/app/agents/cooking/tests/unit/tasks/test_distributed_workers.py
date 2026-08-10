@@ -80,7 +80,12 @@ class _CountingGeneration:
         self.execution_count = 0
         self.fail_first_n = 0
 
-    async def execute(self, request: GeneratePlanRequest, thread_id: str | None = None):
+    async def execute(
+        self,
+        request: GeneratePlanRequest,
+        thread_id: str | None = None,
+        progress_callback=None,
+    ):
         self.execution_count += 1
         if self.execution_count <= self.fail_first_n:
             raise RuntimeError(f"injected failure #{self.execution_count}")
@@ -454,7 +459,12 @@ async def test_heartbeat_survives_renewal_failure(tmp_path) -> None:
     """
 
     class _SlowGeneration(_CountingGeneration):
-        async def execute(self, request: GeneratePlanRequest, thread_id: str | None = None):
+        async def execute(
+            self,
+            request: GeneratePlanRequest,
+            thread_id: str | None = None,
+            progress_callback=None,
+        ):
             await asyncio.sleep(1.5)
             return await super().execute(request, thread_id)
 
