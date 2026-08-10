@@ -63,9 +63,7 @@ def create_app(
         )
         active_llm_client = llm_client
         api_key = (
-            resolved_settings.llm_api_key.get_secret_value()
-            if resolved_settings.llm_api_key is not None
-            else None
+            resolved_settings.llm_api_key.get_secret_value() if resolved_settings.llm_api_key is not None else None
         )
         if active_llm_client is None and resolved_settings.llm_enabled and api_key:
             active_llm_client = LLMClient(

@@ -71,9 +71,7 @@ async def test_llm_ranker_returns_scores_for_every_opaque_candidate() -> None:
 
 @pytest.mark.asyncio
 async def test_llm_ranker_rejects_missing_or_invented_candidates() -> None:
-    client = FakeLLMClient(
-        {"predictions": [{"candidateId": "invented", "probability": 0.9, "modelScore": 0.8}]}
-    )
+    client = FakeLLMClient({"predictions": [{"candidateId": "invented", "probability": 0.9, "modelScore": 0.8}]})
     ranker = LLMRanker(client=client, settings=Settings(app_env="test"))  # type: ignore[arg-type]
 
     with pytest.raises(AgentError) as raised:

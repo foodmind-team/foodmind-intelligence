@@ -99,7 +99,12 @@ def _validated_predictions(raw: dict[str, Any], command: InferenceCommand) -> di
         model_score = item.get("modelScore")
         if not isinstance(candidate_id, str) or candidate_id not in expected or candidate_id in result:
             raise ValueError("prediction candidate IDs do not match the request")
-        if isinstance(probability, bool) or isinstance(model_score, bool):
+        if (
+            isinstance(probability, bool)
+            or not isinstance(probability, (int, float))
+            or isinstance(model_score, bool)
+            or not isinstance(model_score, (int, float))
+        ):
             raise ValueError("scores must be numbers")
         probability = float(probability)
         model_score = float(model_score)
@@ -111,4 +116,3 @@ def _validated_predictions(raw: dict[str, Any], command: InferenceCommand) -> di
     if set(result) != expected:
         raise ValueError("every requested candidate must be scored exactly once")
     return result
-
