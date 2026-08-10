@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _LOCAL_SERVICE_TOKEN = "local-chat-token"  # noqa: S105 - documented local-only sentinel
@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     llm_enabled: bool = True
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-chat"
-    llm_api_key: SecretStr | None = None
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CHAT_AGENT_LLM_API_KEY", "DEEPSEEK_API_KEY"),
+    )
     llm_timeout_seconds: float = Field(default=60.0, gt=0.0, le=180.0)
     llm_max_retries: int = Field(default=2, ge=0, le=4)
     llm_temperature: float = Field(default=0.3, ge=0.0, le=1.5)

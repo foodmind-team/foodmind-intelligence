@@ -4,7 +4,8 @@ Private FastAPI service for `POST /internal/v1/chat/generate`. It mirrors the
 Spring Boot `chat-agent-v1` contract, authenticates `Authorization: Bearer`,
 and uses an OpenAI-compatible chat-completions provider such as DeepSeek.
 
-Copy `.env.example` to `.env`, set `CHAT_AGENT_LLM_API_KEY`, then run:
+Copy `.env.example` to `.env`, set `CHAT_AGENT_LLM_API_KEY` (or the shared
+`DEEPSEEK_API_KEY`), then run:
 
 ```shell
 uv sync
@@ -20,9 +21,10 @@ $env:CHAT_AGENT_INTERNAL_SERVICE_TOKEN = "local-chat-token"
 docker compose -f deployment/local/chat-agent.compose.yaml up --build
 ```
 
-Set `CHAT_AGENT_LLM_ENABLED=true` and provide `CHAT_AGENT_LLM_API_KEY` only
-when you want provider-backed answers. The service starts without a provider
-key and returns its deterministic grounded/navigation fallback.
+Set `CHAT_AGENT_LLM_ENABLED=true` and provide `CHAT_AGENT_LLM_API_KEY` or
+`DEEPSEEK_API_KEY` only when you want provider-backed answers. The service
+starts without a provider key and returns its deterministic grounded/navigation
+fallback.
 
 If the provider is unavailable, the service returns a bounded grounded or
 navigation fallback so an otherwise valid frontend message is not lost.
