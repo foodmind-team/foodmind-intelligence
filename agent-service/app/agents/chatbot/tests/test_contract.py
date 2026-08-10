@@ -67,3 +67,15 @@ def test_authentication_is_required() -> None:
     assert response.status_code == 401
     assert response.json()["error_code"] == "MISSING_AUTHORIZATION_HEADER"
 
+
+def test_shared_deepseek_key_configures_chat_provider(monkeypatch) -> None:
+    monkeypatch.delenv("CHAT_AGENT_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+
+    settings = Settings(environment="test")
+
+    assert settings.llm_api_key is not None
+    assert settings.llm_api_key.get_secret_value() == "test-deepseek-key"
+
+    with TestClient(create_app(settings=settings)) as client:
+        assert client.app.state.llm_client is not None
