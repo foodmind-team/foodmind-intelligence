@@ -82,8 +82,8 @@ def _candidate_payload(candidate: V1Candidate, preferences: dict[str, Any], secr
     personal_count = max(0, _integer(features.get("personalRecordCount")))
     return {
         "candidateId": candidate.candidate_id,
-        "modelMealKey": _model_key(secret, f"meal:{candidate.place_meal_id}"),
-        "modelOfferingKey": _model_key(secret, f"offering:{candidate.place_meal_id}"),
+        "modelMealKey": _model_key(secret, f"meal:{candidate.candidate_key}"),
+        "modelOfferingKey": _model_key(secret, f"offering:{candidate.candidate_key}"),
         "evidence": {
             "preferenceMatch": _preference_match(features, preferences),
             "wantToTry": bool(features.get("wantToTry", False)),
