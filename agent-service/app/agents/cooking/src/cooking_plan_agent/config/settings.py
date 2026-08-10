@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     # feature-flag rollback for the capability. The explanation is additive
     # and never alters the verified schedule.
     explanation_enabled: bool = False
+    # Explanation is additive; bound its latency so a verified plan is not
+    # held hostage by a slow model call. Timeout falls back deterministically.
+    explanation_timeout_seconds: float = 5.0
 
     # P5-3: schedule repair loop（反思修复循环）。
     # verify 失败后最多重试次数；0 表示禁用（保持原 FAILED 语义）。

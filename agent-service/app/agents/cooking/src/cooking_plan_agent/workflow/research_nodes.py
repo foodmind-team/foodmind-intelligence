@@ -118,9 +118,25 @@ async def research_missing_node(
 
         return cast(ReconciledEvidence, value)
 
-    research_evidence: dict[str, ReconciledEvidence] = {}
-    for gap in researchable_gaps[:2]:  # At most 2 queries (handbook 10.9)
-        research_evidence[gap.gap_id] = await _resolve(gap)
+    import asyncio
+
+    selected_gaps = researchable_gaps[: settings.research_max_queries_per_dish]
+
+    async def _resolve_bounded(gap: object) -> ReconciledEvidence:
+        try:
+            return await asyncio.wait_for(
+                _resolve(gap),
+                timeout=settings.research_timeout_seconds,
+            )
+        except Exception:  # noqa: BLE001 — optional research falls back safely
+            # Research is an optional aid. A timeout or provider failure must
+            # fall back to asking the user, never to an unsafe guess.
+            return ReconciledEvidence(source_count=0, needs_confirmation=True)
+
+    # Gaps are independent, so resolve the bounded maximum concurrently.
+    # This caps the stage at one timeout window instead of N sequential waits.
+    resolved = await asyncio.gather(*(_resolve_bounded(gap) for gap in selected_gaps))
+    research_evidence = {gap.gap_id: evidence for gap, evidence in zip(selected_gaps, resolved, strict=True)}
 
     return {"research_evidence": research_evidence}
 

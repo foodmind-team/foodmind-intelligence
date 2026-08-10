@@ -4,6 +4,10 @@ Covers all 9 required test scenarios using the FakeSearchProvider.
 No real network calls — safe for CI.
 """
 
+import asyncio
+import time
+from decimal import Decimal
+
 import pytest
 
 from cooking_plan_agent.config.settings import Settings
@@ -11,6 +15,7 @@ from cooking_plan_agent.domain.enums import HeatLevel
 from cooking_plan_agent.domain.models import (
     CookingEvidence,
     EvidenceQuery,
+    ExtractedRecipeCandidate,
     RecipeGap,
 )
 from cooking_plan_agent.research.config import DomainAllowList
@@ -26,6 +31,7 @@ from cooking_plan_agent.research.providers.fake import (
 from cooking_plan_agent.research.query_builder import build_minimal_query
 from cooking_plan_agent.research.reconciler import reconcile
 from cooking_plan_agent.research.researcher import Researcher
+from cooking_plan_agent.workflow.nodes import research_missing_node
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -92,6 +98,51 @@ def _make_duration_gap(
         description="Missing cooking duration for chicken stir-fry",
         confidence=Decimal("0.2"),
     )
+
+
+@pytest.mark.asyncio
+async def test_research_gaps_run_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two independent gaps consume one provider-latency window, not two."""
+    from cooking_plan_agent.config import settings as settings_module
+
+    monkeypatch.setattr(
+        settings_module,
+        "get_settings",
+        lambda: Settings(
+            internal_service_token="test-token",
+            research_timeout_seconds=1,
+            research_max_queries_per_dish=2,
+        ),
+    )
+
+    class _SlowResearcher:
+        async def research(self, query: EvidenceQuery) -> list[CookingEvidence]:
+            await asyncio.sleep(0.08)
+            return []
+
+    context = type("Context", (), {"recipe_researcher": _SlowResearcher(), "cache": None})()
+    runtime = type("Runtime", (), {"context": context})()
+    candidate = ExtractedRecipeCandidate(
+        recipe_id="recipe-001",
+        dish_name="Chicken Stir-Fry",
+        original_servings=Decimal(2),
+        source_language="en",
+        ingredients=(),
+        steps=(),
+    )
+
+    started = time.monotonic()
+    result = await research_missing_node(
+        {
+            "gaps": (_make_heat_gap(), _make_duration_gap()),
+            "extracted_candidates": (candidate,),
+        },
+        runtime,  # type: ignore[arg-type]
+    )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.14
+    assert set(result["research_evidence"]) == {"gap-001", "gap-002"}
 
 
 # ============================================================================

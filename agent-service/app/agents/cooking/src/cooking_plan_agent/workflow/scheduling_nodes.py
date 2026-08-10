@@ -356,16 +356,22 @@ async def explain_schedule_node(
       - explanation: prose or None (feature disabled).
       - explanation_source: "llm" | "deterministic" | "disabled".
     """
+    import asyncio
+
     from cooking_plan_agent.config.settings import get_settings
 
-    if not get_settings().explanation_enabled:
+    settings = get_settings()
+    if not settings.explanation_enabled:
         return {"explanation": None, "explanation_source": "disabled"}
 
     summary = _build_schedule_summary(state)
     explainer = runtime.context.explainer
     if explainer is not None:
         try:
-            text = await explainer.explain(summary)
+            text = await asyncio.wait_for(
+                explainer.explain(summary),
+                timeout=settings.explanation_timeout_seconds,
+            )
             if isinstance(text, str) and text.strip():
                 return {"explanation": text, "explanation_source": "llm"}
         except Exception:  # noqa: BLE001 — additive capability must never fail READY
