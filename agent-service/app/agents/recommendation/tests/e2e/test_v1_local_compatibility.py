@@ -19,7 +19,7 @@ def test_v1_local_compatibility_route_uses_v2_workflow_and_inference() -> None:
                 "candidates": [
                     {
                         "candidateId": f"30000000-0000-4000-8000-00000000010{index}",
-                        "placeMealId": f"40000000-0000-4000-8000-00000000010{index}",
+                        "candidateKey": f"PLACE_MEAL:40000000-0000-4000-8000-00000000010{index}",
                         "features": {
                             "mealType": "DINNER",
                             "cuisineCode": "CHINESE" if index == 1 else "MALAY",
@@ -72,7 +72,7 @@ def test_canonical_route_accepts_backend_v1_envelope_during_migration() -> None:
                 "candidates": [
                     {
                         "candidateId": f"30000000-0000-4000-8000-00000000010{index}",
-                        "placeMealId": f"40000000-0000-4000-8000-00000000010{index}",
+                        "candidateKey": f"PLACE_MEAL:40000000-0000-4000-8000-00000000010{index}",
                         "features": {
                             "mealType": "DINNER",
                             "cuisineCode": "CHINESE" if index == 1 else "MALAY",
