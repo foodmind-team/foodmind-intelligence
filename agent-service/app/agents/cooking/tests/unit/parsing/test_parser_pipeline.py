@@ -190,6 +190,26 @@ class TestRecipeExtractor:
         assert "味精" in names and "鸡精" in names, f"味精/鸡精 should split: {names}"
         assert not any("/" in n for n in names), f"No slash should remain: {names}"
 
+    @pytest.mark.asyncio
+    async def test_extracts_word_units_and_quantity_first_chinese_ingredients(self) -> None:
+        extractor = RecipeExtractor()
+        candidate = await extractor.extract("""Tofu and Tomato
+Ingredients:
+400克硬豆腐
+20 克 大蒜
+200 grams tomato
+Steps:
+1. Cook everything.
+""")
+
+        by_name = {ingredient.name: ingredient for ingredient in candidate.ingredients}
+        assert by_name["硬豆腐"].quantity == Decimal(400)
+        assert by_name["硬豆腐"].unit == "g"
+        assert by_name["大蒜"].quantity == Decimal(20)
+        assert by_name["大蒜"].unit == "g"
+        assert by_name["tomato"].quantity == Decimal(200)
+        assert by_name["tomato"].unit == "g"
+
 
 def test_frying_step_with_marinated_food_is_not_a_marination_step() -> None:
     """“腌好的鸡翅下锅煎制” describes frying, not another marinade wait."""

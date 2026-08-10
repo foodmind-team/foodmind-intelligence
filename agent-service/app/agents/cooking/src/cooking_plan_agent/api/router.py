@@ -15,20 +15,24 @@ end-user JWTs.
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from cooking_plan_agent.api.backpressure import request_lease
 from cooking_plan_agent.api.dependencies import (
     extract_correlation_id,
     require_internal_service,
 )
-from cooking_plan_agent.application import GenerateCookingPlanService
+from cooking_plan_agent.application import GenerateCookingPlanService, ParseRecipeImportService
+from cooking_plan_agent.application.recipe_import_service import InvalidRecipeImportAnswers
 from cooking_plan_agent.domain.models import (
     ConfirmationAnswersRequest,
     ErrorEnvelope,
     GeneratePlanRequest,
     PlanResponse,
+    PreprocessRecipesRequest,
+    PreprocessRecipesResponse,
 )
+from cooking_plan_agent.domain.recipe_imports import ParseRecipeImportRequest, ParseRecipeImportResponse
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,80 @@ def get_generate_service(request: Request) -> GenerateCookingPlanService:
     if not isinstance(service, GenerateCookingPlanService):
         raise AttributeError("generate_plan_service was not initialised during startup")
     return service
+
+
+def get_recipe_import_service(request: Request) -> ParseRecipeImportService:
+    """Retrieve the recipe-import use case from lifespan-managed state."""
+
+    service = request.app.state.recipe_import_service
+    if not isinstance(service, ParseRecipeImportService):
+        raise AttributeError("recipe_import_service was not initialised during startup")
+    return service
+
+
+@router.post(
+    "/recipe-imports/parse",
+    response_model=ParseRecipeImportResponse,
+    responses={
+        401: {"model": ErrorEnvelope, "description": "Authentication failed."},
+        422: {"model": ErrorEnvelope, "description": "Input or answers are invalid."},
+        503: {"model": ErrorEnvelope, "description": "Overloaded or shutting down."},
+    },
+)
+async def parse_recipe_import(
+    body: ParseRecipeImportRequest,
+    service: Annotated[ParseRecipeImportService, Depends(get_recipe_import_service)],
+    _correlation_id: Annotated[str, Depends(extract_correlation_id)],
+    _lease: Annotated[None, Depends(request_lease)] = None,
+) -> ParseRecipeImportResponse:
+    """Parse multilingual recipe text into English drafts and structured follow-ups."""
+
+    try:
+        return await service.execute(body)
+    except InvalidRecipeImportAnswers as exception:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "INVALID_RECIPE_IMPORT_ANSWERS", "message": str(exception)},
+        ) from exception
+
+
+# ---------------------------------------------------------------------------
+# Preprocess endpoint — NL parsing + gap filling, reused by the backend
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/preprocess",
+    response_model=PreprocessRecipesResponse,
+    responses={
+        401: {"model": ErrorEnvelope, "description": "Authentication failed."},
+        422: {"model": ErrorEnvelope, "description": "Request validation failed."},
+        503: {"model": ErrorEnvelope, "description": "Overloaded or shutting down."},
+        500: {"model": ErrorEnvelope, "description": "Unexpected internal error."},
+    },
+)
+async def preprocess_recipes(
+    body: PreprocessRecipesRequest,
+    service: Annotated[GenerateCookingPlanService, Depends(get_generate_service)],
+    _correlation_id: Annotated[str, Depends(extract_correlation_id)],
+    _lease: Annotated[None, Depends(request_lease)] = None,
+) -> PreprocessRecipesResponse:
+    """Parse raw recipe text and fill missing fields (NL + gap pipeline).
+
+    The Spring Boot backend calls this endpoint BEFORE generate() so it can
+    reuse the agent's recipe-understanding pipeline: raw text in, fully
+    populated ``ExtractedRecipeCandidate`` out. The backend passes those
+    candidates back on the generate request as ``preparsed_candidates``,
+    so generate never re-parses and never asks gap/assumption questions —
+    the agent stays focused on planning while its parsing capability is
+    reused by the backend.
+    """
+    logger.info(
+        "Preprocessing recipes | request_id=%s | recipes=%d",
+        body.request_id,
+        len(body.recipes),
+    )
+    return await service.preprocess(body)
 
 
 # ---------------------------------------------------------------------------

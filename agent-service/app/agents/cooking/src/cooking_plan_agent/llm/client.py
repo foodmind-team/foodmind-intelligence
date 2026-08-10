@@ -88,6 +88,7 @@ class LLMClient:
         *,
         json_mode: bool = False,
         temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Send a chat completion request and return the assistant text.
 
@@ -95,6 +96,9 @@ class LLMClient:
             messages: OpenAI-style message list ([{"role": ..., "content": ...}]).
             json_mode: If True, request a JSON object response and return it raw.
             temperature: Optional per-call override (defaults to instance value).
+            max_tokens: Optional per-call output budget override. When None the
+                instance default (llm_max_output_tokens) is used. Recipe import
+                may raise it so multi-dish JSON output is never truncated.
 
         Returns:
             The assistant's text content (JSON string when json_mode=True).
@@ -106,7 +110,7 @@ class LLMClient:
             "model": self._model,
             "messages": messages,
             "temperature": self._temperature if temperature is None else temperature,
-            "max_tokens": self._max_output_tokens,
+            "max_tokens": max_tokens if max_tokens is not None else self._max_output_tokens,
             "stream": False,
         }
         if json_mode:
@@ -147,12 +151,14 @@ class LLMClient:
         messages: list[dict[str, str]],
         *,
         temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Request a JSON object response and parse it.
 
         Args:
             messages: OpenAI-style message list.
             temperature: Optional per-call override.
+            max_tokens: Optional per-call output budget override (see ``chat``).
 
         Returns:
             Parsed JSON object.
@@ -160,7 +166,7 @@ class LLMClient:
         Raises:
             LLMError: If the response is not valid JSON or not an object.
         """
-        raw = await self.chat(messages, json_mode=True, temperature=temperature)
+        raw = await self.chat(messages, json_mode=True, temperature=temperature, max_tokens=max_tokens)
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:

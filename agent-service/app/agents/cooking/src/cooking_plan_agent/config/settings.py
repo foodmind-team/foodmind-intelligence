@@ -1,5 +1,6 @@
 # import the required modules
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import BeforeValidator
@@ -25,6 +26,7 @@ def _parse_comma_separated_list(value: object) -> list[str]:
 # (tuple is treated as a complex type); the raw string reaches the validator.
 CommaSeparatedList = Annotated[tuple[str, ...], NoDecode, BeforeValidator(_parse_comma_separated_list)]
 LOCAL_SERVICE_TOKEN = "local-cooking-token"  # noqa: S105 - rejected outside local
+AGENTS_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 
 
 # define the settings model
@@ -110,6 +112,15 @@ class Settings(BaseSettings):
     # Overall envelope timeout for the whole multi-recipe extraction batch.
     # Per-call timeout is llm_timeout_seconds; this bounds the gather.
     llm_overall_timeout_seconds: float = 240.0
+    # Recipe import is an interactive request served through a Backend client
+    # with a 30-second read deadline. Fall back before that boundary instead
+    # of allowing the shared LLM retry budget to exhaust the HTTP request.
+    recipe_import_llm_timeout_seconds: float = 20.0
+    # Multi-dish import asks the LLM to emit one JSON object with a recipes
+    # array (or a fully structured dish). A pasted set of ~6 dishes needs more
+    # than the shared 2048-token cap; truncation used to force the weak rule
+    # fallback, which merged dishes into one draft or crashed on step limits.
+    recipe_import_max_output_tokens: int = 8192
 
     # --- Schedule explanation (P2-02 / P4-01) ---
     # READY responses may carry a short "why this schedule" explanation
@@ -208,7 +219,7 @@ class Settings(BaseSettings):
     # define the model config
     model_config = SettingsConfigDict(
         env_prefix="COOKING_PLAN_",
-        env_file=".env",
+        env_file=AGENTS_ENV_FILE,
         extra="forbid",  # if the env file contains extra variables, throw an error
     )
 

@@ -20,9 +20,13 @@ from langgraph.graph.state import CompiledStateGraph
 from cooking_plan_agent.domain.errors import DomainErrorCode, public_message_for
 from cooking_plan_agent.domain.models import (
     ConfirmationAnswersRequest,
+    ExtractedRecipeCandidate,
     FailedPlanResponse,
     GeneratePlanRequest,
     PlanResponse,
+    PreprocessRecipesRequest,
+    PreprocessRecipesResponse,
+    RecipeGap,
 )
 from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.state import PlanState
@@ -55,6 +59,62 @@ class GenerateCookingPlanService:
         """
         self._graph = graph
         self._context = context
+
+    async def preprocess(
+        self,
+        body: PreprocessRecipesRequest,
+    ) -> PreprocessRecipesResponse:
+        """Parse stored recipe text and fill gaps with deterministic local rules."""
+        import asyncio
+
+        from cooking_plan_agent.parsing.extractor import RecipeExtractor as RuleExtractor
+        from cooking_plan_agent.parsing.gaps import find_recipe_gaps
+        from cooking_plan_agent.parsing.inference import (
+            GapClass,
+            InferenceResult,
+            _detect_primary_technique,
+            _infer_duration,
+            _infer_heat,
+            _infer_resources,
+            _infer_temperature,
+            merge_inference,
+        )
+
+        extractor = RuleExtractor()
+
+        def _fill_gap(candidate, gap):
+            technique = _detect_primary_technique(candidate)
+            if "heat_level" in gap.field_path:
+                return _infer_heat(gap, candidate, technique)
+            if "duration" in gap.field_path.lower():
+                return _infer_duration(gap, technique)
+            if "temperature" in gap.field_path.lower():
+                if gap.gap_class == GapClass.SAFETY_CRITICAL:
+                    return None
+                return _infer_temperature(gap, technique)
+            if "resource" in gap.field_path.lower():
+                return _infer_resources(gap, technique)
+            return None
+
+        async def _process_one(recipe) -> ExtractedRecipeCandidate:
+            candidate = await extractor.extract(recipe.text)
+            filled: list[RecipeGap] = []
+            for gap in find_recipe_gaps(candidate):
+                result = _fill_gap(candidate, gap)
+                if result is not None:
+                    filled.append(result[0])
+            merged = merge_inference(
+                candidate,
+                InferenceResult(
+                    filled_gaps=tuple(filled),
+                    unresolved_gaps=(),
+                    assumptions=(),
+                ),
+            )
+            return merged.model_copy(update={"recipe_id": recipe.recipe_id})
+
+        candidates = await asyncio.gather(*(_process_one(recipe) for recipe in body.recipes))
+        return PreprocessRecipesResponse(recipes=tuple(candidates))
 
     async def execute(
         self,

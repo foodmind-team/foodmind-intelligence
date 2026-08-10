@@ -83,8 +83,30 @@ def test_answers_continue_to_ready(client: TestClient) -> None:
     assert [draft["servings"] for draft in response.json()["drafts"]] == [2, 3]
 
 
-def test_mixed_language_input_is_rejected(client: TestClient) -> None:
+def test_persisted_snapshot_continues_without_reparsing(client: TestClient) -> None:
+    first = client.post(URL, headers=_headers(), json={"request_id": "req-snapshot", "text": _text()})
+    assert first.status_code == 200
+    first_body = first.json()
+
+    response = client.post(
+        URL,
+        headers=_headers(),
+        json={
+            "request_id": "req-snapshot",
+            "text": "This text is intentionally not parseable as the original recipes.",
+            "answers": [{"question_id": "dish-2:servings", "value": "3"}],
+            "drafts": first_body["drafts"],
+            "questions": first_body["questions"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "READY"
+    assert [draft["name"] for draft in response.json()["drafts"]] == ["Mushroom Toast", "Berry Bowl"]
+    assert [draft["servings"] for draft in response.json()["drafts"]] == [2, 3]
+
+
+def test_mixed_language_input_is_accepted(client: TestClient) -> None:
     response = client.post(URL, headers=_headers(), json={"request_id": "req-3", "text": "Make 番茄 pasta"})
 
-    assert response.status_code == 422
-    assert "Please use English only" in str(response.json())
+    assert response.status_code == 200

@@ -23,6 +23,7 @@ from cooking_plan_agent.domain.models import (
     ExtractedStep,
 )
 from cooking_plan_agent.llm.client import LLMClient, LLMError
+from cooking_plan_agent.normalisation.names import clean_dish_name
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,17 @@ _SYSTEM_PROMPT = (
     '"passive_duration_minutes": number|null, "heat_level": "NONE"|"LOW"|"MEDIUM"|'
     '"HIGH", "target_temperature_c": number|null, "resources_hint": [string]}]}\n'
     "Rules: quantity must be a positive number when given; omit fields the text "
-    "does not specify (use null or empty list, never invent values)."
+    "does not specify (use null or empty list, never invent values). "
+    "dish_name must be a SHORT dish title only — strip quantities, units, "
+    "parenthetical notes, and preparation instructions (e.g. 'Fresh Shrimp', not "
+    "'Fresh shrimp (remove head, tail, and thread)')."
+)
+
+_ENGLISH_OUTPUT_RULE = (
+    " Translate every user-visible text field into clear English before returning it. "
+    "dish_name, ingredient raw_text/name/preparation, step instruction/category, and resource hints "
+    "must be English even when the source is written in another language. Preserve quantities, units, "
+    "temperatures, times, and proper nouns accurately. source_language must describe the original input language."
 )
 
 # Stable cache tag (P1-06 rule 2): changing the prompt changes this digest, so
@@ -58,8 +69,9 @@ class LLMRecipeExtractor:
     (RecipeExtractor Protocol in workflow/context.py).
     """
 
-    def __init__(self, client: LLMClient) -> None:
+    def __init__(self, client: LLMClient, *, translate_to_english: bool = False) -> None:
         self._client = client
+        self._system_prompt = _SYSTEM_PROMPT + (_ENGLISH_OUTPUT_RULE if translate_to_english else "")
 
     async def extract(self, source_text: str) -> ExtractedRecipeCandidate:
         """Parse recipe text into a structured candidate using the LLM.
@@ -75,7 +87,7 @@ class LLMRecipeExtractor:
         try:
             data = await self._client.chat_json(
                 [
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": self._system_prompt},
                     {"role": "user", "content": source_text},
                 ]
             )
@@ -109,7 +121,7 @@ class LLMRecipeExtractor:
             for i, item in enumerate(data.get("steps") or [], start=1)
             if isinstance(item, dict)
         )
-        dish_name = str(data.get("dish_name") or "Untitled Recipe").strip()[:80]
+        dish_name = clean_dish_name(str(data.get("dish_name") or "Untitled Recipe"))[:80]
         try:
             servings = Decimal(str(data.get("original_servings") or 2))
         except (TypeError, ValueError):

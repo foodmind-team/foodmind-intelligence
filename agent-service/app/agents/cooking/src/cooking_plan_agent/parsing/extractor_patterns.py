@@ -31,8 +31,21 @@ from cooking_plan_agent.domain.enums import HeatLevel
 _RE_INGREDIENT_WESTERN = re.compile(
     r"^[-*•\s]*"  # Leading list marker
     r"(\d+(?:\.\d+)?)\s*"  # Quantity
-    r"(g|kg|mg|ml|l|cl|dl|tbsp|tsp|cups?|cup|oz|lb|lbs?|piece|pcs?|pc)?\s+"  # Optional unit
+    r"(grams?|kilograms?|milligrams?|millilit(?:er|re)s?|lit(?:er|re)s?|"
+    r"tablespoons?|teaspoons?|ounces?|pounds?|pieces?|"
+    r"g|kg|mg|ml|l|cl|dl|tbsp|tsp|cups?|oz|lb|lbs?|pcs?|pc)?\s+"  # Optional unit
     r"(.+?)$",  # Name + optional prep
+    re.IGNORECASE,
+)
+
+# Quantity-first CJK: "400克硬豆腐", "3个鸡蛋", "20 克 大蒜".  This is
+# deliberately separate from the name-first Chinese pattern below so a
+# leading quantity can never be mistaken for the ingredient name.
+_RE_INGREDIENT_CJK_QUANTITY_FIRST = re.compile(
+    r"^[-*•、\s]*"
+    r"(\d+(?:\.\d+)?)\s*"
+    r"(克|千克|公斤|毫克|毫升|升|个|根|颗|只|条|块|片|把|瓣|勺|汤匙|茶匙|杯|碗|两|斤)\s*"
+    r"(.+?)\s*$",
     re.IGNORECASE,
 )
 
@@ -51,6 +64,9 @@ _RE_INGREDIENT_CHINESE = re.compile(
 # Chinese unit → standard unit mapping
 _CHINESE_UNIT_MAP: dict[str, str] = {
     "克": "g",
+    "千克": "kg",
+    "公斤": "kg",
+    "毫克": "mg",
     "毫升": "ml",
     "升": "l",
     "个": "piece",

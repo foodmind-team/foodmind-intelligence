@@ -14,6 +14,10 @@
 
 ## 快速开始
 
+本地环境变量统一存放在 `../.env`，即 `agent-service/app/agents/.env`。Cooking Agent
+会按绝对项目路径读取该文件，不依赖启动命令的当前目录。可从本目录的 `.env.example`
+复制配置项，但目标文件必须是 `../.env`；真实密钥不得提交到 Git。
+
 ```bash
 uv sync
 uv run uvicorn cooking_plan_agent.main:app --reload --host 127.0.0.1 --port 8003

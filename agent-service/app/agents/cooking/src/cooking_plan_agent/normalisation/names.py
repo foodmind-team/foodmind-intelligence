@@ -259,10 +259,53 @@ _RE_STRIP_QUANTITY = re.compile(
     re.IGNORECASE,
 )
 _RE_STRIP_PREP = re.compile(
-    r"\s*[，,]\s*(?:diced|minced|chopped|sliced|julienned|crushed|peeled|grated|cut).*$", re.IGNORECASE
+    r"\s*[，,]\s*(?:diced|minced|chopped|sliced|julienned|crushed|peeled|grated|cut|"
+    r"fried|battered|breaded|marinated|seared|grilled|roasted|steamed|stir[\s-]?fried|pan[\s-]?fried).*$",
+    re.IGNORECASE,
 )
 _RE_STRIP_PAREN = re.compile(r"\s*[（(][^)）]*[)）]\s*")
 _RE_MULTI_SPACE = re.compile(r"\s{2,}")
+
+# Dish-name cleaning (display titles, not ingredients): strip quantities,
+# parenthetical notes, and preparation suffixes that cling to the name.
+_RE_DISH_TRAILING_QUANTITY = re.compile(
+    r"\s+\d+(?:\.\d+)?\s*(?:g|kg|ml|l|tbsp|tsp|cup|cups|oz|lb|grams?|kilograms?|"
+    r"milliliters?|piece|pieces?|pc|pcs|cloves?|slices?|bunch|bunches)\s*$",
+    re.IGNORECASE,
+)
+_RE_DISH_LEADING_QUANTITY = re.compile(r"^\s*\d+(?:\.\d+)?\s*(?:x\s*)?(?=[A-Za-z])")
+
+
+def clean_dish_name(raw_name: str) -> str:
+    """Normalise a raw dish name to a short display title.
+
+    Pipeline:
+      1. Unicode normalise and strip.
+      2. Remove parenthetical notes (e.g. "(remove head and tail)").
+      3. Remove preparation suffixes (e.g. ", deep-fried").
+      4. Remove trailing/leading quantities and units (e.g. "500 grams").
+      5. Collapse whitespace.
+
+    Ingredient catalogue aliases are NOT applied here — a dish name is
+    user-facing ("Large-Sized Prawns") and must stay close to the source.
+
+    Examples:
+        >>> clean_dish_name('Fresh shrimp (， remove head， tail， and thread， and cut in half)')
+        'Fresh shrimp'
+        >>> clean_dish_name('Large-sized prawns 500 grams (select larger ones)')
+        'Large-sized prawns'
+        >>> clean_dish_name('15 chicken wings')
+        'chicken wings'
+        >>> clean_dish_name('Salt and Pepper Chicken')
+        'Salt and Pepper Chicken'
+    """
+    name = unicodedata.normalize("NFKC", raw_name).strip()
+    name = _RE_STRIP_PAREN.sub(" ", name)
+    name = _RE_STRIP_PREP.sub("", name)
+    name = _RE_DISH_TRAILING_QUANTITY.sub("", name)
+    name = _RE_DISH_LEADING_QUANTITY.sub("", name)
+    name = _RE_MULTI_SPACE.sub(" ", name).strip()
+    return name or raw_name.strip()
 
 
 def normalise_ingredient_name(raw_name: str) -> str:
