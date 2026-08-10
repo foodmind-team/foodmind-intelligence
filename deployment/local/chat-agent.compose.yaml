@@ -1,0 +1,21 @@
+services:
+  chat-agent:
+    build:
+      context: ../../agent-service/app/agents/chatbot
+    read_only: true
+    ports:
+      - "127.0.0.1:${CHAT_AGENT_PORT:-8004}:8004"
+    environment:
+      CHAT_AGENT_ENVIRONMENT: local
+      CHAT_AGENT_INTERNAL_SERVICE_TOKEN: ${CHAT_AGENT_INTERNAL_SERVICE_TOKEN:?required}
+      CHAT_AGENT_LLM_ENABLED: ${CHAT_AGENT_LLM_ENABLED:-false}
+      CHAT_AGENT_LLM_BASE_URL: ${CHAT_AGENT_LLM_BASE_URL:-https://api.deepseek.com}
+      CHAT_AGENT_LLM_MODEL: ${CHAT_AGENT_LLM_MODEL:-deepseek-chat}
+      CHAT_AGENT_LLM_API_KEY: ${CHAT_AGENT_LLM_API_KEY:-}
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
