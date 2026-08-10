@@ -21,6 +21,9 @@ $env:CHAT_AGENT_INTERNAL_SERVICE_TOKEN = "local-chat-token"
 docker compose -f deployment/local/chat-agent.compose.yaml up --build
 ```
 
+This Compose command reads the shared `agent-service/app/agents/.env` when it
+exists, so set `DEEPSEEK_API_KEY` there once for all local agents.
+
 Set `CHAT_AGENT_LLM_ENABLED=true` and provide `CHAT_AGENT_LLM_API_KEY` or
 `DEEPSEEK_API_KEY` only when you want provider-backed answers. The service
 starts without a provider key and returns its deterministic grounded/navigation
