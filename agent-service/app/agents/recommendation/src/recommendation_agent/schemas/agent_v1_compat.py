@@ -9,7 +9,7 @@ from recommendation_agent.schemas.agent_v2 import SafeId, StrictWireModel, UtcDa
 
 class V1Candidate(StrictWireModel):
     candidate_id: SafeId
-    place_meal_id: SafeId
+    candidate_key: SafeId
     features: dict[str, Any]
 
 
