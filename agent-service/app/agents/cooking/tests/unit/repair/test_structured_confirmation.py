@@ -209,10 +209,10 @@ class TestStructuredQuestionGeneration:
         assert [q.question_id for q in first] == [q.question_id for q in second]
         assert len({q.question_id for q in first}) == len(first)  # no collisions
 
-    def test_backend_preprocessed_request_skips_gap_and_assumption_questions(self) -> None:
+    def test_backend_preprocessed_request_keeps_unresolved_gap_questions(self) -> None:
         """When the backend preprocesses recipes (preparsed_candidates set),
-        gap + assumption questions are not re-asked — only strategy-level
-        repair questions remain. The agent stays focused on planning."""
+        accepted assumptions are not re-asked, but genuinely unresolved gaps
+        remain visible alongside strategy-level repair questions."""
         from cooking_plan_agent.domain.models import ExtractedIngredient, ExtractedRecipeCandidate, ExtractedStep
 
         gaps = (
@@ -257,8 +257,8 @@ class TestStructuredQuestionGeneration:
         response = render_confirmation_response(state)
 
         question_ids = [q.question_id for q in response.confirmation_questions]
-        # No gap:… or assumption:… questions for preprocessed requests.
-        assert not any(qid.startswith(("gap:", "assumption:")) for qid in question_ids)
+        assert any(qid.startswith("gap:") for qid in question_ids)
+        assert not any(qid.startswith("assumption:") for qid in question_ids)
         # Strategy-level repair questions still surface.
         assert any(qid.startswith("repair:") for qid in question_ids)
 
@@ -358,7 +358,11 @@ class TestAnswersToApprovedDecisions:
                 option_type="purchase",
                 description="Purchase 90 g of 'Broccoli' (no known substitute available)",
             ),
-            _repair_option(option_id="repair_purchase_tomato", option_type="purchase", description="Purchase 200 g of 'Tomato' (no known substitute available)"),
+            _repair_option(
+                option_id="repair_purchase_tomato",
+                option_type="purchase",
+                description="Purchase 200 g of 'Tomato' (no known substitute available)",
+            ),
             _repair_option(),
         )
         response = render_confirmation_response(_state(repair_options=options))
@@ -392,9 +396,7 @@ class TestAnswersToApprovedDecisions:
             required=False,
         )
         decision = ApprovedDecision(option_id="d1", option_type="reduce_servings", payload={}, plan_revision="req-1:v1")
-        mapped = answers_to_approved_decisions(
-            (optional_question,), (), "req-1:v1", presented_decisions=(decision,)
-        )
+        mapped = answers_to_approved_decisions((optional_question,), (), "req-1:v1", presented_decisions=(decision,))
         assert mapped == ()
 
     def test_invalid_option_rejected(self) -> None:

@@ -181,10 +181,14 @@ def _append_repair_strategy_question(
     options: list[QuestionOption] = []
     suggested_value: str | None = None
     if reduce is not None:
-        options.append(QuestionOption(value=reduce.option_id, label=_servings_option_label(reduce.payload), suggested=True))
+        options.append(
+            QuestionOption(value=reduce.option_id, label=_servings_option_label(reduce.payload), suggested=True)
+        )
         suggested_value = reduce.option_id
     if purchase is not None:
-        options.append(QuestionOption(value=purchase.option_id, label="Buy missing ingredients", suggested=reduce is None))
+        options.append(
+            QuestionOption(value=purchase.option_id, label="Buy missing ingredients", suggested=reduce is None)
+        )
         if suggested_value is None:
             suggested_value = purchase.option_id
     # Strategy question is emitted whenever a plan-level repair exists —
@@ -236,33 +240,32 @@ def _build_confirmation_questions(
     """
     questions: list[ConfirmationQuestion] = []
 
-    # P: Backend-preprocessed requests (preparsed_candidates) already went
-    # through the agent's NL parsing + gap-filling pipeline via the
-    # /preprocess endpoint. Their candidates are complete, so gap and
-    # assumption questions are never re-asked — only strategy-level repair
-    # questions remain. The agent stays focused on planning.
+    # Backend-preprocessed requests went through deterministic gap filling,
+    # but preprocessing cannot guarantee that every recipe is complete. Any
+    # gap still present here is unresolved and must remain visible; hiding it
+    # creates a NEEDS_CONFIRMATION response with nothing the Web can render.
+    # Parsed assumptions from preprocessing are accepted, while unresolved
+    # gaps and plan-level repair choices are always surfaced.
     request = state.get("request")
     backend_preprocessed = bool(request and request.preparsed_candidates)
 
     # 1. Blocking gaps → one required TEXT question per gap (one-to-one).
-    #    Skipped for backend-preprocessed requests (gaps already filled).
-    if not backend_preprocessed:
-        for gap in state.get("gaps", ()):
-            if gap.gap_class not in ("critical", "safety_critical"):
-                continue
-            questions.append(
-                ConfirmationQuestion(
-                    question_id=f"gap:{_stable_question_key(gap.recipe_id, gap.field_path)}",
-                    field_path=gap.field_path,
-                    prompt=(
-                        f"The {gap.field_path} for recipe '{gap.recipe_id}' is missing "
-                        f"({gap.description}). Please provide the correct value."
-                    ),
-                    response_type=QuestionResponseType.TEXT,
-                    required=True,
-                    suggested_value=gap.current_value,
-                )
+    for gap in state.get("gaps", ()):
+        if gap.gap_class not in ("critical", "safety_critical"):
+            continue
+        questions.append(
+            ConfirmationQuestion(
+                question_id=f"gap:{_stable_question_key(gap.recipe_id, gap.field_path)}",
+                field_path=gap.field_path,
+                prompt=(
+                    f"The {gap.field_path} for recipe '{gap.recipe_id}' is missing "
+                    f"({gap.description}). Please provide the correct value."
+                ),
+                response_type=QuestionResponseType.TEXT,
+                required=True,
+                suggested_value=gap.current_value,
             )
+        )
 
     # 2. Assumptions → one required CHOICE question per surfaced assumption.
     #    Skipped for backend-preprocessed requests (assumptions accepted).

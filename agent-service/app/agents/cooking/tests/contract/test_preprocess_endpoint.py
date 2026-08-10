@@ -202,3 +202,39 @@ class TestPreprocessBehaviour:
         assert step["heat_level"] == "MEDIUM"
         assert step["active_duration_minutes"] is not None or step["passive_duration_minutes"] is not None
         assert step["resources_hint"]
+
+    def test_repeated_heat_language_gets_a_bounded_duration(self, client: TestClient) -> None:
+        """Regression: real shrimp imports often say heat/fry-until-golden.
+
+        The generic heat technique previously had no duration fallback, so
+        planning stopped at NEEDS_CONFIRMATION even after preprocessing.
+        """
+        body = _preprocess_body()
+        body["recipes"] = (
+            {
+                "recipe_id": "qa-shrimp",
+                "text": (
+                    "Crispy Shrimp\n"
+                    "2 servings\n"
+                    "Ingredients: 300 g shrimp, 2 tbsp oil, 10 g garlic\n"
+                    "Steps:\n"
+                    "1. Heat oil in a pan, add the shrimp, and fry until golden and crispy.\n"
+                    "2. Leave some oil in the pan, heat it, add garlic, and stir-fry until fragrant.\n"
+                ),
+                "target_servings": "2",
+            },
+        )
+
+        response = client.post(
+            "/internal/v1/agents/cooking-plan/preprocess",
+            json=body,
+            headers=_auth_headers(),
+        )
+
+        assert response.status_code == 200
+        heating_steps = [step for step in response.json()["recipes"][0]["steps"] if step["category"] == "heating"]
+        assert heating_steps
+        assert all(
+            step["active_duration_minutes"] is not None or step["passive_duration_minutes"] is not None
+            for step in heating_steps
+        )

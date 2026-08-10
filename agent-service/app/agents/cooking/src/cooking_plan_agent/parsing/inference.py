@@ -83,6 +83,11 @@ _TECHNIQUE_DURATION_MAP: dict[str, tuple[int, int, str]] = {
     "sear": (2, 5, "searing typically takes 2-5 minutes per side"),
     "braise": (60, 180, "braising is a slow cooking method (1-3 hours)"),
     "poach": (5, 15, "poaching typically takes 5-15 minutes"),
+    # Some imported recipes repeatedly say "heat oil / heat the pan" while
+    # describing frying in outcome terms ("until golden") rather than naming
+    # a more specific technique. Keep a short conservative fallback so those
+    # steps remain schedulable instead of producing an empty confirmation.
+    "heat": (2, 5, "heating or quickly frying in a hot pan typically takes 2-5 minutes"),
 }
 
 # =============================================================================
