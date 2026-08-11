@@ -145,7 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         llm_client = LLMClient(
             base_url=settings.llm_base_url,
             model=settings.llm_model,
-            api_key=settings.llm_api_key,
+            api_key=settings.llm_api_key.get_secret_value() if settings.llm_api_key else None,
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
             temperature=settings.llm_temperature,
