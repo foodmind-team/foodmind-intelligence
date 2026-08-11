@@ -138,6 +138,17 @@ async def test_create_and_get_roundtrip(repo) -> None:
 
 
 @pytest.mark.asyncio
+async def test_repository_creates_missing_parent_directory(tmp_path) -> None:
+    db_path = tmp_path / "runtime-data" / "tasks.sqlite"
+    repository = SQLiteTaskRepository(str(db_path))
+
+    await repository.astart()
+
+    assert db_path.is_file()
+    await repository.close()
+
+
+@pytest.mark.asyncio
 async def test_duplicate_request_id_raises(repo) -> None:
     record = _record("req-dup")
     await repo.create(record)

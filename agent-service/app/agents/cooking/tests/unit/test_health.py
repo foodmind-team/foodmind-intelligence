@@ -30,6 +30,7 @@ def test_readiness() -> None:
         assert body["status"] == "ready"
         assert body["checks"]["settings_validated"] is True
         assert body["checks"]["graph_compiled"] is True
+        assert body["checks"]["task_api_ready"] is True
         assert body["checks"]["shutting_down"] is False
 
 
