@@ -118,7 +118,7 @@ _DEFAULT_CODES: dict[int, str] = {
     status.HTTP_403_FORBIDDEN: "FORBIDDEN",
     status.HTTP_404_NOT_FOUND: "NOT_FOUND",
     status.HTTP_409_CONFLICT: "CONFLICT",
-    status.HTTP_422_UNPROCESSABLE_ENTITY: "REQUEST_VALIDATION_ERROR",
+    status.HTTP_422_UNPROCESSABLE_CONTENT: "REQUEST_VALIDATION_ERROR",
     status.HTTP_429_TOO_MANY_REQUESTS: "RATE_LIMITED",
     status.HTTP_503_SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
 }
@@ -207,7 +207,7 @@ async def request_validation_handler(
         )
 
     envelope = _build_envelope(
-        http_status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        http_status=status.HTTP_422_UNPROCESSABLE_CONTENT,
         error_code=DomainErrorCode.REQUEST_VALIDATION_ERROR.value,
         message="Request validation failed.",
         correlation_id=correlation_id,
