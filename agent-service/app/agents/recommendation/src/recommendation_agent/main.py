@@ -19,7 +19,7 @@ from recommendation_agent.application.service import RecommendationAgentService
 from recommendation_agent.clients.inference import RecommendationInferenceHttpClient
 from recommendation_agent.config.settings import Settings, get_settings
 from recommendation_agent.llm.client import LLMClient
-from recommendation_agent.llm.ranker import LLMRanker
+from recommendation_agent.llm.explainer import LLMExplanationRenderer
 from recommendation_agent.observability.logging import configure_logging
 from recommendation_agent.observability.metrics import MetricsRegistry
 from recommendation_agent.reasons.deriver import DeterministicReasonDeriver
@@ -71,15 +71,14 @@ def create_app(
                 model=resolved_settings.llm_model,
                 api_key=api_key,
                 timeout_seconds=resolved_settings.llm_timeout_seconds,
-                max_retries=resolved_settings.llm_max_retries,
                 temperature=resolved_settings.llm_temperature,
                 max_output_tokens=resolved_settings.llm_max_output_tokens,
                 connection_pool_size=resolved_settings.llm_connection_pool_size,
             )
-        ranker = (
-            LLMRanker(client=active_llm_client, settings=resolved_settings)
+        renderer = (
+            LLMExplanationRenderer(client=active_llm_client, settings=resolved_settings)
             if active_llm_client is not None
-            else inference_client
+            else DeterministicExplanationRenderer()
         )
         active_workflow = workflow
         active_workflow_complete = workflow is not None and workflow_complete
@@ -87,10 +86,10 @@ def create_app(
         if active_workflow is None and install_default_workflow:
             active_workflow = BoundedRecommendationWorkflow(
                 WorkflowContext(
-                    inference=ranker,
+                    inference=inference_client,
                     selector=DeterministicResultSelector(),
                     reason_deriver=DeterministicReasonDeriver(),
-                    renderer=DeterministicExplanationRenderer(),
+                    renderer=renderer,
                     settings=resolved_settings,
                     clock=SystemClock(),
                     metrics=metrics_registry,
@@ -101,8 +100,8 @@ def create_app(
         application.state.settings = resolved_settings
         application.state.inference_client = inference_client
         application.state.llm_client = active_llm_client
-        application.state.ranking_provider = "llm" if active_llm_client is not None else "inference"
-        application.state.inference_configured = True
+        application.state.ranking_provider = "inference"
+        application.state.explanation_provider = "llm" if active_llm_client is not None else "deterministic"
         application.state.metrics = metrics_registry
         application.state.policies_loaded = policies_loaded
         application.state.agent_service = RecommendationAgentService(active_workflow)
@@ -154,7 +153,7 @@ app = create_app()
 
 
 def run() -> None:
-    uvicorn.run("recommendation_agent.main:app", host="0.0.0.0", port=8001, log_config=None)  # noqa: S104
+    uvicorn.run("recommendation_agent.main:app", host="0.0.0.0", port=8004, log_config=None)  # noqa: S104
 
 
 if __name__ == "__main__":

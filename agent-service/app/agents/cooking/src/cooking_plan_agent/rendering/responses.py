@@ -181,10 +181,14 @@ def _append_repair_strategy_question(
     options: list[QuestionOption] = []
     suggested_value: str | None = None
     if reduce is not None:
-        options.append(QuestionOption(value=reduce.option_id, label=_servings_option_label(reduce.payload), suggested=True))
+        options.append(
+            QuestionOption(value=reduce.option_id, label=_servings_option_label(reduce.payload), suggested=True)
+        )
         suggested_value = reduce.option_id
     if purchase is not None:
-        options.append(QuestionOption(value=purchase.option_id, label="Buy missing ingredients", suggested=reduce is None))
+        options.append(
+            QuestionOption(value=purchase.option_id, label="Buy missing ingredients", suggested=reduce is None)
+        )
         if suggested_value is None:
             suggested_value = purchase.option_id
     # Strategy question is emitted whenever a plan-level repair exists —

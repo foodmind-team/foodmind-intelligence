@@ -6,6 +6,7 @@ from recommendation_agent.domain.errors import AgentError, ErrorCode
 from recommendation_agent.domain.models import ReasonedCandidate, RenderedCandidate
 from recommendation_agent.policy.reason_predicates import REASON_POLICY, ReasonPolicy
 from recommendation_agent.reasons.templates import TEMPLATES
+from recommendation_agent.time.budget import DeadlineBudget
 
 _FORBIDDEN = re.compile(
     r"\b(?:safe|safest|allergen-free|allergy-safe|healthy|healthiest|medical|guaranteed|best|perfect)\b",
@@ -34,7 +35,13 @@ class DeterministicExplanationRenderer:
         policy.validate()
         self._policy = policy
 
-    async def render(self, candidates: tuple[ReasonedCandidate, ...]) -> tuple[RenderedCandidate, ...]:
+    async def render(
+        self,
+        candidates: tuple[ReasonedCandidate, ...],
+        *,
+        budget: DeadlineBudget | None = None,
+    ) -> tuple[RenderedCandidate, ...]:
+        del budget
         rendered: list[RenderedCandidate] = []
         for candidate in candidates:
             reasons = candidate.reasons

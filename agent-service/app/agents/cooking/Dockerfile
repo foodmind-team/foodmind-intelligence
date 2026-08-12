@@ -7,7 +7,7 @@
 #   - Copies only src/ + pyproject.toml + uv.lock (no tests, no .env)
 #   - Runs as non-root user "agent"
 #   - Production ASGI server (uvicorn with single worker — CP-SAT is CPU-bound)
-#   - Exposes only internal port 8000
+#   - Exposes only canonical Cooking Agent port 8003
 # ============================================================================
 
 FROM python:3.13-slim
@@ -39,17 +39,17 @@ RUN chown -R agent:agent /app
 USER agent
 
 # Expose only the internal service port.
-EXPOSE 8000
+EXPOSE 8003
 
 # Health check: verify the event loop is alive without external calls.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD /app/.venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')" || exit 1
+    CMD /app/.venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8003/health/live')" || exit 1
 
 # Production ASGI server. Single worker: CP-SAT is CPU-bound per worker.
 # Use the venv Python that uv created to ensure all deps are available.
 CMD ["/app/.venv/bin/python", "-m", "uvicorn", "cooking_plan_agent.main:app", \
      "--host", "0.0.0.0", \
-     "--port", "8000", \
+     "--port", "8003", \
      "--workers", "1", \
      "--timeout-keep-alive", "30", \
      "--log-level", "info"]

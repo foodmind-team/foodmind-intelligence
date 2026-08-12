@@ -5,7 +5,7 @@ services:
     read_only: true
     user: "10001:10001"
     ports:
-      - "127.0.0.1:8004:8000"
+      - "127.0.0.1:8004:8004"
     environment:
       RECOMMENDATION_AGENT_APP_ENV: local
       RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN: ${RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN:?required}
@@ -30,6 +30,13 @@ services:
         import pathlib
         body = pathlib.Path('/fixtures/response.json').read_bytes()
         class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == '/health/ready':
+                    self.send_response(200)
+                    self.end_headers()
+                    return
+                self.send_response(404)
+                self.end_headers()
             def do_POST(self):
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')

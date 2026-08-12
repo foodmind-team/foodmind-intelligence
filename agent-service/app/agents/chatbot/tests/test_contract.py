@@ -1,21 +1,65 @@
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import UUID, uuid4
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from chat_agent.clients.backend import BackendToolClient, BackendToolError
 from chat_agent.config.settings import Settings
+from chat_agent.domain.models import GroundedSource
 from chat_agent.main import create_app
 
 
-def request_payload(*, references: bool = False) -> dict[str, object]:
+class FakeBackendTools:
+    def __init__(self) -> None:
+        self.search_calls: list[dict[str, Any]] = []
+        self.resolve_calls: list[dict[str, Any]] = []
+        self.fail = False
+
+    async def search(self, **kwargs: Any) -> tuple[GroundedSource, ...]:
+        self.search_calls.append(kwargs)
+        if self.fail:
+            raise BackendToolError("unavailable")
+        return (
+            GroundedSource(
+                "FOOD_PRODUCT",
+                uuid4(),
+                "Oat drink",
+                "Unsweetened oat drink",
+                {"origin": "backend_search"},
+            ),
+        )
+
+    async def resolve(self, **kwargs: Any) -> tuple[GroundedSource, ...]:
+        self.resolve_calls.append(kwargs)
+        if self.fail:
+            raise BackendToolError("unavailable")
+        reference_id = kwargs["reference_ids"][0]
+        return (
+            GroundedSource(
+                "FOOD_PRODUCT",
+                uuid4(),
+                "Oat drink",
+                "Unsweetened oat drink",
+                {"referenceId": str(reference_id), "origin": "backend_reference_resolve"},
+            ),
+        )
+
+
+def request_payload(*, references: bool = False, requested_route: str | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
         "contractVersion": "chat-agent-v1",
         "requestId": str(uuid4()),
         "sessionId": str(uuid4()),
         "userMessageId": str(uuid4()),
         "traceId": str(uuid4()),
+        "expiresAt": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
         "message": "Summarise this item" if references else "Hello",
-        "delegationToken": None,
+        "requestedRoute": requested_route,
+        "delegationToken": "delegation-token",
         "sharedReferences": [],
     }
     if references:
@@ -31,9 +75,12 @@ def request_payload(*, references: bool = False) -> dict[str, object]:
     return payload
 
 
+def settings() -> Settings:
+    return Settings(environment="test", internal_service_token=SecretStr("test-chat-token"), llm_enabled=False)
+
+
 def test_navigation_fallback_matches_backend_contract() -> None:
-    settings = Settings(environment="test", internal_service_token=SecretStr("test-chat-token"), llm_enabled=False)
-    with TestClient(create_app(settings=settings)) as client:
+    with TestClient(create_app(settings=settings(), backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
         response = client.post(
             "/internal/v1/chat/generate",
             headers={"Authorization": "Bearer test-chat-token"},
@@ -43,12 +90,14 @@ def test_navigation_fallback_matches_backend_contract() -> None:
     assert response.json()["status"] == "SUCCEEDED"
     assert response.json()["route"] == "NAVIGATION"
     assert response.json()["responseStatus"] == "FALLBACK_SUCCEEDED"
+    assert "Inventory" in response.json()["answer"]
+    assert "Shopping Lists" in response.json()["answer"]
 
 
-def test_grounded_fallback_cites_exact_reference() -> None:
-    settings = Settings(environment="test", internal_service_token=SecretStr("test-chat-token"), llm_enabled=False)
+def test_grounded_summary_resolves_and_cites_authorised_reference() -> None:
+    tools = FakeBackendTools()
     payload = request_payload(references=True)
-    with TestClient(create_app(settings=settings)) as client:
+    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
         response = client.post(
             "/internal/v1/chat/generate",
             headers={"Authorization": "Bearer test-chat-token"},
@@ -57,25 +106,110 @@ def test_grounded_fallback_cites_exact_reference() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["route"] == "SUMMARY"
-    assert body["sources"][0]["sourceId"] == payload["sharedReferences"][0]["sourceId"]
+    assert body["sources"][0]["groundingMetadata"]["origin"] == "backend_reference_resolve"
+    assert len(tools.resolve_calls) == 1
+
+
+def test_explicit_search_route_wins_and_searches_without_shared_references() -> None:
+    tools = FakeBackendTools()
+    payload = request_payload(requested_route="SEARCH")
+    payload["message"] = "show platform items"
+    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+    assert response.status_code == 200
+    assert response.json()["route"] == "SEARCH"
+    assert response.json()["sources"][0]["groundingMetadata"]["origin"] == "backend_search"
+    assert tools.search_calls[0]["delegation_token"] == "delegation-token"
+
+
+def test_out_of_scope_guard_precedes_requested_route() -> None:
+    payload = request_payload(requested_route="SEARCH")
+    payload["message"] = "recommend what I should cook"
+    with TestClient(create_app(settings=settings(), backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+    assert response.status_code == 200
+    assert response.json()["route"] == "OUT_OF_SCOPE"
+    assert response.json()["responseStatus"] == "UNSUPPORTED"
+
+
+def test_search_tool_failure_returns_source_free_navigation() -> None:
+    tools = FakeBackendTools()
+    tools.fail = True
+    payload = request_payload(requested_route="SEARCH")
+    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+    assert response.status_code == 200
+    assert response.json()["route"] == "NAVIGATION"
+    assert response.json()["sources"] == []
 
 
 def test_authentication_is_required() -> None:
-    settings = Settings(environment="test", internal_service_token=SecretStr("test-chat-token"), llm_enabled=False)
-    with TestClient(create_app(settings=settings)) as client:
+    with TestClient(create_app(settings=settings(), backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
         response = client.post("/internal/v1/chat/generate", json=request_payload())
     assert response.status_code == 401
     assert response.json()["error_code"] == "MISSING_AUTHORIZATION_HEADER"
+
+
+@pytest.mark.asyncio
+async def test_backend_tools_send_service_and_delegation_tokens() -> None:
+    source_id = uuid4()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer backend-tool-token"
+        assert request.headers["X-FoodMind-Delegation"] == "Bearer delegated-user-token"
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "sourceType": "FOOD_PRODUCT",
+                        "sourceId": str(source_id),
+                        "title": "Oat drink",
+                        "snippet": "Unsweetened",
+                        "visibility": "PRIVATE",
+                        "groupId": None,
+                    }
+                ],
+                "nextCursor": None,
+                "hasNext": False,
+            },
+        )
+
+    raw = httpx.AsyncClient(base_url="http://backend.test", transport=httpx.MockTransport(handler))
+    client = BackendToolClient(
+        client=raw,
+        settings=Settings(
+            environment="test",
+            backend_base_url="http://backend.test",
+            backend_service_token=SecretStr("backend-tool-token"),
+        ),
+    )
+    sources = await client.search(query="oat", delegation_token="delegated-user-token", timeout_seconds=1)
+    await client.aclose()
+
+    assert sources[0].source_id == UUID(str(source_id))
 
 
 def test_shared_deepseek_key_configures_chat_provider(monkeypatch) -> None:
     monkeypatch.delenv("CHAT_AGENT_LLM_API_KEY", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
 
-    settings = Settings(environment="test")
+    resolved = Settings(environment="test")
 
-    assert settings.llm_api_key is not None
-    assert settings.llm_api_key.get_secret_value() == "test-deepseek-key"
+    assert resolved.llm_api_key is not None
+    assert resolved.llm_api_key.get_secret_value() == "test-deepseek-key"
 
-    with TestClient(create_app(settings=settings)) as client:
+    with TestClient(create_app(settings=resolved, backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
         assert client.app.state.llm_client is not None

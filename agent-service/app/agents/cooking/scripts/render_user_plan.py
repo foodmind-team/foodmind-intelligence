@@ -51,7 +51,9 @@ async def main() -> None:
     for e in sorted(resp.timeline, key=lambda x: int(x["start_minute"])):
         dish = dish_ids.get(str(e["dish_id"]), str(e["dish_id"]))
         wm = str(e["work_mode"])[:7]
-        print(f"  t={int(e['start_minute']):>3}-{int(e['end_minute']):<3} [{wm:<7}] {e['instruction'][:40]:<42} ({dish})")
+        print(
+            f"  t={int(e['start_minute']):>3}-{int(e['end_minute']):<3} [{wm:<7}] {e['instruction'][:40]:<42} ({dish})"
+        )
 
     print("-" * 74)
     print("各道菜完成时间:")

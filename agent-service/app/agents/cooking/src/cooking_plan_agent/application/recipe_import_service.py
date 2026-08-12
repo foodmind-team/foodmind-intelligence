@@ -97,12 +97,8 @@ class ParseRecipeImportService:
         supplied: tuple[RecipeImportQuestion, ...],
         derived: tuple[RecipeImportQuestion, ...],
     ) -> bool:
-        return {
-            (question.question_id, question.draft_id, question.field_path)
-            for question in supplied
-        } == {
-            (question.question_id, question.draft_id, question.field_path)
-            for question in derived
+        return {(question.question_id, question.draft_id, question.field_path) for question in supplied} == {
+            (question.question_id, question.draft_id, question.field_path) for question in derived
         }
 
     @staticmethod

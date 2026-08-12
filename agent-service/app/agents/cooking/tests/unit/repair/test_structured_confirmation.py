@@ -358,7 +358,11 @@ class TestAnswersToApprovedDecisions:
                 option_type="purchase",
                 description="Purchase 90 g of 'Broccoli' (no known substitute available)",
             ),
-            _repair_option(option_id="repair_purchase_tomato", option_type="purchase", description="Purchase 200 g of 'Tomato' (no known substitute available)"),
+            _repair_option(
+                option_id="repair_purchase_tomato",
+                option_type="purchase",
+                description="Purchase 200 g of 'Tomato' (no known substitute available)",
+            ),
             _repair_option(),
         )
         response = render_confirmation_response(_state(repair_options=options))
@@ -392,9 +396,7 @@ class TestAnswersToApprovedDecisions:
             required=False,
         )
         decision = ApprovedDecision(option_id="d1", option_type="reduce_servings", payload={}, plan_revision="req-1:v1")
-        mapped = answers_to_approved_decisions(
-            (optional_question,), (), "req-1:v1", presented_decisions=(decision,)
-        )
+        mapped = answers_to_approved_decisions((optional_question,), (), "req-1:v1", presented_decisions=(decision,))
         assert mapped == ()
 
     def test_invalid_option_rejected(self) -> None:

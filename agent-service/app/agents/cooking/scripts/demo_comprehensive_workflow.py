@@ -332,7 +332,9 @@ RECIPES: list[dict[str, str]] = [
 
 # Shared kitchen resources (types cover every essential need of the decomposition)
 KITCHEN_RESOURCES: tuple[KitchenResourceSnapshot, ...] = (
-    KitchenResourceSnapshot(resource_id="stove:main", resource_type="stove", capacity=Decimal(4), capacity_unit="burners"),
+    KitchenResourceSnapshot(
+        resource_id="stove:main", resource_type="stove", capacity=Decimal(4), capacity_unit="burners"
+    ),
     KitchenResourceSnapshot(resource_id="oven:main", resource_type="oven", capacity=Decimal(1)),
     KitchenResourceSnapshot(resource_id="sink:main", resource_type="sink", capacity=Decimal(2)),
     KitchenResourceSnapshot(resource_id="bowl:main", resource_type="mixing_bowl", capacity=Decimal(3)),
@@ -420,7 +422,11 @@ def summarize_update(node: str, update: Any) -> str:
             gaps = update.get("gaps", ())
             brief = ", ".join(f"{g.field_path}[{g.gap_class}]" for g in gaps[:4])
             more = f" ... {len(gaps)} total" if len(gaps) > 4 else ""
-            return f"Detected {len(gaps)} knowledge gap(s) -> {brief}{more}" if gaps else "No gaps, straight to IR validation"
+            return (
+                f"Detected {len(gaps)} knowledge gap(s) -> {brief}{more}"
+                if gaps
+                else "No gaps, straight to IR validation"
+            )
         if node == "infer_local":
             unresolved = update.get("gaps", ())
             return f"Local rules filled gaps -> {len(unresolved)} unresolved (routed onward)"
@@ -451,7 +457,9 @@ def summarize_update(node: str, update: Any) -> str:
             missing_res = getattr(rep, "missing_resources", ())
             if rep.is_feasible:
                 return "Stock/resources sufficient OK -> prep merge"
-            detail = f"{len(shortages)} shortage(s)" + (f", {len(missing_res)} missing equipment" if missing_res else "")
+            detail = f"{len(shortages)} shortage(s)" + (
+                f", {len(missing_res)} missing equipment" if missing_res else ""
+            )
             return f"INFEASIBLE: {detail} -> generated {len(opts)} repair option(s)"
         if node == "merge_preparation":
             n_recipe = len(update.get("recipe_tasks", ()))
@@ -697,8 +705,7 @@ def make_request(
         request_id=request_id,
         user_id="demo-teacher",
         recipes=tuple(
-            RecipeInput(recipe_id=f"r{i}", text=r["text"], target_servings=Decimal(2))
-            for i, r in enumerate(recipes)
+            RecipeInput(recipe_id=f"r{i}", text=r["text"], target_servings=Decimal(2)) for i, r in enumerate(recipes)
         ),
         inventory_lots=lots,
         kitchen_resources=resources,
@@ -708,8 +715,7 @@ def make_request(
 def with_stove(resources: tuple[KitchenResourceSnapshot, ...], burners: int) -> tuple[KitchenResourceSnapshot, ...]:
     """Return a copy of the resource set with a different stove capacity."""
     return tuple(
-        r if r.resource_type != "stove" else r.model_copy(update={"capacity": Decimal(burners)})
-        for r in resources
+        r if r.resource_type != "stove" else r.model_copy(update={"capacity": Decimal(burners)}) for r in resources
     )
 
 
@@ -792,7 +798,9 @@ async def extract_with_cache(
 # ---------------------------------------------------------------------------
 
 
-async def run_offline(graph: Any, ctx: WorkflowContext, extractor: RecipeExtractor, prepared: list[dict[str, str]]) -> None:
+async def run_offline(
+    graph: Any, ctx: WorkflowContext, extractor: RecipeExtractor, prepared: list[dict[str, str]]
+) -> None:
     p(f"\n{C_BOLD}STAGE 0 — Batch extraction preview (workflow input){C_RESET}")
     candidates = await asyncio.gather(*(extractor.extract(r["text"]) for r in prepared))
     for cand, meta in zip(candidates, prepared, strict=False):
@@ -864,7 +872,9 @@ async def run_offline(graph: Any, ctx: WorkflowContext, extractor: RecipeExtract
             f"{C_CYAN}[{entry['work_mode']:<7}]{C_RESET} {entry['instruction'][:42]:<44} "
             f"{C_DIM}({dish}){C_RESET}",
         )
-    p(f"  {C_DIM}... {len(tl7) - 10} more intervals. Overlapping windows across dishes = parallel passive cooking on one cook.{C_RESET}")
+    p(
+        f"  {C_DIM}... {len(tl7) - 10} more intervals. Overlapping windows across dishes = parallel passive cooking on one cook.{C_RESET}"
+    )
 
     # ---------- Stage 3: resource-aware planning ----------
     p(f"\n{C_BOLD}STAGE 3 — Resource sensitivity: same 7-dish meal, fewer stove burners{C_RESET}")
@@ -883,9 +893,7 @@ async def run_offline(graph: Any, ctx: WorkflowContext, extractor: RecipeExtract
             lots,
             resources=with_stove(KITCHEN_RESOURCES, burners),
         )
-        final, elapsed, _ = await run_one(
-            graph, ctx, request, f"Stove x{burners} burner(s): {names}", verbose=False
-        )
+        final, elapsed, _ = await run_one(graph, ctx, request, f"Stove x{burners} burner(s): {names}", verbose=False)
         info = analyze_plan(final, dish_ids)
         resource_rows.append((burners, info, elapsed))
         p(
@@ -902,8 +910,12 @@ async def run_offline(graph: Any, ctx: WorkflowContext, extractor: RecipeExtract
             f"  {C_DIM}  · {burners} burner(s): makespan {info['makespan']}min (vs {base}min) · "
             f"peak_parallel {info['peak_parallel']} ({peak_shift:+d} vs 4 burners){C_RESET}",
         )
-    p(f"  {C_DIM}  Insight: ACTIVE tasks are serialized by the single cook (no_overlap), so the true bottleneck is the{C_RESET}")
-    p(f"  {C_DIM}  cook, not the stove — passive simmering rides the soup's critical path. Burner count only repacks{C_RESET}")
+    p(
+        f"  {C_DIM}  Insight: ACTIVE tasks are serialized by the single cook (no_overlap), so the true bottleneck is the{C_RESET}"
+    )
+    p(
+        f"  {C_DIM}  cook, not the stove — passive simmering rides the soup's critical path. Burner count only repacks{C_RESET}"
+    )
     p(f"  {C_DIM}  intervals (peak 4 -> 3) and never hard-codes a fixed schedule.{C_RESET}")
 
     # ---------- Stage 4: fault injection -> dynamic routing ----------
@@ -914,8 +926,10 @@ async def run_offline(graph: Any, ctx: WorkflowContext, extractor: RecipeExtract
     request = make_request("demo-shortage", (meta_t,), lots_partial)
     final, elapsed, _ = await run_one(graph, ctx, request, f"Fault injection: {meta_t['name']} (30% stock)")
     info = analyze_plan(final, {"r0": meta_t["name"]})
-    p(f"  {C_DIM}-> terminal {C_RESET}{_status_color(info['status'])}{info['status']}{C_RESET}"
-      f"{C_DIM} · repair options surfaced, user must confirm to proceed · wall={elapsed:.2f}s{C_RESET}")
+    p(
+        f"  {C_DIM}-> terminal {C_RESET}{_status_color(info['status'])}{info['status']}{C_RESET}"
+        f"{C_DIM} · repair options surfaced, user must confirm to proceed · wall={elapsed:.2f}s{C_RESET}"
+    )
 
     # ---------- Stage 5: reflection-repair loop ----------
     p(f"\n{C_BOLD}STAGE 5 — Reflection-repair loop: remove wok/spatula -> verify FAIL -> self-repair{C_RESET}")
@@ -926,8 +940,10 @@ async def run_offline(graph: Any, ctx: WorkflowContext, extractor: RecipeExtract
     final, elapsed, _ = await run_one(graph, ctx, request, f"Repair loop: {meta_r['name']} (no wok/spatula in kitchen)")
     info = analyze_plan(final, {"r0": meta_r["name"]})
     rh = final.get("repair_history", ())
-    p(f"  {C_DIM}-> terminal {C_RESET}{_status_color(info['status'])}{info['status']}{C_RESET}"
-      f"{C_DIM} · repair attempts={len(rh)} (back-edge audit trail in repair_history) · wall={elapsed:.2f}s{C_RESET}")
+    p(
+        f"  {C_DIM}-> terminal {C_RESET}{_status_color(info['status'])}{info['status']}{C_RESET}"
+        f"{C_DIM} · repair attempts={len(rh)} (back-edge audit trail in repair_history) · wall={elapsed:.2f}s{C_RESET}"
+    )
     for rec in rh:
         p(f"     · {C_DIM}{getattr(rec, 'action', '?')}{C_RESET}")
 
@@ -936,16 +952,22 @@ async def run_offline(graph: Any, ctx: WorkflowContext, extractor: RecipeExtract
     p(f"{C_BOLD}  SUMMARY — planning metrics across all test samples{C_RESET}")
     bar("═")
     p(f"  {'':<3}{'Sample':<26}{'Status':<20}{'Solver':<10}{'Makespan':<10}{'Tasks':<7}{'Peak#':<6}")
-    p(f"  {'-'*3}{'-'*26}{'-'*20}{'-'*10}{'-'*10}{'-'*7}{'-'*6}")
+    p(f"  {'-' * 3}{'-' * 26}{'-' * 20}{'-' * 10}{'-' * 10}{'-' * 7}{'-' * 6}")
     for i, (name, info) in enumerate(per_dish.items()):
-        p(f"  {i + 1:<3}{name:<26}{_status_color(info['status'])}{info['status']:<20}{C_RESET}"
-          f"{_solver_color(info['solver'])}{info['solver']:<10}{C_RESET}{str(info['makespan']):<10}{info['tasks']:<7}{info['peak_parallel']:<6}")
+        p(
+            f"  {i + 1:<3}{name:<26}{_status_color(info['status'])}{info['status']:<20}{C_RESET}"
+            f"{_solver_color(info['solver'])}{info['solver']:<10}{C_RESET}{str(info['makespan']):<10}{info['tasks']:<7}{info['peak_parallel']:<6}"
+        )
     for i, info in enumerate(combo_rows):
         label = f"Combo {i + 1} ({info['solver']})"
-        p(f"  {'C'+str(i+1):<3}{label:<26}{_status_color(info['status'])}{info['status']:<20}{C_RESET}"
-          f"{_solver_color(info['solver'])}{info['solver']:<10}{C_RESET}{str(info['makespan']):<10}{info['tasks']:<7}{info['peak_parallel']:<6}")
+        p(
+            f"  {'C' + str(i + 1):<3}{label:<26}{_status_color(info['status'])}{info['status']:<20}{C_RESET}"
+            f"{_solver_color(info['solver'])}{info['solver']:<10}{C_RESET}{str(info['makespan']):<10}{info['tasks']:<7}{info['peak_parallel']:<6}"
+        )
     p(f"\n{C_DIM}Every request terminated inside the graph; full node traces printed above (stages 0-1, 4-5).{C_RESET}")
-    p(f"{C_DIM}Speedup = serial makespan sum / parallel makespan -> CP-SAT packs dishes onto the same timeline.{C_RESET}")
+    p(
+        f"{C_DIM}Speedup = serial makespan sum / parallel makespan -> CP-SAT packs dishes onto the same timeline.{C_RESET}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -974,7 +996,9 @@ async def run_full_agent(
 
     t0 = time.perf_counter()
     candidates = await asyncio.gather(*(_one(r) for r in prepared))
-    p(f"  {C_DIM}batch extraction wall={time.perf_counter() - t0:.1f}s (cache warmed — graph parses hit the cache){C_RESET}")
+    p(
+        f"  {C_DIM}batch extraction wall={time.perf_counter() - t0:.1f}s (cache warmed — graph parses hit the cache){C_RESET}"
+    )
     for cand, meta in zip(candidates, prepared, strict=False):
         p(
             f"  · {C_CYAN}{meta['name']}{C_RESET} "
@@ -987,7 +1011,9 @@ async def run_full_agent(
 
     rows: list[dict[str, Any]] = []
 
-    def _record(label: str, final: dict[str, Any], meta: dict[str, Any], elapsed: float, dish_ids: dict[str, str]) -> None:
+    def _record(
+        label: str, final: dict[str, Any], meta: dict[str, Any], elapsed: float, dish_ids: dict[str, str]
+    ) -> None:
         info = analyze_plan(final, dish_ids)
         features = infer_features(final, meta, cache, cache_before)
         info.update({"label": label, "features": features, "wall": elapsed})
@@ -1035,13 +1061,17 @@ async def run_full_agent(
     # ---------- Stage 4: equipment shortage -> confirmation dialog ----------
     p(f"\n{C_BOLD}STAGE 4 — Equipment shortage (no wok/spatula) -> feasibility stop -> confirmation dialog{C_RESET}")
     p(f"{C_DIM}  With confirmation dialog ON, a missing tool is caught at feasibility and offered as a repair{C_RESET}")
-    p(f"{C_DIM}  decision (alternative_equipment) instead of failing later at verification — agent routes by context.{C_RESET}")
+    p(
+        f"{C_DIM}  decision (alternative_equipment) instead of failing later at verification — agent routes by context.{C_RESET}"
+    )
     limited_resources = tuple(r for r in KITCHEN_RESOURCES if r.resource_type not in ("wok", "spatula"))
     meta_r, cand_r = prepared[0], candidates[0]
     lots_r = build_lots_from_candidates([cand_r])
     request = make_request("full-repair", (meta_r,), lots_r, resources=limited_resources)
     cache_before = cache.stats()
-    final, elapsed, meta_info = await run_one(graph, ctx, request, f"Equipment shortage: {meta_r['name']} (no wok/spatula)")
+    final, elapsed, meta_info = await run_one(
+        graph, ctx, request, f"Equipment shortage: {meta_r['name']} (no wok/spatula)"
+    )
     _record(f"Equipment shortage ({meta_r['name']})", final, meta_info, elapsed, {"r0": meta_r["name"]})
 
     # ---------- Stage 5: summary ----------
@@ -1057,8 +1087,12 @@ async def run_full_agent(
     research_fired = any("LLM-research" in r["features"] for r in rows)
     controller_fired = any("ReAct-controller" in r["features"] for r in rows)
     p(f"\n{C_DIM}Total cases: {len(rows)} · all capabilities ON: LLM, research, cache, explain, checkpoint,{C_RESET}")
-    p(f"{C_DIM}ReAct controller, confirmation dialog. LLM-research fired={research_fired} (only when a heat/duration{C_RESET}")
-    p(f"{C_DIM}gap survives local inference); ReAct controller fired={controller_fired} (LLM decides, falls back to the{C_RESET}")
+    p(
+        f"{C_DIM}ReAct controller, confirmation dialog. LLM-research fired={research_fired} (only when a heat/duration{C_RESET}"
+    )
+    p(
+        f"{C_DIM}gap survives local inference); ReAct controller fired={controller_fired} (LLM decides, falls back to the{C_RESET}"
+    )
     p(f"{C_DIM}deterministic DAG on any failure — soft decision, hard guarantee).{C_RESET}")
 
 
@@ -1066,9 +1100,13 @@ async def main() -> None:
     bar("═")
     if _FULL_AGENT:
         p(f"{C_BOLD}  Cooking Plan Agent — FULL-AGENT comprehensive test (ALL capabilities ON){C_RESET}")
-        p(f"{C_DIM}  LLM extract · LLM research · cache · explain · checkpoint · ReAct controller · confirmation dialog{C_RESET}")
+        p(
+            f"{C_DIM}  LLM extract · LLM research · cache · explain · checkpoint · ReAct controller · confirmation dialog{C_RESET}"
+        )
     else:
-        p(f"{C_BOLD}  Cooking Plan Agent — Smart Planning + Agentic Workflow demo (7 dishes / offline deterministic){C_RESET}")
+        p(
+            f"{C_BOLD}  Cooking Plan Agent — Smart Planning + Agentic Workflow demo (7 dishes / offline deterministic){C_RESET}"
+        )
         p(f"{C_DIM}  Workflow: LangGraph DAG · Scheduling: CP-SAT (OR-Tools) · Parsing: rule engine (no LLM){C_RESET}")
     bar("═")
 

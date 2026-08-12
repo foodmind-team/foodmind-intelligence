@@ -2,10 +2,11 @@
 
 from functools import lru_cache
 from ipaddress import ip_address
+from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BeforeValidator, Field, SecretStr, model_validator
+from pydantic import AliasChoices, BeforeValidator, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -20,6 +21,7 @@ def _comma_separated(value: object) -> tuple[str, ...]:
 CommaSeparatedTuple = Annotated[tuple[str, ...], NoDecode, BeforeValidator(_comma_separated)]
 _LOCAL_TOKEN = "local-recommendation-token"  # noqa: S105 - explicit non-production sentinel
 _LOCAL_INFERENCE_TOKEN = "local-inference-only"  # noqa: S105 - explicit non-production sentinel
+AGENTS_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 
 
 class Settings(BaseSettings):
@@ -38,8 +40,9 @@ class Settings(BaseSettings):
     queue_timeout_seconds: float = Field(default=1.0, gt=0.0, le=30.0)
     shutdown_drain_seconds: float = Field(default=5.0, ge=0.1, le=30.0)
     cors_allow_origins: CommaSeparatedTuple = ()
-    inference_base_url: str = "http://127.0.0.1:9000"
+    inference_base_url: str = "http://127.0.0.1:8002"
     inference_endpoint_path: str = "/internal/v1/recommendations/score"
+    inference_readiness_path: str = "/health/ready"
     inference_service_token: SecretStr = SecretStr(_LOCAL_INFERENCE_TOKEN)
     inference_connect_timeout_ms: int = Field(default=100, ge=1, le=5_000)
     inference_pool_timeout_ms: int = Field(default=50, ge=1, le=5_000)
@@ -56,9 +59,11 @@ class Settings(BaseSettings):
     llm_enabled: bool = True
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-chat"
-    llm_api_key: SecretStr | None = None
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("RECOMMENDATION_AGENT_LLM_API_KEY", "DEEPSEEK_API_KEY"),
+    )
     llm_timeout_seconds: float = Field(default=55.0, gt=0.0, le=120.0)
-    llm_max_retries: int = Field(default=2, ge=0, le=4)
     llm_temperature: float = Field(default=0.1, ge=0.0, le=1.0)
     llm_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
     llm_connection_pool_size: int = Field(default=10, ge=1, le=100)
@@ -67,8 +72,8 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="RECOMMENDATION_AGENT_",
-        env_file=".env",
-        extra="forbid",
+        env_file=AGENTS_ENV_FILE,
+        extra="ignore",
         frozen=True,
     )
 
@@ -87,10 +92,9 @@ class Settings(BaseSettings):
             raise ValueError("inference base URL must use HTTP(S) and include a host")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("inference base URL must not contain credentials, query, or fragment")
-        if not self.inference_endpoint_path.startswith("/") or any(
-            item in self.inference_endpoint_path for item in ("..", "?", "#")
-        ):
-            raise ValueError("inference endpoint path is invalid")
+        for path in (self.inference_endpoint_path, self.inference_readiness_path):
+            if not path.startswith("/") or any(item in path for item in ("..", "?", "#")):
+                raise ValueError("inference endpoint path is invalid")
         if self.deadline_guard_ms >= self.min_deadline_budget_ms:
             raise ValueError("deadline guard must be smaller than the minimum budget")
         llm_origin = urlsplit(self.llm_base_url)
@@ -108,7 +112,7 @@ class Settings(BaseSettings):
                 raise ValueError("a strong explicit inference service token is required")
             llm_key = self.llm_api_key.get_secret_value() if self.llm_api_key is not None else ""
             if self.llm_enabled and not llm_key:
-                raise ValueError("an LLM API key is required when LLM ranking is enabled")
+                raise ValueError("an LLM API key is required when LLM explanations are enabled")
         return self
 
 

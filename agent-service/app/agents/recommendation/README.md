@@ -2,7 +2,8 @@
 
 Private, bounded FastAPI service for Recommendation Agent v2. The package is
 independent of the Cooking Agent and contains no model training/loading,
-database, web, filesystem, arbitrary tool, or LLM capability.
+database, web, filesystem, or arbitrary tool capability. DeepSeek is an
+optional explanation renderer and is never a ranking provider.
 
 ## Local commands
 
@@ -32,12 +33,13 @@ local/test/CI, and the canonical v2 contract remains unchanged.
 
 All configuration uses the `RECOMMENDATION_AGENT_` prefix:
 
-Set `LLM_ENABLED=true`, `LLM_BASE_URL=https://api.deepseek.com`,
-`LLM_MODEL=deepseek-chat`, and `LLM_API_KEY` to rank the frozen evidence
-features with DeepSeek. The agent still owns candidate validation, diversity,
-reason derivation, and response shaping; the LLM can only return bounded
-scores for the supplied opaque candidate IDs. Without an API key the existing
-private inference client remains the ranking provider.
+Set `LLM_ENABLED=true`, `LLM_BASE_URL=https://api.deepseek.com`, and
+`LLM_MODEL=deepseek-chat`. The service loads `DEEPSEEK_API_KEY` from the shared
+`app/agents/.env`; `RECOMMENDATION_AGENT_LLM_API_KEY` is the explicit override.
+Inference remains the only ranking provider. After deterministic selection and
+reason derivation, DeepSeek may render one bounded explanation per selected
+opaque candidate ID from allow-listed reason facts. Invalid or unavailable LLM
+output falls back to deterministic wording without discarding ML results.
 
 The canonical `/internal/v1/recommendations/generate` route accepts the
 Backend's v1 envelope during migration and translates it into the same strict
@@ -71,8 +73,9 @@ Production result shaping is deterministic under
 `recommendation-template-v1`. It preserves the confidence lead within the
 frozen tie band, selects only evidence-supported Personal, Exploratory, and
 Group-inspired candidates, and derives at most two allow-listed reasons.
-Explanations use fixed observational templates only. No LLM participates in
-ranking, selection, reason derivation, or explanation rendering.
+No LLM participates in ranking, selection, or reason derivation. Explanation
+rendering is constrained to approved reason vocabulary and deterministic
+templates remain the failure path.
 
 For the deterministic private-boundary smoke and release-evidence checksum
 check, run:

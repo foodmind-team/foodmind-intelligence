@@ -15,7 +15,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 USER foodmind
-EXPOSE 8004
+EXPOSE 8001
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health/ready', timeout=2)"]
-CMD ["uvicorn", "chat_agent.main:app", "--host", "0.0.0.0", "--port", "8004"]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready', timeout=2)"]
+CMD ["uvicorn", "chat_agent.main:app", "--host", "0.0.0.0", "--port", "8001"]

@@ -157,7 +157,7 @@ class WorkflowNodes:
             "render_explanations",
             ErrorCode.UNSAFE_TEMPLATE,
             "rendered_candidates",
-            self._context.renderer.render(state["reasoned_candidates"]),
+            self._context.renderer.render(state["reasoned_candidates"], budget=self._budget(state)),
         )
 
     async def _policy_node(

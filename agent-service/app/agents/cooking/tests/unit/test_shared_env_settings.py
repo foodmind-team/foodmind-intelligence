@@ -28,3 +28,15 @@ def test_shared_agent_env_ignores_unrelated_keys_and_redacts_secrets(tmp_path, c
     captured = capsys.readouterr()
     assert unrelated_sentinel not in rendered + captured.out + captured.err
     assert cooking_sentinel not in rendered + captured.out + captured.err
+
+
+def test_shared_deepseek_key_is_used_when_no_cooking_override(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("COOKING_PLAN_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    shared_env = tmp_path / ".env"
+    shared_env.write_text("DEEPSEEK_API_KEY=shared-cooking-test-key\n", encoding="utf-8")
+
+    settings = Settings(_env_file=shared_env)
+
+    assert settings.llm_api_key is not None
+    assert settings.llm_api_key.get_secret_value() == "shared-cooking-test-key"

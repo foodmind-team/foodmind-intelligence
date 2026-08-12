@@ -26,7 +26,7 @@
       "env": {
         "RECOMMENDATION_AGENT_APP_ENV": "local",
         "RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN": "local-recommendation-token",
-        "RECOMMENDATION_AGENT_LLM_ENABLED": "false",
+        "RECOMMENDATION_AGENT_LLM_ENABLED": "true",
         "RECOMMENDATION_AGENT_INFERENCE_BASE_URL": "http://127.0.0.1:8002",
         "RECOMMENDATION_AGENT_INFERENCE_SERVICE_TOKEN": "local-inference-only",
         "RECOMMENDATION_AGENT_ENABLE_V1_COMPATIBILITY": "false"
@@ -43,7 +43,9 @@
       "env": {
         "CHAT_AGENT_ENVIRONMENT": "local",
         "CHAT_AGENT_INTERNAL_SERVICE_TOKEN": "local-chat-token",
-        "CHAT_AGENT_LLM_ENABLED": "false"
+        "CHAT_AGENT_LLM_ENABLED": "true",
+        "CHAT_AGENT_BACKEND_BASE_URL": "http://127.0.0.1:8080",
+        "CHAT_AGENT_BACKEND_SERVICE_TOKEN": "local-development-service-token"
       }
     },
     {
@@ -57,7 +59,7 @@
       "env": {
         "COOKING_PLAN_ENVIRONMENT": "local",
         "COOKING_PLAN_INTERNAL_SERVICE_TOKEN": "local-cooking-token",
-        "COOKING_PLAN_LLM_ENABLED": "false",
+        "COOKING_PLAN_LLM_ENABLED": "true",
         "COOKING_PLAN_WEB_RESEARCH_ENABLED": "false",
         "COOKING_PLAN_EXPLANATION_ENABLED": "false",
         "COOKING_PLAN_TASK_API_ENABLED": "true",
