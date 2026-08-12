@@ -83,7 +83,9 @@ class GroundedSource:
     source_type: SourceType
     source_id: UUID
     title: str | None = None
+    subtitle: str | None = None
     snippet: str | None = None
+    occurred_at: str | None = None
     grounding_metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
