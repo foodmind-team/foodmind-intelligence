@@ -11,7 +11,7 @@ INFERENCE_FIXTURES = REPOSITORY_ROOT / "contracts/internal/inference/recommendat
 AGENT_FIXTURES = REPOSITORY_ROOT / "contracts/internal/agent/recommendation/v2/fixtures"
 FEATURE_CONTRACT = REPOSITORY_ROOT / "contracts/internal/shared/recommendation-features/v2"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_IMAGE_SOURCE_SHA256 = "85156dd85205285946ea18441ca402993b476487cb6f6f279cb1ab179a87b627"
+EXPECTED_IMAGE_SOURCE_SHA256 = "6ab7f0604b7fafc1a530cb92f0518e67d93d24643a67bffa2fadcd58bab2c512"
 
 
 def _sha256(path: Path) -> str:
