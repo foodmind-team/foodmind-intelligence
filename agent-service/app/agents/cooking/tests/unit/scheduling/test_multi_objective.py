@@ -262,7 +262,7 @@ class TestFallbackPhasesNotRecorded:
     def test_context_switch_fallback_not_recorded(self, monkeypatch) -> None:
         from cooking_plan_agent.scheduling.orchestrator import _PhaseOutcome
 
-        def _fallback(self, problem, makespan, holding_fixed, phase2_result):
+        def _fallback(self, problem, makespan, holding_fixed, phase2_result, deadline):
             # 模拟超时回退：直接返回上一阶段结果，不产出 context_switch 目标值
             return _PhaseOutcome(result=phase2_result)
 
@@ -275,7 +275,7 @@ class TestFallbackPhasesNotRecorded:
     def test_holding_fallback_not_recorded(self, monkeypatch) -> None:
         from cooking_plan_agent.scheduling.orchestrator import _PhaseOutcome
 
-        def _fallback(self, problem, makespan, phase1_result):
+        def _fallback(self, problem, makespan, phase1_result, deadline):
             return _PhaseOutcome(result=phase1_result)
 
         monkeypatch.setattr(ScheduleOrchestrator, "_phase_holding", _fallback)

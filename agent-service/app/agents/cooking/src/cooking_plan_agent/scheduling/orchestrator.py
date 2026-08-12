@@ -109,9 +109,11 @@ class ScheduleOrchestrator:
         Returns:
             (best_feasible_result, verification_report)
         """
+        deadline = time.monotonic() + problem.solver_timeout_seconds
+
         # Phase 1: minimise makespan (receives the full budget — it is the
         # only phase whose failure is fatal).
-        phase1 = self._phase_makespan(problem)
+        phase1 = self._phase_makespan(problem, deadline)
         if phase1.result.status not in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
             report = self._verifier.verify(problem, phase1.result)
             return phase1.result, report
@@ -121,28 +123,28 @@ class ScheduleOrchestrator:
         makespan = phase1.result.makespan_minutes
         assert makespan is not None
 
-        if optimization_level in ("phase12", "full"):
+        if optimization_level in ("phase12", "full") and self._has_time_remaining(deadline):
             # Phase 2: minimise holding (fix makespan). A phase counts as
             # applied ONLY when it produced its own objective value — a
             # fallback to Phase 1 (timeout/UNKNOWN or infeasible) must not
             # be recorded, or the verifier would report the objective as
             # missing and reject a valid schedule (P3-03 regression).
-            phase2 = self._phase_holding(problem, makespan, best)
+            phase2 = self._phase_holding(problem, makespan, best, deadline)
             if phase2.result.holding_objective is not None:
                 best = phase2.result
                 phases.append("holding")
 
-        if optimization_level == "full":
+        if optimization_level == "full" and self._has_time_remaining(deadline):
             # Phase 3: minimise context switching (fix makespan + holding).
             holding_fixed = best.holding_objective
-            phase3 = self._phase_context_switch(problem, makespan, holding_fixed, best)
+            phase3 = self._phase_context_switch(problem, makespan, holding_fixed, best, deadline)
             if phase3.result.context_switch_objective is not None:
                 best = phase3.result
                 phases.append("context_switch")
 
             # Phase 4: minimise active labour (only when equivalent execution
             # modes exist; gated otherwise — P3-03 step 4).
-            if self._has_equivalent_modes(problem):
+            if self._has_equivalent_modes(problem) and self._has_time_remaining(deadline):
                 phase4 = self._phase_active_labour(problem, makespan, best)
                 if phase4.result is not best and phase4.result.active_labour_objective is not None:
                     best = phase4.result
@@ -156,13 +158,16 @@ class ScheduleOrchestrator:
     # Phase 1: minimise makespan
     # ------------------------------------------------------------------
 
-    def _phase_makespan(self, problem: SchedulingProblem) -> _PhaseOutcome:
+    def _phase_makespan(self, problem: SchedulingProblem, deadline: float) -> _PhaseOutcome:
         """Build and solve the basic makespan-minimisation model.
 
         Returns a ScheduleResult with intervals extracted if feasible.
         """
         model_info = self._builder.build(problem)
-        solver_run = self._solver.solve(model_info, problem.solver_timeout_seconds)
+        remaining = self._remaining_timeout(deadline)
+        if remaining <= 0:
+            return _PhaseOutcome(result=ScheduleResult(status=SolverStatus.UNKNOWN, wall_time_seconds=0.0))
+        solver_run = self._solver.solve(model_info, remaining)
         result = self._solver.to_schedule_result(solver_run)
 
         if result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
@@ -180,6 +185,7 @@ class ScheduleOrchestrator:
         problem: SchedulingProblem,
         makespan: int,
         phase1_result: ScheduleResult,
+        deadline: float,
     ) -> _PhaseOutcome:
         """Minimise weighted holding time while keeping makespan fixed.
 
@@ -218,7 +224,7 @@ class ScheduleOrchestrator:
         if dish_holding_terms:
             model.minimize(sum(dish_holding_terms))
 
-        outcome = self._solve_model(problem, model, starts, ends, interval_vars, horizon, makespan_var)
+        outcome = self._solve_model(model, starts, ends, interval_vars, horizon, makespan_var, deadline)
         if outcome.result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
             result = outcome.result.model_copy(update={"holding_objective": outcome.objective_value})
             return _PhaseOutcome(result=result, objective_value=outcome.objective_value)
@@ -236,6 +242,7 @@ class ScheduleOrchestrator:
         makespan: int,
         holding_fixed: int | None,
         phase2_result: ScheduleResult,
+        deadline: float,
     ) -> _PhaseOutcome:
         """Minimise context switching while keeping makespan + holding fixed.
 
@@ -282,7 +289,7 @@ class ScheduleOrchestrator:
         if category_span_terms:
             model.minimize(sum(category_span_terms))
 
-        outcome = self._solve_model(problem, model, starts, ends, interval_vars, horizon, makespan_var)
+        outcome = self._solve_model(model, starts, ends, interval_vars, horizon, makespan_var, deadline)
         if outcome.result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
             result = outcome.result.model_copy(
                 update={
@@ -334,21 +341,25 @@ class ScheduleOrchestrator:
 
     def _solve_model(
         self,
-        problem: SchedulingProblem,
         model: cp_model.CpModel,
         starts: dict[str, cp_model.IntVar],
         ends: dict[str, cp_model.IntVar],
         interval_vars: dict[str, cp_model.IntervalVar],
         horizon: int,
         makespan_var: cp_model.IntVar,
+        deadline: float,
     ) -> _PhaseOutcome:
         """Solve an already-built phase model and extract intervals.
 
         Returns the ScheduleResult (with intervals) and the solver's
         objective value when the solve succeeded.
         """
+        remaining = self._remaining_timeout(deadline)
+        if remaining <= 0:
+            return _PhaseOutcome(result=ScheduleResult(status=SolverStatus.UNKNOWN, wall_time_seconds=0.0))
+
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = problem.solver_timeout_seconds
+        solver.parameters.max_time_in_seconds = remaining
         solver.parameters.num_search_workers = 4
 
         start_time = time.monotonic()
@@ -388,6 +399,16 @@ class ScheduleOrchestrator:
         except (ValueError, TypeError):
             objective_value = None
         return _PhaseOutcome(result=result, objective_value=objective_value)
+
+    @staticmethod
+    def _remaining_timeout(deadline: float) -> float:
+        """Return the solver time left in the current request budget."""
+        return max(0.0, deadline - time.monotonic())
+
+    @classmethod
+    def _has_time_remaining(cls, deadline: float) -> bool:
+        """Avoid building another phase when the request budget is exhausted."""
+        return cls._remaining_timeout(deadline) > 0.001
 
     @staticmethod
     def _is_makespan_objective(model: cp_model.CpModel) -> bool:
