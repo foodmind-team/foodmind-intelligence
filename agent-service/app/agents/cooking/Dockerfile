@@ -32,8 +32,9 @@ COPY src/ ./src/
 # Install production dependencies (no dev deps: pytest/ruff/mypy/hypothesis).
 RUN uv sync --frozen --no-dev
 
-# Ensure the agent user owns the app directory.
-RUN chown -R agent:agent /app
+# The async task store uses /app/data. Create it in the image so the service
+# also starts correctly when the container is run without Compose volumes.
+RUN mkdir -p /app/data && chown -R agent:agent /app
 
 # Switch to non-root user.
 USER agent
@@ -41,9 +42,9 @@ USER agent
 # Expose only the internal service port.
 EXPOSE 8000
 
-# Health check: verify the event loop is alive without external calls.
+# Health check: only accept traffic once required local services are ready.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD /app/.venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')" || exit 1
+    CMD /app/.venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')" || exit 1
 
 # Production ASGI server. Single worker: CP-SAT is CPU-bound per worker.
 # Use the venv Python that uv created to ensure all deps are available.

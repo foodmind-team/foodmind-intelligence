@@ -30,7 +30,18 @@ def test_readiness() -> None:
         assert body["status"] == "ready"
         assert body["checks"]["settings_validated"] is True
         assert body["checks"]["graph_compiled"] is True
+        assert body["checks"]["task_api_ready"] is True
         assert body["checks"]["shutting_down"] is False
+
+
+def test_readiness_fails_when_required_task_api_did_not_start() -> None:
+    """A configured async API must not be hidden behind a false-ready probe."""
+    with TestClient(create_app()) as client:
+        client.app.state.task_api_required = True
+        client.app.state.task_service = None
+        response = client.get("/health/ready")
+        assert response.status_code == 503
+        assert response.json()["checks"]["task_api_ready"] is False
 
 
 def test_load_snapshot_reports_limiter_metrics() -> None:

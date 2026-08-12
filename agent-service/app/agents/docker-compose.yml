@@ -38,13 +38,23 @@ services:
       - "8003:8000"
     environment:
       COOKING_PLAN_ENVIRONMENT: local
-      COOKING_PLAN_INTERNAL_SERVICE_TOKEN: local-cooking-token
+      COOKING_PLAN_INTERNAL_SERVICE_TOKEN: ${COOKING_AGENT_SERVICE_TOKEN:-local-cooking-token}
       COOKING_PLAN_SAFETY_POLICY_REGION: SG
       COOKING_PLAN_LLM_ENABLED: "true"
       COOKING_PLAN_LLM_BASE_URL: https://api.deepseek.com
       COOKING_PLAN_LLM_MODEL: deepseek-chat
-      COOKING_PLAN_LLM_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # Accept the service-specific variable used by cooking/.env.example,
+      # while preserving the shared DEEPSEEK_API_KEY documented for this stack.
+      COOKING_PLAN_LLM_API_KEY: ${COOKING_PLAN_LLM_API_KEY:-${DEEPSEEK_API_KEY:-}}
       COOKING_PLAN_TASK_API_ENABLED: "true"
+    volumes:
+      - cooking-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   chatbot:
@@ -59,3 +69,6 @@ services:
       CHAT_AGENT_LLM_MODEL: deepseek-chat
       CHAT_AGENT_LLM_API_KEY: ${DEEPSEEK_API_KEY:-}
     restart: unless-stopped
+
+volumes:
+  cooking-data:

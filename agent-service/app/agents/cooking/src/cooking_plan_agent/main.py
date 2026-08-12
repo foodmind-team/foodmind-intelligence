@@ -266,6 +266,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # P3-01: async task API — in-process worker + SQLite task store. The
     # synchronous endpoints remain; this service only runs when enabled.
     app.state.task_service = None
+    app.state.task_api_required = settings.task_api_enabled
     task_service: object | None = None
     if settings.task_api_enabled:
         from cooking_plan_agent.tasks.queue import create_task_queue
@@ -498,9 +499,11 @@ def create_app() -> FastAPI:
         """
         settings_ok = getattr(application.state, "settings_validated", False)
         graph_ok = getattr(application.state, "graph_compiled", False)
+        task_api_required = getattr(application.state, "task_api_required", False)
+        task_api_ready = not task_api_required or getattr(application.state, "task_service", None) is not None
         shutting_down = _shutting_down
 
-        ready = settings_ok and graph_ok and not shutting_down
+        ready = settings_ok and graph_ok and task_api_ready and not shutting_down
         status_code = 200 if ready else 503
 
         return JSONResponse(
@@ -510,6 +513,7 @@ def create_app() -> FastAPI:
                 "checks": {
                     "settings_validated": settings_ok,
                     "graph_compiled": graph_ok,
+                    "task_api_ready": task_api_ready,
                     "shutting_down": shutting_down,
                 },
             },
