@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, cast
 from uuid import UUID
 
@@ -35,9 +36,33 @@ class BackendToolClient:
             delegation_token=delegation_token,
             timeout_seconds=timeout_seconds,
         )
-        if not isinstance(raw, dict) or not isinstance(raw.get("items"), list):
-            raise BackendToolError("Backend search response is invalid")
-        return tuple(_search_source(item) for item in cast(list[Any], raw["items"]))
+        sources, has_next = _search_result(raw)
+        # A collection question (for example, "how many restaurants") has no
+        # concrete text to match against every catalogue title. It remains a
+        # delegated read-only request, so broaden only the bounded collection.
+        if not sources and _is_collection_query(query):
+            return await self.explore(
+                source_types=["PLACE"] if _is_place_collection(query) else [],
+                delegation_token=delegation_token,
+                timeout_seconds=timeout_seconds,
+            )
+        return tuple(_with_page_metadata(source, has_next) for source in sources)
+
+    async def explore(
+        self,
+        *,
+        source_types: list[SourceType],
+        delegation_token: str,
+        timeout_seconds: float,
+    ) -> tuple[GroundedSource, ...]:
+        raw = await self._post(
+            "/internal/v1/explore",
+            {"sourceTypes": source_types, "after": None, "size": 10},
+            delegation_token=delegation_token,
+            timeout_seconds=timeout_seconds,
+        )
+        sources, has_next = _search_result(raw)
+        return tuple(_with_page_metadata(source, has_next) for source in sources)
 
     async def resolve(
         self,
@@ -106,6 +131,39 @@ def _search_source(value: Any) -> GroundedSource:
         )
     except (TypeError, ValueError) as exc:
         raise BackendToolError("Backend search item is invalid") from exc
+
+
+def _search_result(raw: Any) -> tuple[tuple[GroundedSource, ...], bool]:
+    if not isinstance(raw, dict) or not isinstance(raw.get("items"), list):
+        raise BackendToolError("Backend search response is invalid")
+    return (
+        tuple(_search_source(item) for item in cast(list[Any], raw["items"])),
+        raw.get("hasNext") is True,
+    )
+
+
+def _with_page_metadata(source: GroundedSource, has_next: bool) -> GroundedSource:
+    return GroundedSource(
+        source.source_type,
+        source.source_id,
+        source.title,
+        source.snippet,
+        {**source.grounding_metadata, "hasNext": has_next},
+    )
+
+
+def _is_collection_query(query: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:restaurant|restaurants|place|places|catalogue|catalog)\b|餐厅|饭店|地点|场所",
+            query,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_place_collection(query: str) -> bool:
+    return bool(re.search(r"\b(?:restaurant|restaurants|place|places)\b|餐厅|饭店|地点|场所", query, re.IGNORECASE))
 
 
 def _resolved_source(value: dict[str, Any]) -> GroundedSource:

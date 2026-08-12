@@ -9,27 +9,46 @@ from pydantic import SecretStr
 
 from chat_agent.clients.backend import BackendToolClient, BackendToolError
 from chat_agent.config.settings import Settings
-from chat_agent.domain.models import GroundedSource
+from chat_agent.domain.models import GroundedSource, SourceType
 from chat_agent.main import create_app
 
 
 class FakeBackendTools:
     def __init__(self) -> None:
         self.search_calls: list[dict[str, Any]] = []
+        self.explore_calls: list[dict[str, Any]] = []
         self.resolve_calls: list[dict[str, Any]] = []
         self.fail = False
+        self.empty_search = False
+        self.search_source_type: SourceType = "FOOD_PRODUCT"
 
     async def search(self, **kwargs: Any) -> tuple[GroundedSource, ...]:
         self.search_calls.append(kwargs)
         if self.fail:
             raise BackendToolError("unavailable")
+        if self.empty_search:
+            return ()
         return (
             GroundedSource(
-                "FOOD_PRODUCT",
+                self.search_source_type,
                 uuid4(),
                 "Oat drink",
                 "Unsweetened oat drink",
                 {"origin": "backend_search"},
+            ),
+        )
+
+    async def explore(self, **kwargs: Any) -> tuple[GroundedSource, ...]:
+        self.explore_calls.append(kwargs)
+        if self.fail:
+            raise BackendToolError("unavailable")
+        return (
+            GroundedSource(
+                "PLACE",
+                uuid4(),
+                "Orchard Garden Kitchen",
+                "Orchard",
+                {"origin": "backend_explore", "hasNext": False},
             ),
         )
 
@@ -126,6 +145,25 @@ def test_explicit_search_route_wins_and_searches_without_shared_references() -> 
     assert tools.search_calls[0]["delegation_token"] == "delegation-token"
 
 
+def test_count_question_routes_to_authorised_search_instead_of_navigation() -> None:
+    tools = FakeBackendTools()
+    tools.search_source_type = "PLACE"
+    payload = request_payload()
+    payload["message"] = "Can you see how many restaurants are there?"
+    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["route"] == "SEARCH"
+    assert body["responseStatus"] == "SUCCEEDED"
+    assert body["answer"].startswith("I can see 1 authorised places")
+    assert tools.search_calls[0]["query"] == "Can you see how many restaurants are there?"
+
+
 def test_out_of_scope_guard_precedes_requested_route() -> None:
     payload = request_payload(requested_route="SEARCH")
     payload["message"] = "recommend what I should cook"
@@ -200,6 +238,38 @@ async def test_backend_tools_send_service_and_delegation_tokens() -> None:
     await client.aclose()
 
     assert sources[0].source_id == UUID(str(source_id))
+
+
+@pytest.mark.asyncio
+async def test_backend_tools_broaden_empty_restaurant_search_to_authorised_places() -> None:
+    source_id = uuid4()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/internal/v1/search":
+            return httpx.Response(200, json={"items": [], "nextCursor": None, "hasNext": False})
+        assert request.url.path == "/internal/v1/explore"
+        assert b'"PLACE"' in request.content
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {"sourceType": "PLACE", "sourceId": str(source_id), "title": "Kitchen", "snippet": "Orchard"}
+                ],
+                "nextCursor": None,
+                "hasNext": False,
+            },
+        )
+
+    raw = httpx.AsyncClient(base_url="http://backend.test", transport=httpx.MockTransport(handler))
+    client = BackendToolClient(client=raw, settings=Settings(environment="test", backend_base_url="http://backend.test"))
+    sources = await client.search(query="restaurants", delegation_token="delegated-user-token", timeout_seconds=1)
+    await client.aclose()
+
+    assert len(requests) == 2
+    assert sources[0].source_type == "PLACE"
+    assert sources[0].grounding_metadata["hasNext"] is False
 
 
 def test_shared_deepseek_key_configures_chat_provider(monkeypatch) -> None:

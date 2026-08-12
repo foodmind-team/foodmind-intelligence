@@ -4,10 +4,14 @@ Private FastAPI service for `POST /internal/v1/chat/generate`. It mirrors the
 Spring Boot `chat-agent-v1` contract, authenticates `Authorization: Bearer`,
 and uses an OpenAI-compatible chat-completions provider such as DeepSeek.
 
-Chatbot is read-only. Search calls Backend `POST /internal/v1/search`; summary
-and comparison refresh references through `POST /internal/v1/references/resolve`.
-Both calls use the Backend service token plus the request's delegation token,
-and Backend performs final source authorisation.
+Chatbot is read-only. It can freely explore the current user's authorised
+records, products, and places: targeted search calls Backend
+`POST /internal/v1/search`, while broad collection questions use the bounded
+`POST /internal/v1/explore` tool. Summary and comparison refresh references
+through `POST /internal/v1/references/resolve`. Every call uses the Backend
+service token plus the request's delegation token, and Backend performs final
+source authorisation. Chatbot cannot create, update, delete, or access another
+user's data.
 
 Copy `.env.example` to `.env`, set `CHAT_AGENT_LLM_API_KEY` (or the shared
 `DEEPSEEK_API_KEY`), then run:

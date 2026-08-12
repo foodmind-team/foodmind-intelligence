@@ -28,8 +28,16 @@ router = APIRouter(
 
 _OUT_OF_SCOPE = re.compile(r"\b(recommend(?:ation)?s?|cook(?:ing)?|meal plan)\b|推荐|烹饪|做菜", re.IGNORECASE)
 _COMPARE = re.compile(r"\b(compare|versus|vs\.?|difference)\b|比较|对比", re.IGNORECASE)
-_SEARCH = re.compile(r"\b(find|search|look for|which)\b|查找|搜索|哪个", re.IGNORECASE)
-_NAVIGATION = re.compile(r"\b(where|navigate|screen|page|how do i)\b|在哪里|页面|怎么进入", re.IGNORECASE)
+_SEARCH = re.compile(
+    r"\b(find|search|look for|which|show me|list|how many|count|do you have|are there|can you see)\b"
+    r"|查找|搜索|哪个|列出|有多少|多少|查看|看看|有没有",
+    re.IGNORECASE,
+)
+_NAVIGATION = re.compile(
+    r"\b(navigate|open|take me to|screen|page|how do i)\b|在哪里|页面|怎么进入|打开|带我去",
+    re.IGNORECASE,
+)
+_COUNT = re.compile(r"\b(how many|count|number of|are there|do you have)\b|有多少|多少|数量", re.IGNORECASE)
 
 
 @router.post("/generate", response_model=AgentChatResponse)
@@ -104,6 +112,15 @@ async def _generate(
             return _missing_references(body)
     else:
         sources = ()
+
+    if route == "SEARCH" and _COUNT.search(body.message):
+        return _response(
+            body,
+            route=route,
+            response_status="SUCCEEDED",
+            answer=_count_answer(body.message, sources),
+            sources=sources,
+        )
 
     if llm is not None:
         try:
@@ -183,6 +200,21 @@ def _fallback(route: Route, sources: tuple[GroundedSource, ...]) -> str:
     if route == "SEARCH":
         return f"I found these authorised FoodMind sources: {', '.join(titles)}."
     return f"The shared FoodMind sources are: {', '.join(titles)}."
+
+
+def _count_answer(message: str, sources: tuple[GroundedSource, ...]) -> str:
+    place_question = bool(
+        re.search(r"\b(?:restaurant|restaurants|place|places)\b|餐厅|饭店|地点|场所", message, re.IGNORECASE)
+    )
+    label = "authorised places" if place_question else "authorised FoodMind items"
+    has_next = any(item.grounding_metadata.get("hasNext") is True for item in sources)
+    prefix = "at least " if has_next else ""
+    if place_question:
+        return (
+            f"I can see {prefix}{len(sources)} {label} in FoodMind. "
+            "FoodMind's catalogue groups restaurants, cafés, and hawker venues as places."
+        )
+    return f"I can see {prefix}{len(sources)} {label} in FoodMind."
 
 
 def _tool_unavailable(body: AgentChatRequest) -> AgentChatResponse:
