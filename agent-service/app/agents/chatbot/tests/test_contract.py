@@ -160,11 +160,11 @@ def test_count_question_routes_to_authorised_search_instead_of_navigation() -> N
     body = response.json()
     assert body["route"] == "SEARCH"
     assert body["responseStatus"] == "SUCCEEDED"
-    assert body["answer"].startswith("I can see 1 authorised places")
+    assert body["answer"].startswith("I can see 1 places")
     assert tools.search_calls[0]["query"] == "Can you see how many restaurants are there?"
 
 
-def test_out_of_scope_guard_precedes_requested_route() -> None:
+def test_recommendation_question_is_answered_readonly_instead_of_out_of_scope() -> None:
     payload = request_payload(requested_route="SEARCH")
     payload["message"] = "recommend what I should cook"
     with TestClient(create_app(settings=settings(), backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
@@ -174,8 +174,8 @@ def test_out_of_scope_guard_precedes_requested_route() -> None:
             json=payload,
         )
     assert response.status_code == 200
-    assert response.json()["route"] == "OUT_OF_SCOPE"
-    assert response.json()["responseStatus"] == "UNSUPPORTED"
+    assert response.json()["route"] == "SEARCH"
+    assert response.json()["responseStatus"] == "FALLBACK_SUCCEEDED"
 
 
 def test_search_tool_failure_returns_source_free_navigation() -> None:
