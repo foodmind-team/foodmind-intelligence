@@ -12,7 +12,7 @@
       "env": {
         "INFERENCE_APP_ENV": "local",
         "INFERENCE_INTERNAL_SERVICE_TOKEN": "local-inference-only",
-        "INFERENCE_MODEL_PACKAGE_DIR": "D:\\DevRepo\\MyProjects\\FoodMind\\.tmp\\model-package"
+        "INFERENCE_MODEL_PACKAGE_DIR": "D:\\DevRepo\\MyProjects\\FoodMind\\foodmind-ml\\.tmp\\runtime\\model-package"
       }
     },
     {
@@ -26,6 +26,7 @@
       "env": {
         "RECOMMENDATION_AGENT_APP_ENV": "local",
         "RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN": "local-recommendation-token",
+        "RECOMMENDATION_AGENT_LLM_ENABLED": "false",
         "RECOMMENDATION_AGENT_INFERENCE_BASE_URL": "http://127.0.0.1:8002",
         "RECOMMENDATION_AGENT_INFERENCE_SERVICE_TOKEN": "local-inference-only",
         "RECOMMENDATION_AGENT_ENABLE_V1_COMPATIBILITY": "false"
