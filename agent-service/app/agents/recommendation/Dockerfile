@@ -28,9 +28,9 @@ RUN uv sync --frozen --no-dev \
     && find /app -type d -name __pycache__ -prune -exec rm -rf {} +
 
 USER 10001:10001
-EXPOSE 8000
+EXPOSE 8004
 
 HEALTHCHECK --interval=10s --timeout=2s --start-period=5s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=1).read()"]
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health/live', timeout=1).read()"]
 
-CMD ["uvicorn", "recommendation_agent.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--limit-concurrency", "40", "--timeout-graceful-shutdown", "5", "--no-access-log"]
+CMD ["uvicorn", "recommendation_agent.main:app", "--host", "0.0.0.0", "--port", "8004", "--workers", "1", "--limit-concurrency", "40", "--timeout-graceful-shutdown", "5", "--no-access-log"]

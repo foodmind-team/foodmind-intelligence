@@ -93,7 +93,7 @@ async def parse_recipe_import(
         return await service.execute(body)
     except InvalidRecipeImportAnswers as exception:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "INVALID_RECIPE_IMPORT_ANSWERS", "message": str(exception)},
         ) from exception
 

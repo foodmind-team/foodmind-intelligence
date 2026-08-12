@@ -130,6 +130,16 @@ class RecommendationInferenceHttpClient:
         )
         return result
 
+    async def is_ready(self) -> bool:
+        try:
+            response = await self._client.get(
+                self._settings.inference_readiness_path,
+                timeout=min(0.5, self._settings.inference_connect_timeout_ms / 1000.0),
+            )
+            return response.status_code == 200
+        except httpx.HTTPError:
+            return False
+
     async def _send_once(self, request: httpx.Request, *, timeout_seconds: float) -> bytes:
         response: httpx.Response | None = None
         try:

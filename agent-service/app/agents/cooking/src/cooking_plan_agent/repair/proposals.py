@@ -86,16 +86,9 @@ def propose_ingredient_substitutions(
             RepairOption(
                 option_id=f"repair_purchase_{shortage.ingredient_name}_{uuid4().hex[:6]}",
                 option_type="purchase",
-                description=(
-                    f"Purchase {shortage.shortage} {shortage.unit} of "
-                    f"'{shortage.ingredient_name}'"
-                ),
-                changes=(
-                    f"Add {shortage.shortage} {shortage.unit} of {shortage.ingredient_name} to shopping list",
-                ),
-                effects=(
-                    "Add the purchased quantity to real inventory before revalidation",
-                ),
+                description=(f"Purchase {shortage.shortage} {shortage.unit} of '{shortage.ingredient_name}'"),
+                changes=(f"Add {shortage.shortage} {shortage.unit} of {shortage.ingredient_name} to shopping list",),
+                effects=("Add the purchased quantity to real inventory before revalidation",),
                 payload={
                     "ingredient_name": shortage.ingredient_name,
                     "quantity": _json_number(shortage.shortage),

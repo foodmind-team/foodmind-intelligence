@@ -42,7 +42,7 @@ class LLMClient:
             ),
         )
 
-    async def chat(self, messages: list[dict[str, str]]) -> str:
+    async def chat(self, messages: list[dict[str, str]], *, timeout_seconds: float | None = None) -> str:
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
@@ -54,7 +54,7 @@ class LLMClient:
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         try:
-            async with asyncio.timeout(self._timeout_seconds):
+            async with asyncio.timeout(min(self._timeout_seconds, timeout_seconds or self._timeout_seconds)):
                 for attempt in range(self._max_retries + 1):
                     try:
                         response = await self._client.post(self._url, json=payload, headers=headers)

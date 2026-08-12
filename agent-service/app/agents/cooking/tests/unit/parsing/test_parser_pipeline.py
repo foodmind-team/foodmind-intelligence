@@ -161,9 +161,7 @@ class TestRecipeExtractor:
         gaps = find_recipe_gaps(candidate)
         inferred = infer_local(candidate, gaps)
         unresolved_critical = [
-            gap
-            for gap in inferred.unresolved_gaps
-            if gap.gap_class in (GapClass.CRITICAL, GapClass.SAFETY_CRITICAL)
+            gap for gap in inferred.unresolved_gaps if gap.gap_class in (GapClass.CRITICAL, GapClass.SAFETY_CRITICAL)
         ]
         assert unresolved_critical == []
 

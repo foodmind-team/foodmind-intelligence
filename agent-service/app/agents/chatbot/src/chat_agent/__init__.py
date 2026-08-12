@@ -1,2 +1,1 @@
 """FoodMind Chat Agent."""
-

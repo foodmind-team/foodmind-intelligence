@@ -1,6 +1,7 @@
 """Environment-backed Chat Agent settings."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -8,6 +9,8 @@ from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _LOCAL_SERVICE_TOKEN = "local-chat-token"  # noqa: S105 - documented local-only sentinel
+_LOCAL_BACKEND_TOKEN = "local-development-service-token"  # noqa: S105 - documented local-only sentinel
+AGENTS_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 
 
 class Settings(BaseSettings):
@@ -30,11 +33,15 @@ class Settings(BaseSettings):
     max_active_requests: int = Field(default=20, ge=1, le=1000)
     max_queued_requests: int = Field(default=100, ge=0, le=10000)
     queue_timeout_seconds: float = Field(default=2.0, gt=0.0, le=30.0)
+    backend_base_url: str = "http://127.0.0.1:8080"
+    backend_service_token: SecretStr = SecretStr(_LOCAL_BACKEND_TOKEN)
+    backend_timeout_seconds: float = Field(default=5.0, gt=0.0, le=30.0)
+    backend_max_response_bytes: int = Field(default=65_536, ge=1_024, le=1_048_576)
 
     model_config = SettingsConfigDict(
         env_prefix="CHAT_AGENT_",
-        env_file=".env",
-        extra="forbid",
+        env_file=AGENTS_ENV_FILE,
+        extra="ignore",
         frozen=True,
     )
 
@@ -45,10 +52,18 @@ class Settings(BaseSettings):
             raise ValueError("LLM base URL must be an absolute HTTP(S) URL")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("LLM base URL must not contain credentials, query, or fragment")
+        backend = urlsplit(self.backend_base_url)
+        if backend.scheme not in {"http", "https"} or not backend.hostname:
+            raise ValueError("Backend base URL must be an absolute HTTP(S) URL")
+        if backend.username or backend.password or backend.query or backend.fragment:
+            raise ValueError("Backend base URL must not contain credentials, query, or fragment")
         if self.environment not in {"local", "test", "ci"}:
             service_token = self.internal_service_token.get_secret_value()
             if service_token == _LOCAL_SERVICE_TOKEN or len(service_token) < self.min_service_token_length:
                 raise ValueError("a strong internal service token is required")
+            backend_token = self.backend_service_token.get_secret_value()
+            if backend_token == _LOCAL_BACKEND_TOKEN or len(backend_token) < self.min_service_token_length:
+                raise ValueError("a strong Backend tool service token is required")
             llm_key = self.llm_api_key.get_secret_value() if self.llm_api_key is not None else ""
             if self.llm_enabled and not llm_key:
                 raise ValueError("an LLM API key is required when LLM use is enabled")

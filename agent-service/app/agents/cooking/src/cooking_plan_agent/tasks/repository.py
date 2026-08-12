@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from cooking_plan_agent.tasks.models import TaskRecord, TaskStatus, utc_now
@@ -206,6 +207,8 @@ class SQLiteTaskRepository(TaskRepository):
         import aiosqlite
 
         if self._conn is None:
+            if self._db_path != ":memory:" and not self._db_path.startswith("file:"):
+                Path(self._db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
             self._conn = await aiosqlite.connect(self._db_path)
             await self._conn.executescript(self._SCHEMA)
             await self._migrate_columns()

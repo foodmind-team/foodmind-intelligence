@@ -21,6 +21,7 @@ def test_production_disables_interactive_docs_and_keeps_health_safe() -> None:
         ready = client.get("/health/ready")
     rendered = live.text + ready.text
     assert live.status_code == 200
-    assert ready.status_code == 200
+    assert ready.status_code == 503
+    assert ready.json()["checks"]["inference"] is False
     assert "production-agent-token-value" not in rendered
     assert "inference.internal" not in rendered

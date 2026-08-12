@@ -382,7 +382,14 @@ class _MixedScriptLLMClient:
             "dish_name": "番茄炒蛋" if chinese else "Garlic Tofu",
             "original_servings": 2,
             "source_language": "zho",
-            "ingredients": [{"raw_text": "3个鸡蛋" if chinese else "400 g firm tofu", "name": "鸡蛋" if chinese else "firm tofu", "quantity": 3 if chinese else 400, "unit": "piece" if chinese else "g"}],
+            "ingredients": [
+                {
+                    "raw_text": "3个鸡蛋" if chinese else "400 g firm tofu",
+                    "name": "鸡蛋" if chinese else "firm tofu",
+                    "quantity": 3 if chinese else 400,
+                    "unit": "piece" if chinese else "g",
+                }
+            ],
             "steps": [{"instruction": "炒熟鸡蛋。" if chinese else "Pan-fry the tofu."}],
         }
 

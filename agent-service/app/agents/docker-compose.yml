@@ -1,12 +1,15 @@
 services:
   recommendation:
     build: ./recommendation
+    env_file:
+      - path: ./.env
+        required: false
     ports:
-      - "8001:8000"
+      - "8004:8004"
     environment:
       RECOMMENDATION_AGENT_APP_ENV: local
       RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN: local-recommendation-token
-      RECOMMENDATION_AGENT_LLM_ENABLED: "false"
+      RECOMMENDATION_AGENT_LLM_ENABLED: "true"
       RECOMMENDATION_AGENT_INFERENCE_BASE_URL: http://inference:8002
       RECOMMENDATION_AGENT_INFERENCE_SERVICE_TOKEN: local-inference-only
     depends_on:
@@ -34,8 +37,11 @@ services:
 
   cooking:
     build: ./cooking
+    env_file:
+      - path: ./.env
+        required: false
     ports:
-      - "8003:8000"
+      - "8003:8003"
     environment:
       COOKING_PLAN_ENVIRONMENT: local
       COOKING_PLAN_INTERNAL_SERVICE_TOKEN: local-cooking-token
@@ -43,19 +49,24 @@ services:
       COOKING_PLAN_LLM_ENABLED: "true"
       COOKING_PLAN_LLM_BASE_URL: https://api.deepseek.com
       COOKING_PLAN_LLM_MODEL: deepseek-chat
-      COOKING_PLAN_LLM_API_KEY: ${DEEPSEEK_API_KEY:-}
       COOKING_PLAN_TASK_API_ENABLED: "true"
     restart: unless-stopped
 
   chatbot:
     build: ./chatbot
+    env_file:
+      - path: ./.env
+        required: false
     ports:
-      - "8004:8004"
+      - "8001:8001"
     environment:
       CHAT_AGENT_ENVIRONMENT: local
       CHAT_AGENT_INTERNAL_SERVICE_TOKEN: local-chat-token
       CHAT_AGENT_LLM_ENABLED: "true"
       CHAT_AGENT_LLM_BASE_URL: https://api.deepseek.com
       CHAT_AGENT_LLM_MODEL: deepseek-chat
-      CHAT_AGENT_LLM_API_KEY: ${DEEPSEEK_API_KEY:-}
+      CHAT_AGENT_BACKEND_BASE_URL: ${CHAT_AGENT_BACKEND_BASE_URL:-http://host.docker.internal:8080}
+      CHAT_AGENT_BACKEND_SERVICE_TOKEN: ${CHAT_AGENT_BACKEND_SERVICE_TOKEN:-local-development-service-token}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped

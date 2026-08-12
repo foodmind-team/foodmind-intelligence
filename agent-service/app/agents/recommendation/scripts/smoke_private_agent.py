@@ -33,6 +33,10 @@ def fixture_smoke() -> None:
 
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
+        if request.method == "GET" and request.url.path == "/health/ready":
+            return httpx.Response(200, json={"status": "ready"})
+        if request.method != "POST" or request.url.path != "/internal/v1/recommendations/score":
+            return httpx.Response(404)
         calls += 1
         if request.headers.get("authorization") != "Bearer fixture-inference-token":
             return httpx.Response(401)

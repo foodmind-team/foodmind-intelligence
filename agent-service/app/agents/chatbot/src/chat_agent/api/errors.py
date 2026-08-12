@@ -30,4 +30,3 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "retryable": error.status_code >= 500,
             },
         )
-

@@ -17,6 +17,13 @@ AGENT_FIXTURES = REPOSITORY_ROOT / "contracts/internal/agent/recommendation/v2/f
 GOLDEN_FIXTURES = REPOSITORY_ROOT / "artifacts/test-fixtures/recommendation/agent-golden-v2"
 
 
+@pytest.fixture(autouse=True)
+def disable_live_llm_in_offline_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never let the developer's shared DeepSeek key escape into offline tests."""
+
+    monkeypatch.setenv("RECOMMENDATION_AGENT_LLM_ENABLED", "false")
+
+
 def load_json(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(value, dict)

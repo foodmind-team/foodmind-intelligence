@@ -1,5 +1,6 @@
 """Canonical safe API error mapping."""
 
+import logging
 import uuid
 from typing import Any
 
@@ -8,6 +9,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from recommendation_agent.domain.errors import AgentError, ErrorCode
+
+logger = logging.getLogger(__name__)
 
 
 def _identifiers(request: Request) -> tuple[str, str, str, str]:
@@ -46,6 +49,15 @@ def _safe_http_code(exc: HTTPException) -> str:
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AgentError)
     async def handle_agent_error(request: Request, exc: AgentError) -> JSONResponse:
+        request_id, _session_id, trace_id, _agent_trace_id = _identifiers(request)
+        logger.warning(
+            "recommendation request failed code=%s status=%s retryable=%s request_id=%s trace_id=%s",
+            exc.code.value,
+            exc.http_status,
+            exc.retryable,
+            request_id,
+            trace_id,
+        )
         headers = {"Retry-After": "1"} if exc.code is ErrorCode.SERVICE_OVERLOADED else None
         return JSONResponse(
             status_code=exc.http_status,

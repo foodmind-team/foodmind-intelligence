@@ -19,6 +19,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from cooking_plan_agent.domain.errors import DomainErrorCode, public_message_for
 from cooking_plan_agent.domain.models import (
+    Assumption,
     ConfirmationAnswersRequest,
     ExtractedRecipeCandidate,
     FailedPlanResponse,
@@ -27,6 +28,7 @@ from cooking_plan_agent.domain.models import (
     PreprocessRecipesRequest,
     PreprocessRecipesResponse,
     RecipeGap,
+    RecipeInput,
 )
 from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.state import PlanState
@@ -68,9 +70,8 @@ class GenerateCookingPlanService:
         import asyncio
 
         from cooking_plan_agent.parsing.extractor import RecipeExtractor as RuleExtractor
-        from cooking_plan_agent.parsing.gaps import find_recipe_gaps
+        from cooking_plan_agent.parsing.gaps import GapClass, find_recipe_gaps
         from cooking_plan_agent.parsing.inference import (
-            GapClass,
             InferenceResult,
             _detect_primary_technique,
             _infer_duration,
@@ -82,7 +83,10 @@ class GenerateCookingPlanService:
 
         extractor = RuleExtractor()
 
-        def _fill_gap(candidate, gap):
+        def _fill_gap(
+            candidate: ExtractedRecipeCandidate,
+            gap: RecipeGap,
+        ) -> tuple[RecipeGap, Assumption] | None:
             technique = _detect_primary_technique(candidate)
             if "heat_level" in gap.field_path:
                 return _infer_heat(gap, candidate, technique)
@@ -96,7 +100,7 @@ class GenerateCookingPlanService:
                 return _infer_resources(gap, technique)
             return None
 
-        async def _process_one(recipe) -> ExtractedRecipeCandidate:
+        async def _process_one(recipe: RecipeInput) -> ExtractedRecipeCandidate:
             candidate = await extractor.extract(recipe.text)
             filled: list[RecipeGap] = []
             for gap in find_recipe_gaps(candidate):

@@ -1,2 +1,1 @@
 """Chat Agent domain contracts."""
-

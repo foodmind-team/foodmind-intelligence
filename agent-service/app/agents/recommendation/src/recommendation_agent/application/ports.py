@@ -33,7 +33,12 @@ class ReasonDeriver(Protocol):
 
 
 class ExplanationRenderer(Protocol):
-    async def render(self, candidates: tuple[ReasonedCandidate, ...]) -> tuple[RenderedCandidate, ...]: ...
+    async def render(
+        self,
+        candidates: tuple[ReasonedCandidate, ...],
+        *,
+        budget: DeadlineBudget | None = None,
+    ) -> tuple[RenderedCandidate, ...]: ...
 
 
 class AgentWorkflow(Protocol):

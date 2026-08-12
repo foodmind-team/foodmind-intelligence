@@ -12,24 +12,40 @@
       "env": {
         "INFERENCE_APP_ENV": "local",
         "INFERENCE_INTERNAL_SERVICE_TOKEN": "local-inference-only",
-        "INFERENCE_MODEL_PACKAGE_DIR": "D:\\DevRepo\\MyProjects\\FoodMind\\.tmp\\model-package"
+        "INFERENCE_MODEL_PACKAGE_DIR": "D:\\DevRepo\\MyProjects\\FoodMind\\foodmind-ml\\.tmp\\runtime\\model-package"
       }
     },
     {
-      "name": "recommendation-agent :8001",
+      "name": "recommendation-agent :8004",
       "type": "debugpy",
       "request": "launch",
       "module": "uvicorn",
-      "args": ["recommendation_agent.main:app", "--host", "127.0.0.1", "--port", "8001"],
+      "args": ["recommendation_agent.main:app", "--host", "127.0.0.1", "--port", "8004"],
       "cwd": "${workspaceFolder}/agent-service/app/agents/recommendation",
       "python": "${workspaceFolder}/agent-service/app/agents/recommendation/.venv/Scripts/python.exe",
       "env": {
         "RECOMMENDATION_AGENT_APP_ENV": "local",
-        "RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN": "local-development-token",
+        "RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN": "local-recommendation-token",
+        "RECOMMENDATION_AGENT_LLM_ENABLED": "true",
         "RECOMMENDATION_AGENT_INFERENCE_BASE_URL": "http://127.0.0.1:8002",
         "RECOMMENDATION_AGENT_INFERENCE_SERVICE_TOKEN": "local-inference-only",
-        "RECOMMENDATION_AGENT_ENABLE_V1_COMPATIBILITY": "true",
-        "RECOMMENDATION_AGENT_COMPATIBILITY_MODEL_KEY_SECRET": "local-v1-compatibility-model-key"
+        "RECOMMENDATION_AGENT_ENABLE_V1_COMPATIBILITY": "false"
+      }
+    },
+    {
+      "name": "chatbot :8001",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["chat_agent.main:app", "--host", "127.0.0.1", "--port", "8001"],
+      "cwd": "${workspaceFolder}/agent-service/app/agents/chatbot",
+      "python": "${workspaceFolder}/agent-service/app/agents/chatbot/.venv/Scripts/python.exe",
+      "env": {
+        "CHAT_AGENT_ENVIRONMENT": "local",
+        "CHAT_AGENT_INTERNAL_SERVICE_TOKEN": "local-chat-token",
+        "CHAT_AGENT_LLM_ENABLED": "true",
+        "CHAT_AGENT_BACKEND_BASE_URL": "http://127.0.0.1:8080",
+        "CHAT_AGENT_BACKEND_SERVICE_TOKEN": "local-development-service-token"
       }
     },
     {
@@ -43,7 +59,7 @@
       "env": {
         "COOKING_PLAN_ENVIRONMENT": "local",
         "COOKING_PLAN_INTERNAL_SERVICE_TOKEN": "local-cooking-token",
-        "COOKING_PLAN_LLM_ENABLED": "false",
+        "COOKING_PLAN_LLM_ENABLED": "true",
         "COOKING_PLAN_WEB_RESEARCH_ENABLED": "false",
         "COOKING_PLAN_EXPLANATION_ENABLED": "false",
         "COOKING_PLAN_TASK_API_ENABLED": "true",

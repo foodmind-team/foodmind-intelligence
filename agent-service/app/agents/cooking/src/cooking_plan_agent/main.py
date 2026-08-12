@@ -145,7 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         llm_client = LLMClient(
             base_url=settings.llm_base_url,
             model=settings.llm_model,
-            api_key=settings.llm_api_key,
+            api_key=settings.llm_api_key.get_secret_value() if settings.llm_api_key else None,
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
             temperature=settings.llm_temperature,
@@ -498,9 +498,10 @@ def create_app() -> FastAPI:
         """
         settings_ok = getattr(application.state, "settings_validated", False)
         graph_ok = getattr(application.state, "graph_compiled", False)
+        task_api_ok = not settings.task_api_enabled or getattr(application.state, "task_service", None) is not None
         shutting_down = _shutting_down
 
-        ready = settings_ok and graph_ok and not shutting_down
+        ready = settings_ok and graph_ok and task_api_ok and not shutting_down
         status_code = 200 if ready else 503
 
         return JSONResponse(
@@ -510,6 +511,7 @@ def create_app() -> FastAPI:
                 "checks": {
                     "settings_validated": settings_ok,
                     "graph_compiled": graph_ok,
+                    "task_api_ready": task_api_ok,
                     "shutting_down": shutting_down,
                 },
             },

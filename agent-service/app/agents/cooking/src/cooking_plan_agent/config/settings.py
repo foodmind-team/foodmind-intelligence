@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BeforeValidator
+from pydantic import AliasChoices, BeforeValidator, Field, SecretStr
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -89,7 +89,10 @@ class Settings(BaseSettings):
     llm_enabled: bool = True  # master switch; False keeps rule-based pipeline
     llm_base_url: str = "https://api.deepseek.com"  # OpenAI-compatible base URL
     llm_model: str = "deepseek-chat"  # model name
-    llm_api_key: str | None = None  # bearer token for cloud providers (Ollama: None)
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("COOKING_PLAN_LLM_API_KEY", "DEEPSEEK_API_KEY"),
+    )  # bearer token for cloud providers (Ollama: None)
     # Recipe extraction returns a sizeable JSON document.  Allow cloud models
     # enough time to complete it; callers with interactive deadlines can
     # override this through COOKING_PLAN_LLM_TIMEOUT_SECONDS.
@@ -220,7 +223,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="COOKING_PLAN_",
         env_file=AGENTS_ENV_FILE,
-        extra="forbid",  # if the env file contains extra variables, throw an error
+        # The file is shared by all intelligence agents. Ignore unrelated keys;
+        # env_prefix still limits this service to COOKING_PLAN_* values.
+        extra="ignore",
     )
 
 

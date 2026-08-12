@@ -28,6 +28,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.10.0",
     "hypothesis>=6.161.5",
     "mypy>=2.3.0",
     "pytest>=9.1.1",
@@ -38,6 +39,9 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+filterwarnings = [
+    "error::DeprecationWarning:cooking_plan_agent.*",
+]
 
 [tool.fastapi]
 

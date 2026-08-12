@@ -135,7 +135,13 @@ class FixtureReasons(ReasonDeriver):
 class FixtureRenderer(ExplanationRenderer):
     calls: int = 0
 
-    async def render(self, candidates: tuple[ReasonedCandidate, ...]) -> tuple[RenderedCandidate, ...]:
+    async def render(
+        self,
+        candidates: tuple[ReasonedCandidate, ...],
+        *,
+        budget: DeadlineBudget | None = None,
+    ) -> tuple[RenderedCandidate, ...]:
+        del budget
         self.calls += 1
         return tuple(RenderedCandidate(candidate, "This matches your saved preferences.") for candidate in candidates)
 
