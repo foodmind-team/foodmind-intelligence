@@ -9,7 +9,7 @@ Copy `.env.example` to `.env`, set `CHAT_AGENT_LLM_API_KEY` (or the shared
 
 ```shell
 uv sync
-uv run uvicorn chat_agent.main:app --host 0.0.0.0 --port 8004
+uv run uvicorn chat_agent.main:app --host 0.0.0.0 --port 8001
 ```
 
 For a repeatable local service, run this from the `foodmind-intelligence`

@@ -12,7 +12,7 @@ uv run ruff format --check .
 uv run ruff check .
 uv run mypy src tests
 uv run pytest -v
-uv run uvicorn recommendation_agent.main:app --host 127.0.0.1 --port 8001
+uv run uvicorn recommendation_agent.main:app --host 127.0.0.1 --port 8004
 ```
 
 The private generation boundary is

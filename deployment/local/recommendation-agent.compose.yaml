@@ -5,7 +5,7 @@ services:
     read_only: true
     user: "10001:10001"
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8004:8000"
     environment:
       RECOMMENDATION_AGENT_APP_ENV: local
       RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN: ${RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN:?required}

@@ -2,7 +2,7 @@ services:
   recommendation:
     build: ./recommendation
     ports:
-      - "8001:8000"
+      - "8004:8000"
     environment:
       RECOMMENDATION_AGENT_APP_ENV: local
       RECOMMENDATION_AGENT_INTERNAL_SERVICE_TOKEN: local-recommendation-token
@@ -50,7 +50,7 @@ services:
   chatbot:
     build: ./chatbot
     ports:
-      - "8004:8004"
+      - "8001:8004"
     environment:
       CHAT_AGENT_ENVIRONMENT: local
       CHAT_AGENT_INTERNAL_SERVICE_TOKEN: local-chat-token

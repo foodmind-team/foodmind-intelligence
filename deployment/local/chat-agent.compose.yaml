@@ -7,7 +7,7 @@ services:
       - path: ../../agent-service/app/agents/.env
         required: false
     ports:
-      - "127.0.0.1:${CHAT_AGENT_PORT:-8004}:8004"
+      - "127.0.0.1:${CHAT_AGENT_PORT:-8001}:8004"
     environment:
       CHAT_AGENT_ENVIRONMENT: local
       CHAT_AGENT_INTERNAL_SERVICE_TOKEN: ${CHAT_AGENT_INTERNAL_SERVICE_TOKEN:?required}
