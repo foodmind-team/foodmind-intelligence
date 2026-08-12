@@ -30,11 +30,11 @@ class FakeBackendTools:
             return ()
         return (
             GroundedSource(
-                self.search_source_type,
-                uuid4(),
-                "Oat drink",
-                "Unsweetened oat drink",
-                {"origin": "backend_search"},
+                source_type=self.search_source_type,
+                source_id=uuid4(),
+                title="Oat drink",
+                snippet="Unsweetened oat drink",
+                grounding_metadata={"origin": "backend_search"},
             ),
         )
 
@@ -44,11 +44,11 @@ class FakeBackendTools:
             raise BackendToolError("unavailable")
         return (
             GroundedSource(
-                "PLACE",
-                uuid4(),
-                "Orchard Garden Kitchen",
-                "Orchard",
-                {"origin": "backend_explore", "hasNext": False},
+                source_type="PLACE",
+                source_id=uuid4(),
+                title="Orchard Garden Kitchen",
+                snippet="Orchard",
+                grounding_metadata={"origin": "backend_explore", "hasNext": False},
             ),
         )
 
@@ -59,11 +59,11 @@ class FakeBackendTools:
         reference_id = kwargs["reference_ids"][0]
         return (
             GroundedSource(
-                "FOOD_PRODUCT",
-                uuid4(),
-                "Oat drink",
-                "Unsweetened oat drink",
-                {"referenceId": str(reference_id), "origin": "backend_reference_resolve"},
+                source_type="FOOD_PRODUCT",
+                source_id=uuid4(),
+                title="Oat drink",
+                snippet="Unsweetened oat drink",
+                grounding_metadata={"referenceId": str(reference_id), "origin": "backend_reference_resolve"},
             ),
         )
 

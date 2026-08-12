@@ -165,6 +165,7 @@ def _messages(body: AgentChatRequest, route: Route, sources: tuple[GroundedSourc
             "sourceType": item.source_type,
             "sourceId": str(item.source_id),
             "title": item.title,
+            "subtitle": item.subtitle,
             "snippet": item.snippet,
         }
         for item in sources[:10]

@@ -126,7 +126,9 @@ def _search_source(value: Any) -> GroundedSource:
             source_type=_source_type(value.get("sourceType")),
             source_id=UUID(str(value.get("sourceId"))),
             title=value.get("title") if isinstance(value.get("title"), str) else None,
+            subtitle=value.get("subtitle") if isinstance(value.get("subtitle"), str) else None,
             snippet=value.get("snippet") if isinstance(value.get("snippet"), str) else None,
+            occurred_at=value.get("occurredAt") if isinstance(value.get("occurredAt"), str) else None,
             grounding_metadata={"origin": "backend_search"},
         )
     except (TypeError, ValueError) as exc:
@@ -144,11 +146,13 @@ def _search_result(raw: Any) -> tuple[tuple[GroundedSource, ...], bool]:
 
 def _with_page_metadata(source: GroundedSource, has_next: bool) -> GroundedSource:
     return GroundedSource(
-        source.source_type,
-        source.source_id,
-        source.title,
-        source.snippet,
-        {**source.grounding_metadata, "hasNext": has_next},
+        source_type=source.source_type,
+        source_id=source.source_id,
+        title=source.title,
+        subtitle=source.subtitle,
+        snippet=source.snippet,
+        occurred_at=source.occurred_at,
+        grounding_metadata={**source.grounding_metadata, "hasNext": has_next},
     )
 
 
