@@ -155,6 +155,25 @@ class TestProposeIngredientSubstitutions:
             assert opt.effects
             assert opt.revalidation_status == "validated"
 
+    def test_long_multilingual_ingredient_uses_bounded_ascii_option_id(self):
+        ingredient_name = "超长食材名称 with punctuation / and spaces " * 20
+        shortages = (
+            IngredientFeasibility(
+                ingredient_name=ingredient_name,
+                required=Decimal(2),
+                available=Decimal(0),
+                shortage=Decimal(2),
+                unit="piece",
+            ),
+        )
+
+        option = propose_ingredient_substitutions(shortages)[0]
+
+        assert len(option.option_id) <= 128
+        assert option.option_id.isascii()
+        assert option.option_id.startswith("repair_purchase_")
+        assert option.payload["ingredient_name"] == ingredient_name.strip()
+
 
 # ======================================================================
 # 5.19  propose_portion_adjustments
@@ -294,6 +313,13 @@ class TestProposeEquipmentAlternatives:
 
     def test_empty_missing(self):
         assert propose_equipment_alternatives(()) == ()
+
+    def test_long_unknown_equipment_uses_bounded_option_id(self):
+        option = propose_equipment_alternatives(("未知设备" * 100,))[0]
+
+        assert len(option.option_id) <= 128
+        assert option.option_id.isascii()
+        assert option.option_id.startswith("repair_noalt_")
 
 
 # ======================================================================

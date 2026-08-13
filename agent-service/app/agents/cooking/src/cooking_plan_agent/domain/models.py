@@ -510,7 +510,7 @@ class FeasibilityReport(StrictModel):
 class RepairOption(StrictModel):
     """A validated choice the user can select to resolve infeasibility."""
 
-    option_id: str
+    option_id: Annotated[str, Field(min_length=1, max_length=128)]
     option_type: str  # "substitute_ingredient" | "reduce_servings" | "alternative_equipment" | "replace_dish" | "extend_time" | "purchase"
     description: str
     changes: tuple[str, ...]

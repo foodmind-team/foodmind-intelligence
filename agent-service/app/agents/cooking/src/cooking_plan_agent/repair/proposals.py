@@ -2,12 +2,36 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from decimal import ROUND_FLOOR, Decimal
 from uuid import uuid4
 
 from cooking_plan_agent.domain.models import FeasibilityReport, IngredientFeasibility, RepairOption
 from cooking_plan_agent.repair.catalogs import _EQUIPMENT_ALTERNATIVES, _INGREDIENT_SUBSTITUTIONS
 from cooking_plan_agent.repair.models import RepairValidation, Shortage
+
+_OPTION_ID_MAX_LENGTH = 128
+_OPTION_ID_HASH_LENGTH = 12
+_OPTION_ID_RANDOM_LENGTH = 6
+_OPTION_ID_SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
+
+
+def _bounded_option_id(prefix: str, raw_label: str) -> str:
+    """Build an ASCII option ID that always fits the public persistence contract.
+
+    User-provided ingredient and equipment names belong in the option payload,
+    not unbounded protocol identifiers. Keep a short readable slug, plus a
+    content hash and random suffix so separately generated options remain
+    collision-resistant without exceeding the Backend's 128-character ID cap.
+    """
+
+    digest = hashlib.sha256(raw_label.encode("utf-8")).hexdigest()[:_OPTION_ID_HASH_LENGTH]
+    suffix = uuid4().hex[:_OPTION_ID_RANDOM_LENGTH]
+    slug = _OPTION_ID_SLUG_PATTERN.sub("_", raw_label.casefold()).strip("_") or "item"
+    reserved = len(prefix) + len(digest) + len(suffix) + 3
+    slug = slug[: max(1, _OPTION_ID_MAX_LENGTH - reserved)].rstrip("_") or "item"
+    return f"{prefix}_{slug}_{digest}_{suffix}"
 
 
 def calculate_exact_shortages(
@@ -84,7 +108,7 @@ def propose_ingredient_substitutions(
     for shortage in shortages:
         options.append(
             RepairOption(
-                option_id=f"repair_purchase_{shortage.ingredient_name}_{uuid4().hex[:6]}",
+                option_id=_bounded_option_id("repair_purchase", shortage.ingredient_name),
                 option_type="purchase",
                 description=(f"Purchase {shortage.shortage} {shortage.unit} of '{shortage.ingredient_name}'"),
                 changes=(f"Add {shortage.shortage} {shortage.unit} of {shortage.ingredient_name} to shopping list",),
@@ -204,7 +228,7 @@ def propose_equipment_alternatives(
         if not alts:
             options.append(
                 RepairOption(
-                    option_id=f"repair_noalt_{resource}_{uuid4().hex[:6]}",
+                    option_id=_bounded_option_id("repair_noalt", resource),
                     option_type="alternative_equipment",
                     description=(f"No known alternative for '{resource}'. Manual resolution required."),
                     changes=(f"Source or improvise alternative for {resource}",),
@@ -217,7 +241,7 @@ def propose_equipment_alternatives(
         for alt_name, note in alts:
             options.append(
                 RepairOption(
-                    option_id=f"repair_eq_{base_resource}_{alt_name.split()[0]}_{uuid4().hex[:6]}",
+                    option_id=_bounded_option_id("repair_eq", f"{base_resource}:{alt_name}"),
                     option_type="alternative_equipment",
                     description=(f"Use '{alt_name}' instead of '{resource}': {note}"),
                     changes=(f"Replace {resource} with {alt_name}",),
