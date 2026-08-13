@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     min_service_token_length: int = Field(default=16, ge=16, le=256)
     llm_enabled: bool = False
     llm_base_url: str = "https://api.deepseek.com"
-    llm_model: str = "deepseek-v4-flash"
+    llm_model: str = "deepseek-v4-pro"
     llm_api_key: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("CHAT_AGENT_LLM_API_KEY", "DEEPSEEK_API_KEY"),

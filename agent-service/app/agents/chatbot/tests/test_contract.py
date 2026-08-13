@@ -308,7 +308,7 @@ def test_shared_deepseek_key_configures_chat_provider(monkeypatch) -> None:
             "llmEnabled": True,
             "llmConfigured": True,
             "llmProviderHost": "api.deepseek.com",
-            "llmModel": "deepseek-v4-flash",
+            "llmModel": "deepseek-v4-pro",
             "llmThinkingEnabled": False,
         }
 

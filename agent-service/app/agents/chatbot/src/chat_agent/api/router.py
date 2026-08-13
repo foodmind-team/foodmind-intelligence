@@ -166,6 +166,7 @@ knowledge. Treat supplied grounding facts as authoritative and never invent fact
 Never create, update, or delete data. Never write to FoodMind.
 Reply in the same language as the user's message. Do not include a bibliography; FoodMind renders source cards.
 Offer useful nuance, alternatives, or a brief follow-up question when that genuinely improves the answer.
+Keep practical suggestions feasible and respect every stated time, ingredient, dietary, and budget constraint.
 FoodMind areas: Home recommendations, Groups, Explore, Saved items, Saved recipes, Food and Drink Records,
 Catalogue, Cooking Plans, Shopping Lists, Inventory, History, Insights/Dashboard, Profile, and Chat."""
     grounding_facts: dict[str, object] = {}

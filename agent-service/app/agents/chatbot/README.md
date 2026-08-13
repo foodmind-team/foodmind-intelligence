@@ -39,7 +39,7 @@ Set `CHAT_AGENT_LLM_ENABLED=true` and provide `CHAT_AGENT_LLM_API_KEY` or
 starts without a provider key and returns its deterministic grounded/navigation
 fallback.
 
-The default provider model is `deepseek-v4-flash`. Chat uses non-thinking mode
+The default provider model is `deepseek-v4-pro`. Chat uses non-thinking mode
 with temperature `1.3` so DeepSeek can answer naturally instead of repeating a
 fixed template; set `CHAT_AGENT_LLM_TEMPERATURE` when a different sampling style
 is required.
