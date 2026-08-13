@@ -333,6 +333,21 @@ async def parse_recipes_node(
                 candidate = await rule_extractor.extract(recipe.text)
                 candidates.append(candidate)
 
+    # Async Backend submissions intentionally skip synchronous preprocessing so
+    # the client can receive a task handle immediately. In that flow, text gap
+    # answers arrive before ``preparsed_candidates`` exist, so validate_input
+    # cannot apply them yet. Replay only those field patches against the fresh
+    # extraction result; structural decisions were already applied upstream.
+    gap_value_decisions = tuple(
+        decision for decision in request.approved_decisions if decision.option_type == "provide_gap_value"
+    )
+    if candidates and gap_value_decisions:
+        from cooking_plan_agent.repair.options import apply_approved_decisions_structured
+
+        extracted_request = request.model_copy(update={"preparsed_candidates": tuple(candidates)})
+        resolved_request = apply_approved_decisions_structured(extracted_request, gap_value_decisions)
+        candidates = list(resolved_request.preparsed_candidates)
+
     return {"extracted_candidates": tuple(candidates)}
 
 

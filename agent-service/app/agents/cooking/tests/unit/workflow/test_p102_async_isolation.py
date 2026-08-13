@@ -14,6 +14,7 @@ import pytest
 
 from cooking_plan_agent.domain.enums import HeatLevel, SolverStatus, WorkMode
 from cooking_plan_agent.domain.models import (
+    ApprovedDecision,
     CookingTask,
     ExtractedIngredient,
     ExtractedRecipeCandidate,
@@ -118,6 +119,32 @@ async def test_extraction_never_exceeds_concurrency_cap(monkeypatch) -> None:
 
     assert extractor.peak_concurrent <= 2, f"Peak concurrency {extractor.peak_concurrent} exceeded cap 2"
     assert len(result["extracted_candidates"]) == 6
+
+
+@pytest.mark.asyncio
+async def test_text_gap_answer_patches_candidate_extracted_after_async_submission() -> None:
+    """Async requests replay text answers after their deferred recipe parse."""
+    request = _request(1).model_copy(
+        update={
+            "plan_revision": "req-p102:v2",
+            "approved_decisions": (
+                ApprovedDecision(
+                    option_id="answer:gap-duration",
+                    option_type="provide_gap_value",
+                    payload={"field_path": "recipe.r1.steps[0].passive_duration_minutes", "value": "3"},
+                    plan_revision="req-p102:v2",
+                ),
+            ),
+        }
+    )
+    runtime = _FakeRuntime(type("C", (), {"recipe_extractor": _TrackingExtractor()})())
+
+    result = await parse_recipes_node({"request": request}, runtime)
+
+    step = result["extracted_candidates"][0].steps[0]
+    assert step.passive_duration_minutes == 3
+    assert step.extraction_source == "USER_CONFIRMED"
+    assert step.confidence == Decimal(1)
 
 
 # ---------------------------------------------------------------------------
