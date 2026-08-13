@@ -262,9 +262,8 @@ class TestStructuredQuestionGeneration:
         # Strategy-level repair questions still surface.
         assert any(qid.startswith("repair:") for qid in question_ids)
 
-    def test_low_confidence_assumptions_produce_choice_questions(self) -> None:
-        """Assumptions below the confidence threshold surface as required
-        CHOICE questions (accept suggested value / provide alternative)."""
+    def test_low_confidence_assumptions_are_accepted_without_questions(self) -> None:
+        """Operational assumptions remain auditable but are not user decisions."""
         recipe = RecipeIR(
             recipe_id="r1",
             dish_name="Dish",
@@ -285,24 +284,19 @@ class TestStructuredQuestionGeneration:
         )
         response = render_confirmation_response(_state(parsed_recipes=(recipe,)))
 
-        assumption_questions = [q for q in response.confirmation_questions if q.question_id.startswith("assumption:")]
-        # Only the low-confidence assumption surfaces.
-        assert len(assumption_questions) == 1
-        question = assumption_questions[0]
-        assert question.response_type == QuestionResponseType.CHOICE
-        assert question.required is True
-        option_values = {o.value for o in question.options}
-        assert option_values == {"accept", "provide_alternative"}
-        assert question.suggested_value == "Assumed 200C for baking"
+        assert response.confirmation_questions == ()
+        assert [assumption.text for assumption in response.assumptions] == [
+            "Assumed 200C for baking",
+            "Solid",
+        ]
 
-    def test_research_assumptions_always_surface(self) -> None:
-        """Research-backed assumptions surface regardless of confidence — the
-        graph only routed to confirmation because they warranted it (P1-01)."""
+    def test_research_assumptions_are_accepted_without_questions(self) -> None:
+        """Research provenance is retained without a technical confirmation."""
         research = (_assumption(text="Conflicting oven temp", confidence="0.8"),)
         response = render_confirmation_response(_state(research_assumptions=research))
 
-        assumption_questions = [q for q in response.confirmation_questions if q.question_id.startswith("assumption:")]
-        assert len(assumption_questions) == 1
+        assert response.confirmation_questions == ()
+        assert response.assumptions[0].text == "Conflicting oven temp"
 
     def test_legacy_questions_are_derived_from_structured(self) -> None:
         """Legacy questions dual-emit ``f"{prompt} ({question_id})"`` so old
