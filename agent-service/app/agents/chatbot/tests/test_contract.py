@@ -176,7 +176,7 @@ def test_count_question_routes_to_authorised_search_instead_of_navigation() -> N
     assert body["responseStatus"] == "SUCCEEDED"
     assert body["answer"] == "DeepSeek counted the authorised places."
     assert body["agentTraceId"].startswith("chat-llm-")
-    assert '\"verifiedCount\":1' in llm.calls[0]["messages"][1]["content"]
+    assert '"verifiedCount":1' in llm.calls[0]["messages"][1]["content"]
     assert "avoid canned templates" in llm.calls[0]["messages"][0]["content"]
     assert tools.search_calls[0]["query"] == "Can you see how many restaurants are there?"
 
