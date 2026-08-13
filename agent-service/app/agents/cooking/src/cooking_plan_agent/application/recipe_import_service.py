@@ -17,6 +17,7 @@ from cooking_plan_agent.domain.recipe_imports import (
 from cooking_plan_agent.parsing.recipe_imports import RecipeImportExtractor
 
 _LIST_PREFIX = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
+_DEFAULT_SERVINGS = 2
 
 
 class InvalidRecipeImportAnswers(ValueError):
@@ -53,6 +54,10 @@ class ParseRecipeImportService:
             raise InvalidRecipeImportAnswers(
                 f"A maximum of {settings.max_recipe_count} recipes can be imported at once."
             )
+        drafts = tuple(
+            draft.model_copy(update={"servings": _DEFAULT_SERVINGS}) if draft.servings is None else draft
+            for draft in drafts
+        )
 
         derived_questions = self._questions(drafts)
         current_questions = request.questions or derived_questions
@@ -97,9 +102,14 @@ class ParseRecipeImportService:
         supplied: tuple[RecipeImportQuestion, ...],
         derived: tuple[RecipeImportQuestion, ...],
     ) -> bool:
-        return {(question.question_id, question.draft_id, question.field_path) for question in supplied} == {
-            (question.question_id, question.draft_id, question.field_path) for question in derived
-        }
+        # Accept pre-deployment snapshots that still contain a servings
+        # question. Missing servings are now a deterministic operational
+        # default, but an answer already entered by the user should still win.
+        return {
+            (question.question_id, question.draft_id, question.field_path)
+            for question in supplied
+            if question.field_path != "servings"
+        } == {(question.question_id, question.draft_id, question.field_path) for question in derived}
 
     @staticmethod
     def _apply_answers(
@@ -139,14 +149,6 @@ class ParseRecipeImportService:
             label = draft.name or "this dish"
             if not draft.name:
                 questions.append(ParseRecipeImportService._question(draft, "name", "What is the dish name?"))
-            if draft.servings is None:
-                questions.append(
-                    ParseRecipeImportService._question(
-                        draft,
-                        "servings",
-                        f"How many servings does {label} make? Enter a whole number from 1 to 50.",
-                    )
-                )
             if not draft.ingredients:
                 questions.append(
                     ParseRecipeImportService._question(

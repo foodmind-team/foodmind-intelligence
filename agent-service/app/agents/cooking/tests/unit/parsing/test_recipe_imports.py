@@ -43,27 +43,16 @@ Steps:
 
 
 @pytest.mark.asyncio
-async def test_multi_dish_import_asks_for_missing_servings_then_becomes_ready() -> None:
+async def test_multi_dish_import_defaults_missing_servings_without_clarification() -> None:
     service = ParseRecipeImportService(DeterministicRecipeImportExtractor())
 
     first = await service.execute(ParseRecipeImportRequest(request_id="req-1", text=MULTI_DISH_TEXT))
 
-    assert first.status == "NEEDS_CLARIFICATION"
+    assert first.status == "READY"
     assert [draft.name for draft in first.drafts] == ["Lemon Pasta", "Tomato Salad"]
-    assert [question.question_id for question in first.questions] == ["dish-2:servings"]
-
-    completed = await service.execute(
-        ParseRecipeImportRequest(
-            request_id="req-1",
-            text=MULTI_DISH_TEXT,
-            answers=({"question_id": "dish-2:servings", "value": "4"},),
-        )
-    )
-
-    assert completed.status == "READY"
-    assert completed.questions == ()
-    assert [draft.servings for draft in completed.drafts] == [4, 4]
-    assert all(draft.ingredients and draft.steps for draft in completed.drafts)
+    assert first.questions == ()
+    assert [draft.servings for draft in first.drafts] == [4, 2]
+    assert all(draft.ingredients and draft.steps for draft in first.drafts)
 
 
 class _UnexpectedResumeDependency:
