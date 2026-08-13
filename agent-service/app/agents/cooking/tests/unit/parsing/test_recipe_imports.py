@@ -14,6 +14,7 @@ from cooking_plan_agent.domain.recipe_imports import (
     RecipeImportDraft,
     RecipeImportQuestion,
 )
+from cooking_plan_agent.llm.client import LLMError
 from cooking_plan_agent.llm.recipe_importer import LLMRecipeImportExtractor
 from cooking_plan_agent.parsing.recipe_imports import (
     DeterministicRecipeImportExtractor,
@@ -350,6 +351,36 @@ async def test_multilingual_recipe_and_answers_are_normalised_to_english() -> No
 
     assert completed.status == "READY"
     assert completed.drafts[0].steps == ("Boil the pasta and stir in the tomatoes.",)
+
+
+class _TranslationUnavailableLLMClient:
+    async def chat_json(self, messages: list[dict[str, str]], **_: Any) -> dict[str, Any]:
+        system = messages[0]["content"]
+        if "dishes array" in system:
+            return {"dishes": ["红烧肉"]}
+        if "already-extracted recipe drafts" in system:
+            raise LLMError("translation provider is unavailable")
+        return {
+            "recipes": [
+                {
+                    "name": "红烧肉",
+                    "servings": 2,
+                    "ingredients": ["500克五花肉"],
+                    "steps": ["将五花肉煎至金黄。"],
+                }
+            ]
+        }
+
+
+@pytest.mark.asyncio
+async def test_multilingual_import_remains_reviewable_when_english_normalisation_fails() -> None:
+    extractor = LLMRecipeImportExtractor(_TranslationUnavailableLLMClient())  # type: ignore[arg-type]
+
+    drafts = await extractor.extract("红烧肉\n2人份\n500克五花肉\n将五花肉煎至金黄。")
+
+    assert drafts[0].name == "红烧肉"
+    assert drafts[0].ingredients == ("500克五花肉",)
+    assert drafts[0].steps == ("将五花肉煎至金黄。",)
 
 
 class _MixedScriptLLMClient:
