@@ -39,5 +39,19 @@ Set `CHAT_AGENT_LLM_ENABLED=true` and provide `CHAT_AGENT_LLM_API_KEY` or
 starts without a provider key and returns its deterministic grounded/navigation
 fallback.
 
-If the provider is unavailable, the service returns a bounded grounded or
-navigation fallback so an otherwise valid frontend message is not lost.
+The default provider model is `deepseek-v4-flash`. Chat uses non-thinking mode
+with temperature `1.3` so DeepSeek can answer naturally instead of repeating a
+fixed template; set `CHAT_AGENT_LLM_TEMPERATURE` when a different sampling style
+is required.
+
+When LLM use is enabled, a provider key is mandatory and startup fails fast if
+the key is missing. Successful provider-backed responses use a `chat-llm-`
+agent trace prefix, while deterministic responses use `chat-fallback-` and
+`FALLBACK_SUCCEEDED`. The readiness response reports the configured provider
+host and model without exposing the key.
+
+If the provider becomes unavailable after startup, the service returns a
+bounded grounded or navigation fallback so an otherwise valid frontend message
+is not lost. Count questions still use Backend-authorised sources to calculate
+the verified count, but DeepSeek writes the final answer instead of taking a
+hard-coded response shortcut.

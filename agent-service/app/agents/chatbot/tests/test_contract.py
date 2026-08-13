@@ -6,6 +6,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from pydantic_core import ValidationError
 
 from chat_agent.clients.backend import BackendToolClient, BackendToolError
 from chat_agent.config.settings import Settings
@@ -66,6 +67,16 @@ class FakeBackendTools:
                 grounding_metadata={"referenceId": str(reference_id), "origin": "backend_reference_resolve"},
             ),
         )
+
+
+class FakeLLM:
+    def __init__(self, answer: str = "Provider generated answer") -> None:
+        self.answer = answer
+        self.calls: list[dict[str, Any]] = []
+
+    async def chat(self, messages: list[dict[str, str]], *, timeout_seconds: float | None = None) -> str:
+        self.calls.append({"messages": messages, "timeout_seconds": timeout_seconds})
+        return self.answer
 
 
 def request_payload(*, references: bool = False, requested_route: str | None = None) -> dict[str, object]:
@@ -148,9 +159,12 @@ def test_explicit_search_route_wins_and_searches_without_shared_references() -> 
 def test_count_question_routes_to_authorised_search_instead_of_navigation() -> None:
     tools = FakeBackendTools()
     tools.search_source_type = "PLACE"
+    llm = FakeLLM("DeepSeek counted the authorised places.")
     payload = request_payload()
     payload["message"] = "Can you see how many restaurants are there?"
-    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
+    with TestClient(
+        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
+    ) as client:
         response = client.post(
             "/internal/v1/chat/generate",
             headers={"Authorization": "Bearer test-chat-token"},
@@ -160,7 +174,10 @@ def test_count_question_routes_to_authorised_search_instead_of_navigation() -> N
     body = response.json()
     assert body["route"] == "SEARCH"
     assert body["responseStatus"] == "SUCCEEDED"
-    assert body["answer"].startswith("I can see 1 places")
+    assert body["answer"] == "DeepSeek counted the authorised places."
+    assert body["agentTraceId"].startswith("chat-llm-")
+    assert '\"verifiedCount\":1' in llm.calls[0]["messages"][1]["content"]
+    assert "avoid canned templates" in llm.calls[0]["messages"][0]["content"]
     assert tools.search_calls[0]["query"] == "Can you see how many restaurants are there?"
 
 
@@ -276,6 +293,7 @@ async def test_backend_tools_broaden_empty_restaurant_search_to_authorised_place
 
 def test_shared_deepseek_key_configures_chat_provider(monkeypatch) -> None:
     monkeypatch.delenv("CHAT_AGENT_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("CHAT_AGENT_LLM_ENABLED", "true")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
 
     resolved = Settings(environment="test")
@@ -285,3 +303,19 @@ def test_shared_deepseek_key_configures_chat_provider(monkeypatch) -> None:
 
     with TestClient(create_app(settings=resolved, backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
         assert client.app.state.llm_client is not None
+        assert client.get("/health/ready").json() == {
+            "status": "ready",
+            "llmEnabled": True,
+            "llmConfigured": True,
+            "llmProviderHost": "api.deepseek.com",
+            "llmModel": "deepseek-v4-flash",
+            "llmThinkingEnabled": False,
+        }
+
+
+def test_enabled_llm_without_api_key_fails_fast(monkeypatch) -> None:
+    monkeypatch.delenv("CHAT_AGENT_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    with pytest.raises(ValidationError, match="an LLM API key is required"):
+        Settings(environment="local", llm_enabled=True, _env_file=None)

@@ -1,10 +1,12 @@
 """Backend-facing chat-agent-v1 route with delegated read-only exploration."""
 
 import json
+import logging
 import re
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Request
 
@@ -25,6 +27,7 @@ router = APIRouter(
     tags=["chat-agent"],
     dependencies=[Depends(require_internal_service)],
 )
+logger = logging.getLogger(__name__)
 
 _COMPARE = re.compile(r"\b(compare|versus|vs\.?|difference)\b|比较|对比", re.IGNORECASE)
 _SEARCH = re.compile(
@@ -88,20 +91,18 @@ async def _generate(
     else:
         sources = ()
 
-    if route == "SEARCH" and _COUNT.search(body.message):
-        return _response(
-            body,
-            route=route,
-            response_status="SUCCEEDED",
-            answer=_count_answer(body.message, sources),
-            sources=sources,
-        )
-
     if llm is not None:
         try:
             answer = await llm.chat(
                 _messages(body, route, sources),
                 timeout_seconds=_remaining_timeout(body, settings.llm_timeout_seconds),
+            )
+            logger.info(
+                "chat_generation outcome=success provider_host=%s model=%s route=%s trace_id=%s",
+                urlsplit(settings.llm_base_url).hostname,
+                settings.llm_model,
+                route,
+                body.trace_id,
             )
             return _response(
                 body,
@@ -110,8 +111,21 @@ async def _generate(
                 answer=_bounded(answer),
                 sources=sources,
             )
-        except (LLMError, TimeoutError):
-            pass
+        except (LLMError, TimeoutError) as exc:
+            logger.warning(
+                "chat_generation outcome=fallback provider_host=%s model=%s route=%s error_type=%s trace_id=%s",
+                urlsplit(settings.llm_base_url).hostname,
+                settings.llm_model,
+                route,
+                type(exc).__name__,
+                body.trace_id,
+            )
+    else:
+        logger.warning(
+            "chat_generation outcome=fallback provider=disabled route=%s trace_id=%s",
+            route,
+            body.trace_id,
+        )
 
     return _response(
         body,
@@ -145,19 +159,40 @@ def _messages(body: AgentChatRequest, route: Route, sources: tuple[GroundedSourc
         }
         for item in sources[:10]
     ]
-    system = """You are FoodMind Chat, a concise read-only assistant.
-Answer the user's question helpfully. You may use the supplied FoodMind sources when relevant,
-and may also answer from general knowledge. Never invent facts attributed to FoodMind data.
+    system = """You are FoodMind Chat, a natural, adaptable read-only assistant.
+Answer the user's question directly and conversationally. Vary your wording and structure to fit the question;
+avoid canned templates. You may use the supplied FoodMind sources when relevant and answer freely from general
+knowledge. Treat supplied grounding facts as authoritative and never invent facts attributed to FoodMind data.
 Never create, update, or delete data. Never write to FoodMind.
 Reply in the same language as the user's message. Do not include a bibliography; FoodMind renders source cards.
+Offer useful nuance, alternatives, or a brief follow-up question when that genuinely improves the answer.
 FoodMind areas: Home recommendations, Groups, Explore, Saved items, Saved recipes, Food and Drink Records,
 Catalogue, Cooking Plans, Shopping Lists, Inventory, History, Insights/Dashboard, Profile, and Chat."""
-    context = json.dumps(references, ensure_ascii=False, separators=(",", ":"))
+    grounding_facts: dict[str, object] = {}
+    if route == "SEARCH" and _COUNT.search(body.message):
+        place_question = bool(
+            re.search(
+                r"\b(?:restaurant|restaurants|place|places)\b|餐厅|饭店|地点|场所",
+                body.message,
+                re.IGNORECASE,
+            )
+        )
+        grounding_facts = {
+            "verifiedCount": len(sources),
+            "countIsLowerBound": any(item.grounding_metadata.get("hasNext") is True for item in sources),
+            "entityLabel": "places" if place_question else "FoodMind items",
+            "instruction": "State this verified count exactly; do not infer a different count.",
+        }
+    context = json.dumps(
+        {"sources": references, "groundingFacts": grounding_facts},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return [
         {"role": "system", "content": system},
         {
             "role": "user",
-            "content": f"Selected route: {route}\nSources: {context}\n\nUser message:\n{body.message}",
+            "content": f"Selected route: {route}\nGrounded context: {context}\n\nUser message:\n{body.message}",
         },
     ]
 
@@ -175,21 +210,6 @@ def _fallback(route: Route, sources: tuple[GroundedSource, ...]) -> str:
     if route == "SEARCH":
         return f"I found these FoodMind sources: {', '.join(titles)}."
     return f"The shared FoodMind sources are: {', '.join(titles)}."
-
-
-def _count_answer(message: str, sources: tuple[GroundedSource, ...]) -> str:
-    place_question = bool(
-        re.search(r"\b(?:restaurant|restaurants|place|places)\b|餐厅|饭店|地点|场所", message, re.IGNORECASE)
-    )
-    label = "places" if place_question else "FoodMind items"
-    has_next = any(item.grounding_metadata.get("hasNext") is True for item in sources)
-    prefix = "at least " if has_next else ""
-    if place_question:
-        return (
-            f"I can see {prefix}{len(sources)} {label} in FoodMind. "
-            "FoodMind's catalogue groups restaurants, cafés, and hawker venues as places."
-        )
-    return f"I can see {prefix}{len(sources)} {label} in FoodMind."
 
 
 def _tool_unavailable(body: AgentChatRequest) -> AgentChatResponse:
@@ -239,7 +259,7 @@ def _response(
             "sessionId": body.session_id,
             "userMessageId": body.user_message_id,
             "traceId": body.trace_id,
-            "agentTraceId": f"chat-{uuid.uuid4().hex}",
+            "agentTraceId": f"chat-{'llm' if response_status == 'SUCCEEDED' else 'fallback'}-{uuid.uuid4().hex}",
             "route": route,
             "responseStatus": response_status,
             "answer": _bounded(answer),

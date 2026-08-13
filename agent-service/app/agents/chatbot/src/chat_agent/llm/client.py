@@ -22,6 +22,7 @@ class LLMClient:
         timeout_seconds: float,
         max_retries: int,
         temperature: float,
+        thinking_enabled: bool,
         max_output_tokens: int,
         connection_pool_size: int,
     ) -> None:
@@ -31,6 +32,7 @@ class LLMClient:
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
         self._temperature = temperature
+        self._thinking_enabled = thinking_enabled
         self._max_output_tokens = max_output_tokens
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds),
@@ -47,6 +49,7 @@ class LLMClient:
             "model": self._model,
             "messages": messages,
             "temperature": self._temperature,
+            "thinking": {"type": "enabled" if self._thinking_enabled else "disabled"},
             "max_tokens": self._max_output_tokens,
             "stream": False,
         }
