@@ -64,7 +64,6 @@ async def research_missing_node(
         build_research_cache_key,
     )
     from cooking_plan_agent.research.query_builder import build_minimal_query
-    from cooking_plan_agent.research.researcher import Researcher
 
     settings = get_settings()
     # P1-06 cache is optional — getattr keeps duck-typed contexts working.
@@ -77,9 +76,11 @@ async def research_missing_node(
     model_tag = settings.llm_model
 
     async def _resolve_uncached(gap: object, query_text: str) -> ReconciledEvidence:
-        if isinstance(researcher, Researcher):
+        resolve_gap = getattr(researcher, "resolve_gap", None)
+        if callable(resolve_gap):
             try:
-                return await researcher.resolve_gap(gap, dish_name)  # type: ignore[arg-type]
+                resolved: ReconciledEvidence = await resolve_gap(gap, dish_name)
+                return resolved
             except Exception:  # noqa: BLE001 — any failure → confirmation
                 return ReconciledEvidence(source_count=0, needs_confirmation=True)
         # Non-Researcher RecipeResearcher — Protocol research() path.
@@ -118,9 +119,15 @@ async def research_missing_node(
 
         return cast(ReconciledEvidence, value)
 
-    research_evidence: dict[str, ReconciledEvidence] = {}
-    for gap in researchable_gaps[:2]:  # At most 2 queries (handbook 10.9)
-        research_evidence[gap.gap_id] = await _resolve(gap)
+    max_gap_queries = getattr(researcher, "max_gap_queries", 2)
+    selected_gaps = researchable_gaps if max_gap_queries is None else researchable_gaps[: max(0, int(max_gap_queries))]
+    # Independent local-model inferences can run concurrently under the
+    # provider client's own connection/concurrency bounds. Web researchers
+    # retain the handbook limit of two queries per dish.
+    import asyncio
+
+    resolved_evidence = await asyncio.gather(*(_resolve(gap) for gap in selected_gaps))
+    research_evidence = {gap.gap_id: resolved for gap, resolved in zip(selected_gaps, resolved_evidence, strict=True)}
 
     return {"research_evidence": research_evidence}
 

@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from cooking_plan_agent.domain.models import EvidenceQuery
+from cooking_plan_agent.domain.models import EvidenceQuery, RecipeGap
 from cooking_plan_agent.llm import (
     LLMKnowledgeResearcher,
     LLMPlanExplainer,
@@ -165,6 +165,40 @@ class TestLLMKnowledgeResearcher:
         results = await researcher.research(query)
 
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_resolves_duration_gap_to_structured_evidence(self) -> None:
+        client = FakeLLMClient(
+            {
+                "facts": [
+                    {
+                        "source_title": "Model knowledge",
+                        "fact": "Coating pork in the pan takes about one minute.",
+                        "value": 1,
+                        "unit": "minutes",
+                        "confidence": 0.82,
+                    },
+                ],
+            }
+        )
+        researcher = LLMKnowledgeResearcher(client)  # type: ignore[arg-type]
+        gap = RecipeGap(
+            gap_id="gap-duration",
+            recipe_id="braised-pork",
+            field_path="steps[3].passive_duration_minutes",
+            gap_class="critical",
+            description="Missing duration for coating pork in the pan",
+            confidence=Decimal("0.2"),
+        )
+
+        resolved = await researcher.resolve_gap(gap, "Braised pork belly")
+
+        assert resolved.duration_min_minutes == 1
+        assert resolved.duration_max_minutes == 1
+        assert resolved.source_count == 1
+        assert resolved.needs_confirmation is False
+        assert resolved.evidence_items[0].source_title == "LLM culinary inference"
+        assert resolved.evidence_items[0].source_url == ""
 
 
 # ---------------------------------------------------------------------------
