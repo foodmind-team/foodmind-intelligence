@@ -13,6 +13,8 @@ CPU-bound solver concern (handbook 9.7):
 """
 
 import logging
+from collections.abc import Awaitable, Callable
+from typing import cast
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
@@ -35,6 +37,8 @@ from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.state import PlanState
 
 logger = logging.getLogger(__name__)
+
+ProgressCallback = Callable[[str, int], Awaitable[None]]
 
 
 class GenerateCookingPlanService:
@@ -195,6 +199,68 @@ class GenerateCookingPlanService:
             )
 
         return response
+
+    async def execute_with_progress(
+        self,
+        request: GeneratePlanRequest,
+        thread_id: str | None = None,
+        on_progress: ProgressCallback | None = None,
+    ) -> PlanResponse:
+        """Run the graph while publishing real node-boundary progress.
+
+        ``updates`` reports the nodes that actually completed in LangGraph;
+        ``values`` carries the authoritative full state. This keeps progress
+        truthful without estimating work from elapsed wall-clock time.
+        """
+        initial_state: PlanState = {"request": request}
+        invoke_config: RunnableConfig = {"recursion_limit": 30}
+        if thread_id is not None:
+            invoke_config["configurable"] = {"thread_id": thread_id}
+
+        final_state: dict[str, object] = {}
+        completed_steps = 0
+        async for mode, chunk in self._graph.astream(
+            initial_state,
+            context=self._context,
+            config=invoke_config,
+            stream_mode=["updates", "values"],
+        ):
+            if mode == "values":
+                final_state = cast(dict[str, object], chunk)
+                continue
+            for node in chunk:
+                if node == "__interrupt__":
+                    continue
+                completed_steps += 1
+                if on_progress is not None:
+                    await on_progress(node, completed_steps)
+
+        response = final_state.get("response")
+        if isinstance(response, PlanResponse):
+            if isinstance(response, ConfirmationPlanResponse) and not response.confirmation_questions:
+                logger.error(
+                    "Rejected non-actionable confirmation response | request_id=%s",
+                    request.request_id,
+                )
+                return FailedPlanResponse(
+                    status="FAILED",
+                    error_code=DomainErrorCode.INTERNAL_ERROR.value,
+                    correlation_id=request.request_id,
+                    message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
+                )
+            return response
+
+        logger.error(
+            "Graph stream completed without a valid response | request_id=%s | state_keys=%s",
+            request.request_id,
+            list(final_state.keys()),
+        )
+        return FailedPlanResponse(
+            status="FAILED",
+            error_code=DomainErrorCode.INTERNAL_ERROR.value,
+            correlation_id=request.request_id,
+            message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
+        )
 
     async def continue_after_confirmation(
         self,
