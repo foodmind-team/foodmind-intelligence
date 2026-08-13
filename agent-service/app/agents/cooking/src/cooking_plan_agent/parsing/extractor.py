@@ -33,6 +33,11 @@ from cooking_plan_agent.parsing.extractor_patterns import (
     _TECHNIQUE_PATTERNS,
 )
 
+_RECIPE_METADATA_HEADER = re.compile(
+    r"^\s*(?:recipe\s+notes?|notes?|nutrition(?:al)?(?:\s+information)?|cook\s+mode|tips?)\s*:?[\s]*$",
+    re.IGNORECASE,
+)
+
 
 class RecipeExtractor:
     """Rule-based recipe text extractor implementing the RecipeExtractor Protocol.
@@ -119,7 +124,11 @@ class RecipeExtractor:
         if ingredient_start is not None and step_start is not None:
             # Both sections found
             ing_lines = lines[ingredient_start + 1 : step_start]
-            step_lines = lines[step_start + 1 :]
+            step_end = next(
+                (index for index in range(step_start + 1, len(lines)) if _RECIPE_METADATA_HEADER.match(lines[index])),
+                len(lines),
+            )
+            step_lines = lines[step_start + 1 : step_end]
         elif step_start is not None:
             # Only step section found — everything before is ingredients
             ing_lines = lines[:step_start]
@@ -546,7 +555,8 @@ class RecipeExtractor:
 
     @staticmethod
     def _extract_dish_name(lines: list[str]) -> str:
-        """Extract dish name from the first non-empty, non-section-header line."""
+        """Extract a concise dish name, tolerating copied webpage boilerplate."""
+        first_candidate: str | None = None
         for line in lines:
             stripped = line.strip()
             if not stripped:
@@ -563,8 +573,35 @@ class RecipeExtractor:
                     is_header = True
                     break
             if not is_header and not _RE_STEP_NUMBER.match(stripped):
-                return stripped[:80]  # Truncate long names
-        return "Untitled Recipe"
+                first_candidate = stripped
+                break
+
+        if first_candidate is None:
+            return "Untitled Recipe"
+
+        # A copied article often starts with marketing prose instead of its
+        # title. Recover an explicitly named dish from nearby prose before
+        # falling back to a bounded first line.
+        lower = first_candidate.casefold()
+        looks_like_page_prose = (
+            len(first_candidate) > 60
+            or bool(re.search(r"[.!?…]", first_candidate))
+            or lower.startswith(("recipe video", "video above", "recipe notes", "nutrition information"))
+        )
+        if looks_like_page_prose:
+            source = " ".join(line.strip() for line in lines[:12] if line.strip())[:1500]
+            english = re.search(
+                r"\bThis\s+([A-Z][A-Za-z'’&-]*(?:\s+[A-Z][A-Za-z'’&-]*){0,5})\s+"
+                r"(?:is|are|starts?|started|uses|makes|takes|has)\b",
+                source,
+            )
+            if english:
+                return english.group(1)[:80]
+            chinese = re.search(r"(?:这道|這道|本款|这份|這份)([\u4e00-\u9fff]{2,12})(?:是|的|做法|需|用)", source)
+            if chinese:
+                return chinese.group(1)[:80]
+
+        return first_candidate[:80]
 
     @staticmethod
     def _make_recipe_id(dish_name: str) -> str:
