@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import unicodedata
 from typing import Any
 
@@ -27,6 +28,7 @@ from cooking_plan_agent.config.settings import get_settings
 from cooking_plan_agent.domain.recipe_imports import RecipeImportAnswer, RecipeImportDraft, RecipeImportQuestion
 from cooking_plan_agent.llm.client import LLMClient, LLMError
 from cooking_plan_agent.llm.extractor import LLMRecipeExtractor
+from cooking_plan_agent.normalisation.names import clean_dish_name
 from cooking_plan_agent.parsing.extractor import RecipeExtractor
 from cooking_plan_agent.parsing.recipe_imports import (
     DeterministicRecipeImportExtractor,
@@ -45,14 +47,19 @@ _SYSTEM_PROMPT = (
     "Translate name, ingredients, and steps into clear English before returning them. All recipe strings in "
     "the JSON response must be English even when the source is multilingual. Preserve quantities, units, "
     "temperatures, cooking times, and proper nouns accurately. "
-    "Preserve input order. name must be a SHORT dish title only — strip quantities, units, "
+    "Count distinct finished dishes, not page sections or component mixtures. Ingredient groups such as a seasoning "
+    "mix, sauce, marinade, or topping belong to their parent dish. Recipe notes, substitutions, nutrition, cook-mode "
+    "text, video references, and serving tips are metadata and must NEVER become separate recipes. "
+    "Preserve input order. name must be a SHORT conventional dish title only — ignore page introductions and strip "
+    "site boilerplate, quantities, units, "
     "parenthetical notes, and preparation instructions (e.g. 'Fresh Shrimp', not 'Fresh shrimp "
     "(remove head, tail, and thread)'; 'chicken wings', not '15 chicken wings'). "
     "CRITICAL: when the text describes MULTIPLE distinct dishes — "
     "separated by '---', 'Recipe:' headings, blank lines, or simply listed one after another — "
     "you MUST return one recipe object per dish. Never merge two dishes into a single recipe "
-    "object, and never invent a dish name, serving count, ingredient, or step that the user "
-    "did not provide; use null or an empty array when required information is missing."
+    "object. A dish name may be inferred only from an explicit reference in the text (for example, 'This Jambalaya' "
+    "means the title is 'Jambalaya'); never copy an introductory sentence as the name. Never invent a serving count, "
+    "ingredient, or step that the user did not provide; use null or an empty array when required information is missing."
 )
 
 _ANSWER_SYSTEM_PROMPT = (
@@ -67,7 +74,9 @@ _SPLIT_SYSTEM_PROMPT = (
     "You split a pasted cooking text into its separate dishes. Return one JSON object only with "
     "a dishes array. Each element is the exact first line of one dish, copied verbatim from the "
     "input — for example 'Recipe: Lemon Pasta', 'Ingredients Preparation', or a dish name line "
-    "such as 'Fried Spare Ribs'. Cover every dish in the text in order. If there is only one "
+    "such as 'Fried Spare Ribs'. A marker must begin a distinct finished dish. Never use section headings such as "
+    "'Creole Seasoning Mix', 'Sauce', 'Marinade', 'Recipe Notes', 'Nutrition Information', 'Cook Mode', or a video/site "
+    "introduction as dish markers; those belong to the surrounding recipe. Cover every dish in the text in order. If there is only one "
     "dish, return one element. Never rewrite, translate, or invent lines that do not appear "
     "in the input. IMPORTANT: a dish's name may be glued onto the previous dish's last line "
     "after an ingredient, e.g. '...Cooking oil Fried Spare Ribs' — when you see such a new "
@@ -174,7 +183,10 @@ class LLMRecipeImportExtractor:
         # "Ingredients Preparation" template boundaries (substring-based, so
         # glued headings like "...serve. Ingredients Preparation" still cut).
         coarse: list[str] = []
-        for block in split_recipe_blocks(cleaned):
+        # Blank lines are presentation, not a reliable dish boundary. Leave
+        # them to the semantic splitter; deterministic fallback can still use
+        # the legacy blank-line heuristic when the provider is unavailable.
+        for block in split_recipe_blocks(cleaned, split_blank_lines=False):
             coarse.extend(expand_prep_boundaries(block))
         blocks = tuple(coarse)
 
@@ -322,16 +334,26 @@ class LLMRecipeImportExtractor:
         recipes = payload.get("recipes")
         if not isinstance(recipes, list) or not recipes:
             raise LLMError("Recipe import response did not contain recipes")
-        return tuple(self._draft(index, item) for index, item in enumerate(recipes, start=1) if isinstance(item, dict))
+        return tuple(
+            self._draft(index, item, source_text=text)
+            for index, item in enumerate(recipes, start=1)
+            if isinstance(item, dict)
+        )
 
     @staticmethod
-    def _draft(index: int, value: dict[str, Any]) -> RecipeImportDraft:
+    def _draft(index: int, value: dict[str, Any], *, source_text: str = "") -> RecipeImportDraft:
         raw_servings = value.get("servings")
         servings: int | None = None
         if isinstance(raw_servings, int) and not isinstance(raw_servings, bool) and 1 <= raw_servings <= 50:
             servings = raw_servings
         name_value = value.get("name")
-        name = str(name_value).strip()[:160] if isinstance(name_value, str) and name_value.strip() else None
+        name = clean_dish_name(str(name_value)) if isinstance(name_value, str) and name_value.strip() else None
+        if name and (len(name) > 80 or re.search(r"[.!?…]", name)) and source_text:
+            # Enforce the public short-title contract even if the provider
+            # echoes webpage prose. The deterministic extractor recognises
+            # explicit references such as "This Jambalaya is ...".
+            name = RecipeExtractor._extract_dish_name(source_text.splitlines())
+        name = name[:80] if name else None
         ingredients = tuple(
             str(item).strip()[:500] for item in value.get("ingredients", []) if isinstance(item, str) and item.strip()
         )[:100]

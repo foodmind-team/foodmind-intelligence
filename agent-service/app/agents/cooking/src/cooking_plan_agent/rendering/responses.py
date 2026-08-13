@@ -7,7 +7,6 @@ ensures the response is well-formed before it exits the graph.
 
 from __future__ import annotations
 
-from decimal import Decimal
 from uuid import uuid4
 
 from cooking_plan_agent.domain.errors import (
@@ -133,13 +132,6 @@ def render_ready_response(state: PlanState) -> ReadyPlanResponse:
 # 11.7  CONFIRMATION response
 # =============================================================================
 
-# P4-02: parsed-recipe assumptions at or above this confidence are treated
-# as trustworthy and are NOT promoted to a confirmation question (they stay
-# informational in response.assumptions). Research-backed assumptions always
-# surface as questions — the graph only routes here when they warranted
-# confirmation (P1-01), regardless of their numeric confidence.
-_ASSUMPTION_CONFIDENCE_THRESHOLD = Decimal("0.5")
-
 
 def _stable_question_key(*parts: str) -> str:
     """Derive a stable, bounded question key from domain fields (P4-02 D6).
@@ -233,11 +225,7 @@ def _build_confirmation_questions(
          becomes exactly one required TEXT question asking for the missing
          value. question_id is derived from stable domain keys
          (recipe_id + field_path), never from array position (D6).
-      2. Assumptions — each low-confidence parsed-recipe assumption, and
-         every research-backed assumption, becomes one required CHOICE
-         question offering to accept the suggested value or provide an
-         alternative.
-      3. Repair options — each supported RepairOption becomes one CHOICE
+      2. Repair options — each supported RepairOption becomes one CHOICE
          question (apply / skip); the apply option's value is the presented
          decision's option_id so the answer maps back to the decision
          verbatim (D9).
@@ -251,9 +239,6 @@ def _build_confirmation_questions(
     # contain a gap when the LLM and deterministic fallback could not infer a
     # reasonable value, so actual blocking gaps must never be hidden merely
     # because a preprocess call happened.
-    request = state.get("request")
-    backend_preprocessed = bool(request and request.preparsed_candidates)
-
     # 1. Blocking gaps → one required TEXT question per gap (one-to-one).
     for gap in state.get("gaps", ()):
         if gap.gap_class not in ("critical", "safety_critical"):
@@ -272,26 +257,11 @@ def _build_confirmation_questions(
             )
         )
 
-    # 2. Assumptions → one required CHOICE question per surfaced assumption.
-    #    Skipped for backend-preprocessed requests (assumptions accepted).
-    if not backend_preprocessed:
-        for recipe_id, assumption in _confirmation_assumptions(state):
-            questions.append(
-                ConfirmationQuestion(
-                    question_id=f"assumption:{_stable_question_key(recipe_id, assumption.text)}",
-                    field_path=f"recipe.{recipe_id}.assumptions",
-                    prompt=f"Assumption: {assumption.text}. Accept this suggested value?",
-                    response_type=QuestionResponseType.CHOICE,
-                    options=(
-                        QuestionOption(value="accept", label="Accept suggested value", suggested=True),
-                        QuestionOption(value="provide_alternative", label="Provide an alternative value"),
-                    ),
-                    required=True,
-                    suggested_value=assumption.text,
-                )
-            )
+    # Assumptions remain in the response as audit provenance, but are
+    # accepted automatically. Operational model/rule defaults are not user
+    # decisions; only unresolved blocking facts and repair strategy are.
 
-    # 3. Repair options → strategy question when any plan-level repair
+    # 2. Repair options → strategy question when any plan-level repair
     # (purchase / reduce_servings / substitute) exists; otherwise one CHOICE
     # question per supported decision. When a strategy question is emitted,
     # per-item repair questions are never shown — the user decides at plan
@@ -317,26 +287,6 @@ def _build_confirmation_questions(
             )
 
     return tuple(questions)
-
-
-def _confirmation_assumptions(state: PlanState) -> tuple[tuple[str, Assumption], ...]:
-    """Assumptions that warrant a confirmation question (P4-02).
-
-    - Parsed-recipe assumptions below the confidence threshold (uncertain
-      inferences the user should confirm).
-    - Every research-backed assumption: the graph only routes to
-      confirmation when research warranted it (disagreement over threshold,
-      no sources, unverifiable safety-critical value), so it always
-      surfaces regardless of its numeric confidence.
-    """
-    result: list[tuple[str, Assumption]] = []
-    for recipe in state.get("parsed_recipes", ()):
-        for assumption in recipe.assumptions:
-            if assumption.confidence < _ASSUMPTION_CONFIDENCE_THRESHOLD:
-                result.append((recipe.recipe_id, assumption))
-    for assumption in state.get("research_assumptions", ()):
-        result.append(("_research", assumption))
-    return tuple(result)
 
 
 def render_confirmation_response(state: PlanState) -> ConfirmationPlanResponse:

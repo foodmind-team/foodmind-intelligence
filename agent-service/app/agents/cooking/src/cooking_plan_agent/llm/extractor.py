@@ -62,7 +62,10 @@ _SYSTEM_PROMPT = (
     "roasting, or frying steps it may represent the appliance or oil temperature. "
     "Use null only when no reasonable culinary inference is possible. Quantity must "
     "be a positive number when given. "
-    "dish_name must be a SHORT dish title only — strip quantities, units, "
+    "dish_name must be a SHORT conventional dish title only. Ignore webpage introductions, video references, "
+    "recipe notes, nutrition text, and component headings such as seasoning mix, sauce, marinade, or topping. "
+    "Those sections belong to the same finished dish. Infer the title only from explicit wording in the source "
+    "(for example, 'This Jambalaya' means 'Jambalaya'); never copy a full introductory sentence. Strip quantities, units, "
     "parenthetical notes, and preparation instructions (e.g. 'Fresh Shrimp', not "
     "'Fresh shrimp (remove head, tail, and thread)')."
 )
