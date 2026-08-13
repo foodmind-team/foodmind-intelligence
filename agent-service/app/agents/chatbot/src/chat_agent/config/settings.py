@@ -27,9 +27,9 @@ class Settings(BaseSettings):
     )
     llm_timeout_seconds: float = Field(default=60.0, gt=0.0, le=180.0)
     llm_max_retries: int = Field(default=2, ge=0, le=4)
-    llm_temperature: float = Field(default=1.3, ge=0.0, le=1.5)
+    llm_temperature: float = Field(default=1.0, ge=0.0, le=1.5)
     llm_thinking_enabled: bool = False
-    llm_max_output_tokens: int = Field(default=2048, ge=128, le=8192)
+    llm_max_output_tokens: int = Field(default=800, ge=128, le=8192)
     llm_connection_pool_size: int = Field(default=10, ge=1, le=100)
     max_active_requests: int = Field(default=20, ge=1, le=1000)
     max_queued_requests: int = Field(default=100, ge=0, le=10000)

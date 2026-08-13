@@ -310,6 +310,8 @@ def test_shared_deepseek_key_configures_chat_provider(monkeypatch) -> None:
             "llmProviderHost": "api.deepseek.com",
             "llmModel": "deepseek-v4-pro",
             "llmThinkingEnabled": False,
+            "llmTemperature": 1.0,
+            "llmMaxOutputTokens": 800,
         }
 
 

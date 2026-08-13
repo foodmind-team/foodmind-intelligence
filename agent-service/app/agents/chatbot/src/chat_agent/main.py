@@ -76,7 +76,7 @@ def create_app(
         return {"status": "alive"}
 
     @application.get("/health/ready")
-    async def ready() -> dict[str, str | bool]:
+    async def ready() -> dict[str, str | bool | float | int]:
         api_key_configured = resolved.llm_api_key is not None and bool(resolved.llm_api_key.get_secret_value())
         return {
             "status": "ready",
@@ -85,6 +85,8 @@ def create_app(
             "llmProviderHost": urlsplit(resolved.llm_base_url).hostname or "",
             "llmModel": resolved.llm_model,
             "llmThinkingEnabled": resolved.llm_thinking_enabled,
+            "llmTemperature": resolved.llm_temperature,
+            "llmMaxOutputTokens": resolved.llm_max_output_tokens,
         }
 
     register_exception_handlers(application)

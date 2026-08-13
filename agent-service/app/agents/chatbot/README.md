@@ -40,9 +40,10 @@ starts without a provider key and returns its deterministic grounded/navigation
 fallback.
 
 The default provider model is `deepseek-v4-pro`. Chat uses non-thinking mode
-with temperature `1.3` so DeepSeek can answer naturally instead of repeating a
-fixed template; set `CHAT_AGENT_LLM_TEMPERATURE` when a different sampling style
-is required.
+with temperature `1.0` and at most 800 output tokens so DeepSeek can answer
+naturally without drifting into long, incoherent text. Set
+`CHAT_AGENT_LLM_TEMPERATURE` or `CHAT_AGENT_LLM_MAX_OUTPUT_TOKENS` when a
+different sampling style is required.
 
 When LLM use is enabled, a provider key is mandatory and startup fails fast if
 the key is missing. Successful provider-backed responses use a `chat-llm-`
