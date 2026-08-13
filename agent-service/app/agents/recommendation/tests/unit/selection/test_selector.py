@@ -20,7 +20,7 @@ async def test_normal_policy_selects_fixed_type_order_and_unique_candidates() ->
 
 
 @pytest.mark.asyncio
-async def test_personal_preference_applies_at_equal_tie_band_but_not_outside() -> None:
+async def test_highest_probability_is_always_the_lead() -> None:
     result = canonical_result()
     first = replace(
         result.candidates[0],
@@ -28,19 +28,16 @@ async def test_personal_preference_applies_at_equal_tie_band_but_not_outside() -
         user_cf=CollaborativeSignal(False, None, 0),
         evidence=replace(result.candidates[0].evidence, preference_match=0.5),
     )
-    at_band = replace(result.candidates[1], probability=0.87)
-    equal_result = replace(result, candidates=(first, at_band))
-    equal = await DeterministicResultSelector().select(canonical_request(), equal_result)
-    assert equal[0].candidate_id == "candidate-b"
-    assert equal[0].recommendation_type is RecommendationType.PERSONAL
-
-    outside_result = replace(equal_result, candidates=(first, replace(at_band, probability=0.869)))
-    outside = await DeterministicResultSelector().select(canonical_request(), outside_result)
-    assert all(item.recommendation_type is not RecommendationType.PERSONAL for item in outside)
+    second = replace(result.candidates[1], probability=0.87)
+    selections = await DeterministicResultSelector().select(
+        canonical_request(), replace(result, candidates=(first, second))
+    )
+    assert [item.candidate_id for item in selections] == ["candidate-a", "candidate-b"]
+    assert selections[0].recommendation_type is RecommendationType.PERSONAL
 
 
 @pytest.mark.asyncio
-async def test_exploratory_bonus_cannot_displace_materially_higher_lead() -> None:
+async def test_novelty_cannot_displace_a_higher_ml_score() -> None:
     result = canonical_result()
     first = replace(
         result.candidates[0],
@@ -57,8 +54,8 @@ async def test_exploratory_bonus_cannot_displace_materially_higher_lead() -> Non
     selections = await DeterministicResultSelector().select(
         canonical_request(), replace(result, candidates=(first, second))
     )
-    assert selections[0].candidate_id == "candidate-a"
-    assert selections[0].recommendation_type is RecommendationType.EXPLORATORY
+    assert [item.candidate_id for item in selections] == ["candidate-a", "candidate-b"]
+    assert [item.probability for item in selections] == [0.9, 0.84]
 
 
 @pytest.mark.asyncio

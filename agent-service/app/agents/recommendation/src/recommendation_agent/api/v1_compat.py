@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import math
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
@@ -65,7 +66,8 @@ async def execute_v1_request(
             "modelUserKey": _model_key(secret, f"v1-user-session:{body.session_id}"),
             "modelKeyVersion": "hmac-sha256-v1",
             "candidates": [
-                _candidate_payload(candidate, body.preference_context, secret) for candidate in body.candidates
+                _candidate_payload(candidate, body.request_context, body.preference_context, secret)
+                for candidate in body.candidates
             ],
         }
     )
@@ -75,7 +77,12 @@ async def execute_v1_request(
     return _v1_response(body, response, agent_request)
 
 
-def _candidate_payload(candidate: V1Candidate, preferences: dict[str, Any], secret: bytes) -> dict[str, Any]:
+def _candidate_payload(
+    candidate: V1Candidate,
+    request_context: dict[str, Any],
+    preferences: dict[str, Any],
+    secret: bytes,
+) -> dict[str, Any]:
     features = candidate.features
     group_count = max(0, min(100, _integer(features.get("groupRecordCount"))))
     group_rate = _ratio_from_rating(features.get("groupAverageRating")) if group_count > 0 else None
@@ -89,8 +96,7 @@ def _candidate_payload(candidate: V1Candidate, preferences: dict[str, Any], secr
             "wantToTry": bool(features.get("wantToTry", False)),
             "groupPreferenceRate": group_rate,
             "groupEligibleMemberCount": group_count,
-            # Every v1 candidate has already passed Backend hard context filters.
-            "contextMatch": 1.0,
+            "contextMatch": _context_match(features, request_context, preferences),
             "cleanlinessObserved": features.get("cleanlinessScore") is not None,
             "novelty": max(0.0, min(1.0, 1.0 / (1.0 + personal_count))),
             "cuisineCode": _code(features.get("cuisineCode"), "UNKNOWN"),
@@ -124,8 +130,19 @@ def _v1_response(body: V1Request, response: AgentResponse, request: AgentRequest
                 "rank": item.rank,
                 "recommendationType": item.recommendation_type.value,
                 "modelScore": item.probability,
-                "reasonCodes": _v1_reason_codes(item.reasons, source_by_id[item.candidate_id].features),
-                "explanation": item.explanation,
+                "reasonCodes": _v1_reason_codes(
+                    item.reasons,
+                    source_by_id[item.candidate_id].features,
+                    body.request_context,
+                    body.preference_context,
+                ),
+                "explanation": _v1_explanation(
+                    item.probability,
+                    source_by_id[item.candidate_id].features,
+                    v2_by_id[item.candidate_id],
+                    body.request_context,
+                    body.preference_context,
+                ),
                 "featureSnapshot": source_by_id[item.candidate_id].features,
             }
         )
@@ -144,8 +161,13 @@ def _v1_response(body: V1Request, response: AgentResponse, request: AgentRequest
     )
 
 
-def _v1_reason_codes(reasons: tuple[Any, ...], features: dict[str, Any]) -> tuple[str, ...]:
-    mapped: list[str] = []
+def _v1_reason_codes(
+    reasons: tuple[Any, ...],
+    features: dict[str, Any],
+    request_context: dict[str, Any],
+    preferences: dict[str, Any],
+) -> tuple[str, ...]:
+    mapped = _context_reason_codes(features, request_context, preferences)
     for reason in reasons:
         code = getattr(reason, "value", str(reason))
         target = {
@@ -165,7 +187,78 @@ def _v1_reason_codes(reasons: tuple[Any, ...], features: dict[str, Any]) -> tupl
             target = "NOT_RECENTLY_REPEATED"
         if target not in mapped:
             mapped.append(target)
-    return tuple(mapped or ["NOT_RECENTLY_REPEATED"])
+    return tuple((mapped or ["NOT_RECENTLY_REPEATED"])[:3])
+
+
+def _context_match(features: dict[str, Any], request_context: dict[str, Any], preferences: dict[str, Any]) -> float:
+    fits: list[float] = []
+    budget = _positive_number(request_context.get("maxBudget")) or _positive_number(preferences.get("budgetMax"))
+    price = _non_negative_number(features.get("priceAmount"))
+    if budget is not None and price is not None:
+        fits.append(0.7 + 0.3 * (1.0 - min(1.0, price / budget)))
+    max_distance = _positive_number(request_context.get("maxDistanceKm")) or _positive_number(
+        preferences.get("maxDistanceKm")
+    )
+    distance = _non_negative_number(features.get("distanceKm"))
+    if max_distance is not None and distance is not None:
+        fits.append(0.7 + 0.3 * (1.0 - min(1.0, distance / max_distance)))
+    requested_area = str(request_context.get("area") or preferences.get("preferredArea") or "").strip().casefold()
+    candidate_area = str(features.get("area") or "").strip().casefold()
+    if requested_area and candidate_area:
+        fits.append(1.0 if requested_area == candidate_area else 0.7)
+    return sum(fits) / len(fits) if fits else 0.75
+
+
+def _context_reason_codes(
+    features: dict[str, Any], request_context: dict[str, Any], preferences: dict[str, Any]
+) -> list[str]:
+    reasons: list[str] = []
+    budget = _positive_number(request_context.get("maxBudget")) or _positive_number(preferences.get("budgetMax"))
+    price = _non_negative_number(features.get("priceAmount"))
+    if budget is not None and price is not None and price <= budget:
+        reasons.append("WITHIN_BUDGET")
+    max_distance = _positive_number(request_context.get("maxDistanceKm")) or _positive_number(
+        preferences.get("maxDistanceKm")
+    )
+    distance = _non_negative_number(features.get("distanceKm"))
+    if max_distance is not None and distance is not None and distance <= max_distance:
+        reasons.append("NEARBY")
+    return reasons
+
+
+def _v1_explanation(
+    probability: float,
+    features: dict[str, Any],
+    candidate: Candidate,
+    request_context: dict[str, Any],
+    preferences: dict[str, Any],
+) -> str:
+    signals: list[str] = []
+    preference = candidate.evidence.preference_match
+    if preference >= 0.7:
+        signals.append(f"preference match {preference:.0%}")
+    budget = _positive_number(request_context.get("maxBudget")) or _positive_number(preferences.get("budgetMax"))
+    price = _non_negative_number(features.get("priceAmount"))
+    currency = _code(request_context.get("currency") or preferences.get("currency"), "SGD")
+    if budget is not None and price is not None and price <= budget:
+        signals.append(f"{currency} {price:g} within {currency} {budget:g} budget")
+    max_distance = _positive_number(request_context.get("maxDistanceKm")) or _positive_number(
+        preferences.get("maxDistanceKm")
+    )
+    distance = _non_negative_number(features.get("distanceKm"))
+    if max_distance is not None and distance is not None and distance <= max_distance:
+        signals.append(f"{distance:g} km within {max_distance:g} km range")
+    requested_area = str(request_context.get("area") or preferences.get("preferredArea") or "").strip()
+    candidate_area = str(features.get("area") or "").strip()
+    if requested_area and candidate_area and requested_area.casefold() == candidate_area.casefold():
+        signals.append(f"area matches {candidate_area}")
+    if candidate.evidence.want_to_try:
+        signals.append("on your Want to Try list")
+    if candidate.evidence.group_preference_rate is not None and candidate.evidence.group_eligible_member_count > 0:
+        signals.append(f"group preference {candidate.evidence.group_preference_rate:.0%}")
+    if not signals:
+        signals.append(f"context match {candidate.evidence.context_match or 0.0:.0%}")
+    return f"ML score {probability:.0%}. Confirmed signals: {'; '.join(signals[:3])}."[:240]
 
 
 def _model_key(secret: bytes, value: str) -> str:
@@ -189,6 +282,21 @@ def _integer(value: object) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _positive_number(value: object) -> float | None:
+    number = _non_negative_number(value)
+    return number if number is not None and number > 0 else None
+
+
+def _non_negative_number(value: object) -> float | None:
+    if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
 
 
 def _ratio_from_rating(value: object) -> float:
