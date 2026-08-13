@@ -510,12 +510,31 @@ def _collect_assumptions(candidate: ExtractedRecipeCandidate) -> tuple[Assumptio
             )
         )
 
-    if candidate.original_servings == 2 and "serves" not in candidate.dish_name.lower():
+    if "original_servings" in candidate.inferred_fields:
         assumptions.append(
             Assumption(
-                text="Servings defaulted to 2 — no explicit serving count found in text",
-                confidence=Decimal("0.5"),
+                text=f"LLM inferred the recipe serves {candidate.original_servings} from culinary context",
+                confidence=Decimal("0.8"),
             )
         )
+
+    for index, ingredient in enumerate(candidate.ingredients, start=1):
+        if ingredient.extraction_source == "LLM_INFERRED":
+            assumptions.append(
+                Assumption(
+                    text=f"LLM completed missing details for ingredient {index} ({ingredient.name})",
+                    confidence=ingredient.confidence,
+                )
+            )
+
+    for step in candidate.steps:
+        if step.extraction_source in {"LLM_INFERRED", "RULE_INFERRED"}:
+            source = "LLM" if step.extraction_source == "LLM_INFERRED" else "fallback rules"
+            assumptions.append(
+                Assumption(
+                    text=f"{source} completed missing operational details for step {step.step_number}",
+                    confidence=step.confidence,
+                )
+            )
 
     return tuple(assumptions)

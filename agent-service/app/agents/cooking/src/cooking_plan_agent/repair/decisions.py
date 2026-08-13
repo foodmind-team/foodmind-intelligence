@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 from cooking_plan_agent.domain.models import (
@@ -79,7 +80,7 @@ def apply_approved_decisions(
 # 5.26  Structured decision loop (P0-06)
 # =============================================================================
 
-# The six decision kinds the confirmation loop supports (P0-06 rule 5).
+# The decision kinds the confirmation loop supports (P0-06 rule 5).
 # "purchase" (外出采购) is confirmable end-to-end: selecting it emits a
 # structured decision the client echoes back; applying it is a no-op on
 # the schedule inputs — the client buys the missing ingredients, updates
@@ -92,6 +93,7 @@ SUPPORTED_DECISION_TYPES = frozenset(
         "alternative_equipment",
         "replace_dish",
         "purchase",
+        "provide_gap_value",
     }
 )
 
@@ -205,6 +207,7 @@ def apply_approved_decisions_structured(
       - replace_dish      → recipe removed from the request
       - purchase          → no request mutation; the backend must persist
         real inventory and submit a fresh inventory snapshot
+      - provide_gap_value → patch one field on a pre-parsed recipe candidate
     """
     new_request = request
     new_kitchen: list[object] = list(request.kitchen_resources)
@@ -258,8 +261,69 @@ def apply_approved_decisions_structured(
             # queries inventory again, then submits a fresh request.
             continue
 
+        elif decision.option_type == "provide_gap_value":
+            new_request = _apply_gap_value(new_request, payload)
+
     new_request = new_request.model_copy(update={"kitchen_resources": tuple(new_kitchen)})
     return new_request
+
+
+def _apply_gap_value(request: GeneratePlanRequest, payload: dict[str, object]) -> GeneratePlanRequest:
+    """Apply one validated user answer to a pre-parsed recipe field."""
+    field_path = str(payload.get("field_path") or "")
+    raw_value = str(payload.get("value") or "").strip()
+    if not field_path.startswith("recipe.") or not raw_value:
+        return request
+
+    recipe_and_field = field_path.removeprefix("recipe.").split(".", 1)
+    if len(recipe_and_field) != 2:
+        return request
+    recipe_id, relative_path = recipe_and_field
+    step_match = re.fullmatch(r"steps\[(\d+)]\.(\w+)", relative_path)
+    if step_match is None:
+        return request
+
+    step_index = int(step_match.group(1))
+    field_name = step_match.group(2)
+    candidates = list(request.preparsed_candidates)
+    for candidate_index, candidate in enumerate(candidates):
+        if candidate.recipe_id != recipe_id or step_index >= len(candidate.steps):
+            continue
+        step = candidate.steps[step_index]
+        update: dict[str, object] = {
+            "extraction_source": "USER_CONFIRMED",
+            "confidence": Decimal(1),
+        }
+        try:
+            if field_name == "heat_level":
+                from cooking_plan_agent.domain.enums import HeatLevel
+
+                update[field_name] = HeatLevel(raw_value.upper())
+            elif field_name in {"active_duration_minutes", "passive_duration_minutes"}:
+                duration = int(raw_value)
+                if duration <= 0:
+                    return request
+                update[field_name] = duration
+            elif field_name == "target_temperature_c":
+                temperature = Decimal(raw_value)
+                if temperature <= 0:
+                    return request
+                update[field_name] = temperature
+            elif field_name == "resources_hint":
+                resources = tuple(part.strip() for part in raw_value.split(",") if part.strip())
+                if not resources:
+                    return request
+                update[field_name] = resources
+            else:
+                return request
+        except (ArithmeticError, TypeError, ValueError):
+            return request
+
+        steps = list(candidate.steps)
+        steps[step_index] = step.model_copy(update=update)
+        candidates[candidate_index] = candidate.model_copy(update={"steps": tuple(steps)})
+        return request.model_copy(update={"preparsed_candidates": tuple(candidates)})
+    return request
 
 
 def apply_ingredient_substitutions_patch(
@@ -341,11 +405,10 @@ def answers_to_approved_decisions(
       - CHOICE answers must hit exactly one of the question's option values;
       - TEXT answers must be non-empty and bounded in length.
 
-    Mapping (D9): only CHOICE answers that select a presented repair
-    decision emit an ApprovedDecision — the EXACT object that was
-    presented (looked up by option_id), so the payload is preserved
-    verbatim with zero rewriting. Gap/assumption answers are validated
-    but have no ApprovedDecision carrier yet (contract v2).
+    Mapping (D9): CHOICE answers that select a presented repair decision
+    emit that exact ApprovedDecision. TEXT gap answers emit a bounded
+    ``provide_gap_value`` decision so the next parse pass can apply the
+    confirmed value instead of asking the same question again.
 
     Args:
         questions: The ConfirmationQuestions presented to the client.
@@ -405,12 +468,22 @@ def answers_to_approved_decisions(
     mapped: list[ApprovedDecision] = []
     for answer in answers:
         decision = decisions_by_option_id.get(answer.value)
-        if decision is None:
-            continue
-        if plan_revision is not None and decision.plan_revision != plan_revision:
+        if decision is not None and plan_revision is not None and decision.plan_revision != plan_revision:
             # Keep the decision's payload/type; only rebind the revision the
             # client is answering. This is a metadata update, not a payload
             # rewrite (D9).
             decision = decision.model_copy(update={"plan_revision": plan_revision})
-        mapped.append(decision)
+        if decision is not None:
+            mapped.append(decision)
+            continue
+        question = by_id[answer.question_id]
+        if question.response_type == QuestionResponseType.TEXT:
+            mapped.append(
+                ApprovedDecision(
+                    option_id=f"answer:{answer.question_id}",
+                    option_type="provide_gap_value",
+                    payload={"field_path": question.field_path, "value": answer.value.strip()},
+                    plan_revision=plan_revision,
+                )
+            )
     return tuple(mapped)

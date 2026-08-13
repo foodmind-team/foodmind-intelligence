@@ -207,6 +207,30 @@ class TestDecisionBuilders:
         )
         assert any("stale plan_revision" in i for i in issues)
 
+    def test_provide_gap_value_patches_preparsed_step(self) -> None:
+        from cooking_plan_agent.repair.options import apply_approved_decisions_structured
+
+        candidate = ExtractedRecipeCandidate(
+            recipe_id="recipe-1",
+            dish_name="Roast Chicken",
+            original_servings=2,
+            source_language="en",
+            ingredients=(ExtractedIngredient(raw_text="chicken", name="chicken", quantity=200, unit="g"),),
+            steps=(ExtractedStep(step_number=1, instruction="Roast the chicken", category="heating"),),
+        )
+        request = _base_request(preparsed_candidates=(candidate,))
+        decision = _decision(
+            "provide_gap_value",
+            {"field_path": "recipe.recipe-1.steps[0].target_temperature_c", "value": "75"},
+        )
+
+        resolved = apply_approved_decisions_structured(request, (decision,))
+
+        step = resolved.preparsed_candidates[0].steps[0]
+        assert step.target_temperature_c == Decimal(75)
+        assert step.extraction_source == "USER_CONFIRMED"
+        assert step.confidence == Decimal(1)
+
 
 # ---------------------------------------------------------------------------
 # Full loop: NEEDS_CONFIRMATION → resubmit → READY

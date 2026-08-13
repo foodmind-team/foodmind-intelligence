@@ -57,6 +57,7 @@ class TestLLMRecipeExtractor:
                 "dish_name": "番茄炒蛋",
                 "original_servings": 2,
                 "source_language": "zho",
+                "inferred_fields": ["steps[0].resources_hint"],
                 "ingredients": [
                     {"raw_text": "鸡蛋 3个", "name": "鸡蛋", "quantity": 3, "unit": "个"},
                     {"raw_text": "番茄 2个", "name": "番茄", "quantity": 2, "unit": "个"},
@@ -67,6 +68,9 @@ class TestLLMRecipeExtractor:
                         "category": "heating",
                         "heat_level": "HIGH",
                         "active_duration_minutes": 3,
+                        "resources_hint": ["stove", "wok"],
+                        "extraction_source": "LLM_INFERRED",
+                        "confidence": 0.72,
                     },
                 ],
             }
@@ -83,6 +87,10 @@ class TestLLMRecipeExtractor:
         assert candidate.ingredients[0].quantity == Decimal(3)
         assert candidate.steps[0].heat_level.value == "HIGH"
         assert candidate.steps[0].active_duration_minutes == 3
+        assert candidate.steps[0].extraction_source == "LLM_INFERRED"
+        assert candidate.steps[0].confidence == Decimal("0.72")
+        assert candidate.inferred_fields == ("steps[0].resources_hint",)
+        assert "culinary common sense" in client.calls[0][0]["content"]
 
     @pytest.mark.asyncio
     async def test_tolerates_missing_fields(self) -> None:

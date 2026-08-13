@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
+
+from pydantic import ValidationError
 
 from cooking_plan_agent.domain.enums import HeatLevel
 from cooking_plan_agent.domain.models import (
@@ -33,18 +35,32 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = (
-    "You are a recipe structuring assistant. Extract structured recipe data "
-    "from user-provided cooking text. Respond with a SINGLE JSON object only — "
+    "You are a recipe structuring and completion assistant. Convert the "
+    "user-provided cooking text into a practical, schedulable recipe. "
+    "Respond with a SINGLE JSON object only — "
     "no prose, no markdown fences. The object must use exactly these fields:\n"
     '{"dish_name": string, "original_servings": number, "source_language": '
     '"zho"|"eng"|"und", "ingredients": [{"raw_text": string, "name": string, '
-    '"quantity": number|null, "unit": string|null, "preparation": string|null}], '
+    '"quantity": number|null, "unit": string|null, "preparation": string|null, '
+    '"extraction_source": "EXPLICIT"|"LLM_INFERRED", "confidence": number}], '
     '"steps": [{"instruction": string, "category": "general"|"heating"|'
     '"preparation"|"resting"|"mixing", "active_duration_minutes": number|null, '
     '"passive_duration_minutes": number|null, "heat_level": "NONE"|"LOW"|"MEDIUM"|'
-    '"HIGH", "target_temperature_c": number|null, "resources_hint": [string]}]}\n'
-    "Rules: quantity must be a positive number when given; omit fields the text "
-    "does not specify (use null or empty list, never invent values). "
+    '"HIGH", "target_temperature_c": number|null, "resources_hint": [string], '
+    '"extraction_source": "EXPLICIT"|"LLM_INFERRED", "confidence": number}], '
+    '"inferred_fields": [string]}\n'
+    "Rules: preserve every explicit fact. When operational details are omitted, "
+    "use conservative culinary common sense to infer the values needed to execute "
+    "and schedule the recipe: servings, ingredient quantities/units when necessary, "
+    "step category, active/passive duration, heat level, target temperature, and "
+    "equipment. Add every inferred candidate-level field path to inferred_fields. "
+    "Set an ingredient or step extraction_source to LLM_INFERRED when any of its "
+    "values were inferred, and give it a calibrated confidence from 0 to 1. "
+    "For a step cooking raw animal protein, target_temperature_c means a conservative "
+    "safe internal food temperature, not the oven or pan setting. For other baking, "
+    "roasting, or frying steps it may represent the appliance or oil temperature. "
+    "Use null only when no reasonable culinary inference is possible. Quantity must "
+    "be a positive number when given. "
     "dish_name must be a SHORT dish title only — strip quantities, units, "
     "parenthetical notes, and preparation instructions (e.g. 'Fresh Shrimp', not "
     "'Fresh shrimp (remove head, tail, and thread)')."
@@ -92,7 +108,7 @@ class LLMRecipeExtractor:
                 ]
             )
             return self._to_candidate(source_text, data)
-        except LLMError:
+        except (LLMError, ValidationError, TypeError, ValueError):
             # Degrade to rule-based parsing — never block the workflow.
             logger.warning("LLM extraction failed — falling back to rule-based")
             return await self._rule_based_extract(source_text)
@@ -124,7 +140,7 @@ class LLMRecipeExtractor:
         dish_name = clean_dish_name(str(data.get("dish_name") or "Untitled Recipe"))[:80]
         try:
             servings = Decimal(str(data.get("original_servings") or 2))
-        except (TypeError, ValueError):
+        except (InvalidOperation, TypeError, ValueError):
             servings = Decimal(2)
 
         return ExtractedRecipeCandidate(
@@ -135,6 +151,11 @@ class LLMRecipeExtractor:
             ingredients=ingredients,
             steps=steps,
             extraction_source="LLM",
+            inferred_fields=tuple(
+                str(field).strip()
+                for field in (data.get("inferred_fields") or [])
+                if isinstance(field, str) and field.strip()
+            ),
         )
 
     @staticmethod
@@ -148,7 +169,7 @@ class LLMRecipeExtractor:
                 q = Decimal(str(quantity_raw))
                 if q > 0:
                     quantity = q
-        except (ValueError, TypeError):
+        except (InvalidOperation, ValueError, TypeError):
             quantity = None
         unit = str(item.get("unit") or "").strip() or None
         prep = str(item.get("preparation") or "").strip() or None
@@ -158,7 +179,8 @@ class LLMRecipeExtractor:
             quantity=quantity,
             unit=unit,
             preparation=prep,
-            extraction_source="LLM",
+            extraction_source=LLMRecipeExtractor._to_extraction_source(item.get("extraction_source")),
+            confidence=LLMRecipeExtractor._to_confidence(item.get("confidence")),
         )
 
     @staticmethod
@@ -176,8 +198,21 @@ class LLMRecipeExtractor:
             heat_level=HeatLevel(heat),
             target_temperature_c=LLMRecipeExtractor._to_decimal(item.get("target_temperature_c")),
             resources_hint=tuple(str(r) for r in (item.get("resources_hint") or []) if isinstance(r, str)),
-            extraction_source="LLM",
+            extraction_source=LLMRecipeExtractor._to_extraction_source(item.get("extraction_source")),
+            confidence=LLMRecipeExtractor._to_confidence(item.get("confidence")),
         )
+
+    @staticmethod
+    def _to_extraction_source(value: Any) -> str:
+        return "LLM_INFERRED" if str(value or "").upper() == "LLM_INFERRED" else "EXPLICIT"
+
+    @staticmethod
+    def _to_confidence(value: Any) -> Decimal:
+        try:
+            confidence = Decimal(str(value))
+        except (InvalidOperation, ValueError, TypeError):
+            return Decimal("0.8")
+        return min(Decimal(1), max(Decimal(0), confidence))
 
     @staticmethod
     def _to_int(value: Any) -> int | None:
@@ -195,6 +230,6 @@ class LLMRecipeExtractor:
             if value is not None:
                 d = Decimal(str(value))
                 return d if d > 0 else None
-        except (ValueError, TypeError):
+        except (InvalidOperation, ValueError, TypeError):
             pass
         return None

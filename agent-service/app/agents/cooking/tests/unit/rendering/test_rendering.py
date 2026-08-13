@@ -8,6 +8,7 @@ from cooking_plan_agent.domain.enums import SolverStatus, WorkMode
 from cooking_plan_agent.domain.models import (
     CompletionItem,
     ConfirmationPlanResponse,
+    ConfirmationQuestion,
     CookingTask,
     FailedPlanResponse,
     FeasibilityReport,
@@ -16,6 +17,7 @@ from cooking_plan_agent.domain.models import (
     IngredientFeasibility,
     InventoryConsumptionProposal,
     LotAllocation,
+    QuestionResponseType,
     ReadyPlanResponse,
     RepairOption,
     SafetyFinding,
@@ -682,6 +684,15 @@ class TestValidateTerminalResponse:
         r = ConfirmationPlanResponse(
             plan_id="p1",
             questions=("Proceed?",),
+            confirmation_questions=(
+                ConfirmationQuestion(
+                    question_id="gap:temperature",
+                    field_path="steps[0].target_temperature_c",
+                    prompt="What target temperature should be used?",
+                    response_type=QuestionResponseType.TEXT,
+                    required=True,
+                ),
+            ),
         )
         assert validate_terminal_response(r) is r
 
