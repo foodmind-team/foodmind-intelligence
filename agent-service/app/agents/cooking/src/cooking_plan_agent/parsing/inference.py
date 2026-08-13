@@ -208,6 +208,64 @@ def infer_local(
     )
 
 
+def infer_deterministic_default(
+    candidate: ExtractedRecipeCandidate,
+    gap: RecipeGap,
+) -> tuple[RecipeGap, Assumption] | None:
+    """Return a conservative last-resort value for a non-safety field.
+
+    This is deliberately used only after model/research inference produced
+    no usable value. Safety-critical gaps are never defaulted.
+    """
+    if gap.gap_class == GapClass.SAFETY_CRITICAL:
+        return None
+    step_index = _extract_step_index(gap.field_path)
+    if step_index is None or step_index >= len(candidate.steps):
+        return None
+
+    instruction = candidate.steps[step_index].instruction.lower()
+    field = gap.field_path.rsplit(".", 1)[-1].lower()
+    value: str | None = None
+    reason = "conservative general cooking default"
+
+    if "duration" in field:
+        duration_rules = (
+            (("quickly", "briefly", "coat", "remove", "garnish", "serve", "快速", "翻炒", "捞出", "装盘"), 2),
+            (("simmer", "braise", "stew", "tender", "炖", "焖", "红烧"), 45),
+            (("bake", "roast", "烤", "烘"), 30),
+            (("boil", "steam", "煮", "蒸"), 10),
+            (("fry", "sauté", "saute", "stir", "炒", "煎", "炸"), 5),
+        )
+        value = str(
+            next((minutes for terms, minutes in duration_rules if any(term in instruction for term in terms)), 5)
+        )
+        reason = "instruction-keyword duration default"
+    elif "heat_level" in field:
+        if any(term in instruction for term in ("simmer", "braise", "stew", "low heat", "炖", "焖", "小火")):
+            value = HeatLevel.LOW.value
+        elif any(
+            term in instruction for term in ("boil", "fry", "sear", "stir", "high heat", "煮沸", "炸", "爆炒", "大火")
+        ):
+            value = HeatLevel.HIGH.value
+        else:
+            value = HeatLevel.MEDIUM.value
+        reason = "instruction-keyword heat default"
+    elif "temperature" in field:
+        value = "180"
+        reason = "standard non-safety oven temperature default"
+
+    if value is None:
+        return None
+    confidence = Decimal("0.4")
+    return (
+        gap.model_copy(update={"current_value": value, "confidence": confidence}),
+        Assumption(
+            text=f"Used {value} for {field} after model inference returned no usable value ({reason})",
+            confidence=confidence,
+        ),
+    )
+
+
 # =============================================================================
 # Merge inference results back into the candidate
 # =============================================================================
