@@ -200,7 +200,7 @@ class Settings(BaseSettings):
     # SQLite file backing the task repository (P3-01 MVP storage).
     task_db_path: str = "data/tasks.sqlite"
     # Default task TTL; tasks exceeding it move to EXPIRED.
-    task_default_ttl_seconds: int = 3600
+    task_default_ttl_seconds: int = 300
     # Max tasks the in-process worker executes concurrently.
     task_worker_concurrency: int = 2
 

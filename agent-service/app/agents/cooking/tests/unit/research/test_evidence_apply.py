@@ -302,7 +302,7 @@ class _FakeRuntime:
 
 
 @pytest.mark.asyncio
-async def test_node_applies_evidence_and_keeps_unresolved_gaps() -> None:
+async def test_node_applies_evidence_and_defaults_unresolved_non_safety_gap() -> None:
     candidate = _candidate()
     heat_gap = _heat_gap()
     # A second gap that research did NOT touch stays unresolved.
@@ -324,11 +324,11 @@ async def test_node_applies_evidence_and_keeps_unresolved_gaps() -> None:
 
     updated = result["extracted_candidates"]
     assert updated[0].steps[0].heat_level == HeatLevel.HIGH
-    # Only the resolved gap is dropped.
-    assert [g.gap_id for g in result["gaps"]] == ["gap-dur"]
+    assert updated[0].steps[0].passive_duration_minutes == 5
+    assert result["gaps"] == ()
     assert result["research_assumptions"], "Applied evidence must produce an assumption"
     assert result["research_assumptions"][0].evidence
-    assert result["needs_confirmation"] is True  # critical duration gap remains
+    assert result["needs_confirmation"] is False
 
 
 @pytest.mark.asyncio
@@ -351,13 +351,26 @@ async def test_node_conflicting_evidence_routes_to_confirmation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_node_no_research_is_noop() -> None:
+async def test_node_no_research_uses_deterministic_non_safety_default() -> None:
     state = {"extracted_candidates": (_candidate(),), "gaps": (_heat_gap(),), "research_evidence": {}}
 
     result = await apply_research_evidence_node(state, _FakeRuntime(None))
 
-    assert result == {}
-    assert state["gaps"][0].gap_id == "gap-heat"
+    assert result["extracted_candidates"][0].steps[0].heat_level == HeatLevel.HIGH
+    assert result["gaps"] == ()
+    assert result["needs_confirmation"] is False
+
+
+@pytest.mark.asyncio
+async def test_node_never_defaults_safety_critical_gap() -> None:
+    gap = _heat_gap().model_copy(update={"gap_class": "safety_critical"})
+    state = {"extracted_candidates": (_candidate(),), "gaps": (gap,), "research_evidence": {}}
+
+    result = await apply_research_evidence_node(state, _FakeRuntime(None))
+
+    assert result["extracted_candidates"][0].steps[0].heat_level == HeatLevel.NONE
+    assert result["gaps"] == (gap,)
+    assert result["needs_confirmation"] is True
 
 
 # ---------------------------------------------------------------------------
