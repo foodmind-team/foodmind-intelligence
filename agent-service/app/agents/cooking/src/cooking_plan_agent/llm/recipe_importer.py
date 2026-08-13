@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import unicodedata
 from typing import Any
 
@@ -79,6 +80,8 @@ _TRANSLATION_SYSTEM_PROMPT = (
     "proper nouns. Translate name, every ingredient, and every step into clear English. Do not add, remove, "
     "merge, or reinterpret recipe facts. Every letter in user-visible fields must use Latin script."
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _contains_non_latin_letters(value: str) -> bool:
@@ -240,9 +243,17 @@ class LLMRecipeImportExtractor:
                 raise LLMError("Recipe translation still contains non-Latin text")
             return result
         except (TimeoutError, LLMError, TypeError, ValueError) as exc:
-            raise InvalidRecipeImportAnswers(
-                "The recipe could not be fully converted to English. Please try parsing it again."
-            ) from exc
+            # Import availability takes precedence over a presentation-only
+            # translation pass. The drafts have already been structurally
+            # extracted, and the review screen lets the user inspect them
+            # before anything is persisted. Returning them is safer than
+            # discarding a valid multilingual recipe because the optional
+            # English normalisation provider had a transient failure.
+            logger.warning(
+                "Recipe-import English normalisation failed; returning reviewable source-language drafts",
+                exc_info=exc,
+            )
+            return drafts
 
     async def _split_with_llm(self, text: str) -> tuple[str, ...]:
         """Ask the LLM for the first line of every dish, then cut on those lines.
