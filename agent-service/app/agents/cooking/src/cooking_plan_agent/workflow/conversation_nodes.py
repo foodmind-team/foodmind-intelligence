@@ -28,7 +28,9 @@ from cooking_plan_agent.workflow.context import WorkflowContext
 from cooking_plan_agent.workflow.state import PlanState
 
 # 修改 request 内容的决策类型 —— 需要从 parse_recipes 重新推进。
-_REROUTE_PARSE_TYPES: frozenset[str] = frozenset({"substitute_ingredient", "alternative_equipment", "replace_dish"})
+_REROUTE_PARSE_TYPES: frozenset[str] = frozenset(
+    {"substitute_ingredient", "alternative_equipment", "replace_dish", "provide_gap_value"}
+)
 # 仅调整排程约束的决策类型 —— 可直接重排（跳过重新解析）。
 _REROUTE_SOLVE_TYPES: frozenset[str] = frozenset({"extend_time", "reduce_servings"})
 

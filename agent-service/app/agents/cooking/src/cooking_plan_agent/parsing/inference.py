@@ -242,28 +242,52 @@ def merge_inference(
             if "heat_level" in field and gap.current_value:
                 try:
                     heat = HeatLevel(gap.current_value)
-                    updated_steps[step_idx] = step.model_copy(update={"heat_level": heat})
+                    updated_steps[step_idx] = step.model_copy(
+                        update={
+                            "heat_level": heat,
+                            "extraction_source": "RULE_INFERRED",
+                            "confidence": min(step.confidence, gap.confidence),
+                        }
+                    )
                 except ValueError:
                     pass
 
             elif "passive_duration" in field and gap.current_value:
                 try:
                     minutes = int(gap.current_value)
-                    updated_steps[step_idx] = step.model_copy(update={"passive_duration_minutes": minutes})
+                    updated_steps[step_idx] = step.model_copy(
+                        update={
+                            "passive_duration_minutes": minutes,
+                            "extraction_source": "RULE_INFERRED",
+                            "confidence": min(step.confidence, gap.confidence),
+                        }
+                    )
                 except ValueError:
                     pass
 
             elif "active_duration" in field and gap.current_value:
                 try:
                     minutes = int(gap.current_value)
-                    updated_steps[step_idx] = step.model_copy(update={"active_duration_minutes": minutes})
+                    updated_steps[step_idx] = step.model_copy(
+                        update={
+                            "active_duration_minutes": minutes,
+                            "extraction_source": "RULE_INFERRED",
+                            "confidence": min(step.confidence, gap.confidence),
+                        }
+                    )
                 except ValueError:
                     pass
 
             elif "temperature" in field and gap.current_value:
                 try:
                     temp = Decimal(gap.current_value)
-                    updated_steps[step_idx] = step.model_copy(update={"target_temperature_c": temp})
+                    updated_steps[step_idx] = step.model_copy(
+                        update={
+                            "target_temperature_c": temp,
+                            "extraction_source": "RULE_INFERRED",
+                            "confidence": min(step.confidence, gap.confidence),
+                        }
+                    )
                 except (ValueError, TypeError):
                     pass
 
@@ -271,7 +295,13 @@ def merge_inference(
                 # Resource values are comma-separated
                 resources = tuple(r.strip() for r in gap.current_value.split(",") if r.strip())
                 if resources:
-                    updated_steps[step_idx] = step.model_copy(update={"resources_hint": resources})
+                    updated_steps[step_idx] = step.model_copy(
+                        update={
+                            "resources_hint": resources,
+                            "extraction_source": "RULE_INFERRED",
+                            "confidence": min(step.confidence, gap.confidence),
+                        }
+                    )
 
     return candidate.model_copy(update={"steps": tuple(updated_steps)})
 

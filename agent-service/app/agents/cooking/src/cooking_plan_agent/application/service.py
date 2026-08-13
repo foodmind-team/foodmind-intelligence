@@ -21,6 +21,7 @@ from cooking_plan_agent.domain.errors import DomainErrorCode, public_message_for
 from cooking_plan_agent.domain.models import (
     Assumption,
     ConfirmationAnswersRequest,
+    ConfirmationPlanResponse,
     ExtractedRecipeCandidate,
     FailedPlanResponse,
     GeneratePlanRequest,
@@ -66,7 +67,13 @@ class GenerateCookingPlanService:
         self,
         body: PreprocessRecipesRequest,
     ) -> PreprocessRecipesResponse:
-        """Parse stored recipe text and fill gaps with deterministic local rules."""
+        """Structure recipe text and fill practical gaps before planning.
+
+        The configured extractor is LLM-backed in production, so extraction
+        and common-sense completion happen in one bounded structured-output
+        call. Deterministic inference remains a graceful fallback for fields
+        the model leaves empty or when the LLM adapter falls back entirely.
+        """
         import asyncio
 
         from cooking_plan_agent.parsing.extractor import RecipeExtractor as RuleExtractor
@@ -81,7 +88,7 @@ class GenerateCookingPlanService:
             merge_inference,
         )
 
-        extractor = RuleExtractor()
+        extractor = self._context.recipe_extractor or RuleExtractor()
 
         def _fill_gap(
             candidate: ExtractedRecipeCandidate,
@@ -103,15 +110,18 @@ class GenerateCookingPlanService:
         async def _process_one(recipe: RecipeInput) -> ExtractedRecipeCandidate:
             candidate = await extractor.extract(recipe.text)
             filled: list[RecipeGap] = []
+            unresolved: list[RecipeGap] = []
             for gap in find_recipe_gaps(candidate):
                 result = _fill_gap(candidate, gap)
                 if result is not None:
                     filled.append(result[0])
+                else:
+                    unresolved.append(gap)
             merged = merge_inference(
                 candidate,
                 InferenceResult(
                     filled_gaps=tuple(filled),
-                    unresolved_gaps=(),
+                    unresolved_gaps=tuple(unresolved),
                     assumptions=(),
                 ),
             )
@@ -172,6 +182,18 @@ class GenerateCookingPlanService:
                 message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
             )
 
+        if isinstance(response, ConfirmationPlanResponse) and not response.confirmation_questions:
+            logger.error(
+                "Rejected non-actionable confirmation response | request_id=%s",
+                request.request_id,
+            )
+            return FailedPlanResponse(
+                status="FAILED",
+                error_code=DomainErrorCode.INTERNAL_ERROR.value,
+                correlation_id=request.request_id,
+                message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
+            )
+
         return response
 
     async def continue_after_confirmation(
@@ -214,6 +236,17 @@ class GenerateCookingPlanService:
 
         response = result.get("response")
         if isinstance(response, PlanResponse):
+            if isinstance(response, ConfirmationPlanResponse) and not response.confirmation_questions:
+                logger.error(
+                    "Rejected non-actionable confirmation response after resume | plan_id=%s",
+                    body.plan_id,
+                )
+                return FailedPlanResponse(
+                    status="FAILED",
+                    error_code=DomainErrorCode.INTERNAL_ERROR.value,
+                    correlation_id=body.plan_id,
+                    message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
+                )
             return response
         # Resumed but no terminal response — defensive FAILED fallback.
         logger.error(

@@ -153,6 +153,13 @@ def _stable_question_key(*parts: str) -> str:
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+def _gap_question_field_path(recipe_id: str, field_path: str) -> str:
+    """Return a self-contained path identifying both recipe and field."""
+    if field_path.startswith("recipe."):
+        return field_path
+    return f"recipe.{recipe_id}.{field_path}"
+
+
 def _servings_option_label(payload: dict[str, object]) -> str:
     servings = payload.get("servings")
     if servings is None:
@@ -240,33 +247,30 @@ def _build_confirmation_questions(
     """
     questions: list[ConfirmationQuestion] = []
 
-    # P: Backend-preprocessed requests (preparsed_candidates) already went
-    # through the agent's NL parsing + gap-filling pipeline via the
-    # /preprocess endpoint. Their candidates are complete, so gap and
-    # assumption questions are never re-asked — only strategy-level repair
-    # questions remain. The agent stays focused on planning.
+    # Backend-preprocessed requests normally arrive complete. They may still
+    # contain a gap when the LLM and deterministic fallback could not infer a
+    # reasonable value, so actual blocking gaps must never be hidden merely
+    # because a preprocess call happened.
     request = state.get("request")
     backend_preprocessed = bool(request and request.preparsed_candidates)
 
     # 1. Blocking gaps → one required TEXT question per gap (one-to-one).
-    #    Skipped for backend-preprocessed requests (gaps already filled).
-    if not backend_preprocessed:
-        for gap in state.get("gaps", ()):
-            if gap.gap_class not in ("critical", "safety_critical"):
-                continue
-            questions.append(
-                ConfirmationQuestion(
-                    question_id=f"gap:{_stable_question_key(gap.recipe_id, gap.field_path)}",
-                    field_path=gap.field_path,
-                    prompt=(
-                        f"The {gap.field_path} for recipe '{gap.recipe_id}' is missing "
-                        f"({gap.description}). Please provide the correct value."
-                    ),
-                    response_type=QuestionResponseType.TEXT,
-                    required=True,
-                    suggested_value=gap.current_value,
-                )
+    for gap in state.get("gaps", ()):
+        if gap.gap_class not in ("critical", "safety_critical"):
+            continue
+        questions.append(
+            ConfirmationQuestion(
+                question_id=f"gap:{_stable_question_key(gap.recipe_id, gap.field_path)}",
+                field_path=_gap_question_field_path(gap.recipe_id, gap.field_path),
+                prompt=(
+                    f"The {gap.field_path} for recipe '{gap.recipe_id}' is missing "
+                    f"({gap.description}). Please provide the correct value."
+                ),
+                response_type=QuestionResponseType.TEXT,
+                required=True,
+                suggested_value=gap.current_value,
             )
+        )
 
     # 2. Assumptions → one required CHOICE question per surfaced assumption.
     #    Skipped for backend-preprocessed requests (assumptions accepted).
@@ -546,9 +550,8 @@ def validate_terminal_response(response: PlanResponse) -> PlanResponse:
 
     elif status == "NEEDS_CONFIRMATION":
         if isinstance(response, ConfirmationPlanResponse):
-            has_content = bool(response.assumptions or response.repair_options or response.questions)
-            if not has_content:
-                raise ValueError("CONFIRMATION response: must have at least one assumption, repair_option, or question")
+            if not response.confirmation_questions:
+                raise ValueError("CONFIRMATION response: must contain at least one actionable structured question")
 
     elif status == "INFEASIBLE":
         if isinstance(response, InfeasiblePlanResponse):

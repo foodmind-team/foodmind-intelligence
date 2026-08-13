@@ -358,6 +358,7 @@ class ExtractedRecipeCandidate(StrictModel):
     ingredients: tuple[ExtractedIngredient, ...]
     steps: tuple[ExtractedStep, ...]
     extraction_source: str = "LLM"
+    inferred_fields: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -590,7 +591,7 @@ class PreprocessRecipesRequest(StrictModel):
 
     The Spring Boot backend sends raw recipe text BEFORE generate() and
     receives fully-populated ``ExtractedRecipeCandidate`` snapshots back
-    (NL parsing + gap filling done once, reusing the agent pipeline).
+    (LLM structuring/completion plus deterministic fallback done once).
     Those candidates are then passed back on the generate request as
     ``preparsed_candidates`` so the workflow never re-parses or re-asks
     about gaps.
@@ -604,7 +605,7 @@ class PreprocessRecipesResponse(StrictModel):
     """Response from the preprocess endpoint.
 
     ``recipes`` carries one populated candidate per input recipe — missing
-    durations/heat/temperature/resources already inferred via local rules.
+    operational values are completed by the LLM or deterministic fallback.
     """
 
     recipes: tuple[ExtractedRecipeCandidate, ...]
