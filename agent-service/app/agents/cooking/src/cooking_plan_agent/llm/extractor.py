@@ -11,6 +11,7 @@ rule-based extractor is used so the pipeline degrades gracefully.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from decimal import Decimal, InvalidOperation
@@ -85,9 +86,16 @@ class LLMRecipeExtractor:
     (RecipeExtractor Protocol in workflow/context.py).
     """
 
-    def __init__(self, client: LLMClient, *, translate_to_english: bool = False) -> None:
+    def __init__(
+        self,
+        client: LLMClient,
+        *,
+        translate_to_english: bool = False,
+        timeout_seconds: float = 30.0,
+    ) -> None:
         self._client = client
         self._system_prompt = _SYSTEM_PROMPT + (_ENGLISH_OUTPUT_RULE if translate_to_english else "")
+        self._timeout_seconds = timeout_seconds
 
     async def extract(self, source_text: str) -> ExtractedRecipeCandidate:
         """Parse recipe text into a structured candidate using the LLM.
@@ -101,14 +109,17 @@ class LLMRecipeExtractor:
             so the pipeline degrades gracefully (source="RULE_BASED").
         """
         try:
-            data = await self._client.chat_json(
-                [
-                    {"role": "system", "content": self._system_prompt},
-                    {"role": "user", "content": source_text},
-                ]
+            data = await asyncio.wait_for(
+                self._client.chat_json(
+                    [
+                        {"role": "system", "content": self._system_prompt},
+                        {"role": "user", "content": source_text},
+                    ]
+                ),
+                timeout=self._timeout_seconds,
             )
             return self._to_candidate(source_text, data)
-        except (LLMError, ValidationError, TypeError, ValueError):
+        except (TimeoutError, LLMError, ValidationError, TypeError, ValueError):
             # Degrade to rule-based parsing — never block the workflow.
             logger.warning("LLM extraction failed — falling back to rule-based")
             return await self._rule_based_extract(source_text)

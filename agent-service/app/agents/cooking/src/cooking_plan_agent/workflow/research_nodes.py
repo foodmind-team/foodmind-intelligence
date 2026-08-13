@@ -127,7 +127,16 @@ async def research_missing_node(
     # retain the handbook limit of two queries per dish.
     import asyncio
 
-    resolved_evidence = await asyncio.gather(*(_resolve(gap) for gap in selected_gaps))
+    async def _resolve_bounded(gap: object) -> ReconciledEvidence:
+        try:
+            return await asyncio.wait_for(
+                _resolve(gap),
+                timeout=settings.research_timeout_seconds,
+            )
+        except TimeoutError:
+            return ReconciledEvidence(source_count=0, needs_confirmation=True)
+
+    resolved_evidence = await asyncio.gather(*(_resolve_bounded(gap) for gap in selected_gaps))
     research_evidence = {gap.gap_id: resolved for gap, resolved in zip(selected_gaps, resolved_evidence, strict=True)}
 
     return {"research_evidence": research_evidence}
