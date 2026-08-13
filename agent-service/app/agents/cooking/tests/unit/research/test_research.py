@@ -4,6 +4,8 @@ Covers all 9 required test scenarios using the FakeSearchProvider.
 No real network calls — safe for CI.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from cooking_plan_agent.config.settings import Settings
@@ -12,6 +14,7 @@ from cooking_plan_agent.domain.models import (
     CookingEvidence,
     EvidenceQuery,
     RecipeGap,
+    ReconciledEvidence,
 )
 from cooking_plan_agent.research.config import DomainAllowList
 from cooking_plan_agent.research.domain_filter import filter_by_domain
@@ -26,6 +29,7 @@ from cooking_plan_agent.research.providers.fake import (
 from cooking_plan_agent.research.query_builder import build_minimal_query
 from cooking_plan_agent.research.reconciler import reconcile
 from cooking_plan_agent.research.researcher import Researcher
+from cooking_plan_agent.workflow.nodes import research_missing_node
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -125,6 +129,38 @@ def test_research_skipped_when_feature_flag_off() -> None:
     # The routing check happens in route_after_local_inference,
     # which reads get_settings(). This unit test validates Settings default.
     assert settings_disabled.web_research_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_llm_research_resolves_every_operational_gap() -> None:
+    class FakeLLMResolver:
+        max_gap_queries = None
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def resolve_gap(self, gap: RecipeGap, dish_name: str) -> ReconciledEvidence:
+            self.calls.append(gap.gap_id)
+            return ReconciledEvidence(
+                duration_min_minutes=1,
+                duration_max_minutes=1,
+                source_count=1,
+            )
+
+    resolver = FakeLLMResolver()
+    gaps = tuple(_make_duration_gap(gap_id=f"gap-duration-{index}") for index in range(3))
+    runtime = SimpleNamespace(context=SimpleNamespace(recipe_researcher=resolver, cache=None))
+
+    result = await research_missing_node(
+        {
+            "gaps": gaps,
+            "extracted_candidates": (SimpleNamespace(dish_name="Braised pork belly"),),
+        },
+        runtime,  # type: ignore[arg-type]
+    )
+
+    assert set(result["research_evidence"]) == {gap.gap_id for gap in gaps}  # type: ignore[arg-type]
+    assert set(resolver.calls) == {gap.gap_id for gap in gaps}
 
 
 # ============================================================================
