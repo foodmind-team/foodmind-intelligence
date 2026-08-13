@@ -197,9 +197,7 @@ def _tool_unavailable(body: AgentChatRequest) -> AgentChatResponse:
         body,
         route="NAVIGATION",
         response_status="FALLBACK_SUCCEEDED",
-        answer=(
-            "Platform search is temporarily unavailable. You can still open Records or Catalogue directly."
-        ),
+        answer=("Platform search is temporarily unavailable. You can still open Records or Catalogue directly."),
         sources=(),
     )
 

@@ -263,7 +263,9 @@ async def test_backend_tools_broaden_empty_restaurant_search_to_authorised_place
         )
 
     raw = httpx.AsyncClient(base_url="http://backend.test", transport=httpx.MockTransport(handler))
-    client = BackendToolClient(client=raw, settings=Settings(environment="test", backend_base_url="http://backend.test"))
+    client = BackendToolClient(
+        client=raw, settings=Settings(environment="test", backend_base_url="http://backend.test")
+    )
     sources = await client.search(query="restaurants", delegation_token="delegated-user-token", timeout_seconds=1)
     await client.aclose()
 

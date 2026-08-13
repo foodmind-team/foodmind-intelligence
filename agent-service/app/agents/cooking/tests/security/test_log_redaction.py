@@ -173,13 +173,13 @@ def test_multi_token_prefixes_masked() -> None:
     """Bearer / sk- / JWT / GitHub / AWS prefixes are all masked."""
     value = redact(
         "call with Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig and sk-abcdefghijklmn and "
-        "ghp_1234567890abcdefghijk and AKIA1234567890ABCDEF"
+        "ghp_1234567890abcdefghijk and AKIA1234567890ABCDEF"  # ci-secret-scan: allow-test-fixture
     )
     assert isinstance(value, str)
     assert "eyJhbGciOiJIUzI1NiJ9" not in value
     assert "sk-abcdefghijklmn" not in value
-    assert "ghp_1234567890abcdefghijk" not in value
-    assert "AKIA1234567890ABCDEF" not in value
+    assert "ghp_1234567890abcdefghijk" not in value  # ci-secret-scan: allow-test-fixture
+    assert "AKIA1234567890ABCDEF" not in value  # ci-secret-scan: allow-test-fixture
     # Bearer keeps its scheme word for readability.
     assert "Bearer " in value
 

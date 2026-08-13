@@ -5,32 +5,13 @@ permissions:
 
 on:
   push:
-    paths:
-      - "agent-service/app/agents/recommendation/**"
-      - "contracts/internal/agent/recommendation/**"
-      - "contracts/internal/inference/recommendation/**"
-      - "contracts/internal/shared/recommendation-features/**"
-      - "artifacts/test-fixtures/recommendation/**"
-      - "deployment/docker/recommendation-agent.env.example"
-      - "deployment/local/recommendation-agent.compose.yaml"
-      - "docs/architecture/recommendation-agent-compatibility-matrix.md"
-      - "docs/operations/recommendation-agent.md"
-      - "docs/testing/recommendation-agent-**"
-      - ".github/workflows/recommendation-agent-ci.yml"
+    branches: [main]
   pull_request:
-    paths:
-      - "agent-service/app/agents/recommendation/**"
-      - "contracts/internal/agent/recommendation/**"
-      - "contracts/internal/inference/recommendation/**"
-      - "contracts/internal/shared/recommendation-features/**"
-      - "artifacts/test-fixtures/recommendation/**"
-      - "deployment/docker/recommendation-agent.env.example"
-      - "deployment/local/recommendation-agent.compose.yaml"
-      - "docs/architecture/recommendation-agent-compatibility-matrix.md"
-      - "docs/operations/recommendation-agent.md"
-      - "docs/testing/recommendation-agent-**"
-      - ".github/workflows/recommendation-agent-ci.yml"
   workflow_dispatch:
+
+concurrency:
+  group: recommendation-agent-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -40,7 +21,38 @@ env:
   PYTHON_VERSION: "3.13"
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    outputs:
+      recommendation: ${{ steps.filter.outputs.recommendation }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            changed_files="$(git diff --name-only "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}")"
+          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            changed_files="$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")"
+          else
+            echo "recommendation=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -Eq '^(agent-service/app/agents/recommendation/|contracts/internal/agent/recommendation/|contracts/internal/inference/recommendation/|contracts/internal/shared/recommendation-features/|artifacts/test-fixtures/recommendation/|deployment/docker/recommendation-agent\.env\.example$|deployment/local/recommendation-agent\.compose\.yaml$|docs/architecture/recommendation-agent-compatibility-matrix\.md$|docs/operations/recommendation-agent\.md$|docs/testing/recommendation-agent-|\.github/workflows/recommendation-agent-ci\.yml$)' <<< "$changed_files"; then
+            echo "recommendation=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "recommendation=false" >> "$GITHUB_OUTPUT"
+          fi
+
   quality:
+    needs: changes
+    if: needs.changes.outputs.recommendation == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -55,6 +67,8 @@ jobs:
       - run: uv run mypy src tests
 
   tests:
+    needs: changes
+    if: needs.changes.outputs.recommendation == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -64,11 +78,22 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --frozen --dev
-      - run: uv run pytest -W error --cov=recommendation_agent --cov-report=term-missing
+      - run: uv run pytest -W error --cov=recommendation_agent --cov-report=term-missing --cov-report=xml:coverage.xml
       - run: uv run python scripts/smoke_private_agent.py --mode fixture
       - run: uv run python scripts/verify_release_evidence.py
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: recommendation-tests-${{ github.sha }}
+          path: |
+            coverage.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
   contracts:
+    needs: changes
+    if: needs.changes.outputs.recommendation == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -82,6 +107,8 @@ jobs:
         run: uv run python -c "from recommendation_agent.main import create_app; assert set(create_app().openapi()['paths']) == {'/health/live','/health/ready','/internal/v1/recommendations/generate'}"
 
   security:
+    needs: changes
+    if: needs.changes.outputs.recommendation == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -122,8 +149,20 @@ jobs:
             docker run --rm -v "${GITHUB_WORKSPACE}:/repo:ro" "$image" detect \
               --no-git --source "/repo/$scope" --redact --exit-code 1 --log-level error
           done
+      - name: Upload security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: recommendation-security-${{ github.sha }}
+          path: |
+            requirements-audit.txt
+            licenses.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   image:
+    needs: changes
+    if: needs.changes.outputs.recommendation == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -153,10 +192,18 @@ jobs:
           aquasec/trivy:0.56.1@sha256:c42bb3221509b0a9fa2291cd79a3a818b30a172ab87e9aac8a43997a5b56f293
           image --scanners vuln --ignore-unfixed --severity CRITICAL,HIGH --exit-code 1
           foodmind-recommendation-agent:ci
+      - name: Upload image evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: recommendation-image-${{ github.sha }}
+          path: recommendation-agent-sbom.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   merge-gate:
     if: always()
-    needs: [quality, tests, contracts, security, image]
+    needs: [changes, quality, tests, contracts, security, image]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -164,6 +211,10 @@ jobs:
     steps:
       - name: Require every Recommendation Agent gate
         run: |
+          if [ "${{ needs.changes.outputs.recommendation }}" != true ]; then
+            echo "Recommendation paths unchanged; fast gate passes."
+            exit 0
+          fi
           test "${{ needs.quality.result }}" = success
           test "${{ needs.tests.result }}" = success
           test "${{ needs.contracts.result }}" = success
