@@ -10,6 +10,7 @@ All tests inject a fake LLMClient — no real network, CI-safe.
 
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 from typing import Any
 
@@ -42,6 +43,12 @@ class FakeLLMClient:
         if isinstance(self._payload, Exception):
             raise self._payload
         return str(self._payload)
+
+
+class SlowLLMClient:
+    async def chat_json(self, messages: list[dict[str, str]], **_: Any) -> dict[str, Any]:
+        await asyncio.sleep(60)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +126,14 @@ class TestLLMRecipeExtractor:
         candidate = await extractor.extract("1. Boil water.\n2. Add pasta.")
 
         # Rule-based fallback — never blocks the workflow
+        assert candidate.extraction_source == "RULE_BASED"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_without_waiting_for_slow_llm(self) -> None:
+        extractor = LLMRecipeExtractor(SlowLLMClient(), timeout_seconds=0.01)  # type: ignore[arg-type]
+
+        candidate = await extractor.extract("1. Boil water.\n2. Add pasta.")
+
         assert candidate.extraction_source == "RULE_BASED"
 
 

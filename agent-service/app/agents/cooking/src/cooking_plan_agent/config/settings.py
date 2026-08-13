@@ -115,6 +115,9 @@ class Settings(BaseSettings):
     # Overall envelope timeout for the whole multi-recipe extraction batch.
     # Per-call timeout is llm_timeout_seconds; this bounds the gather.
     llm_overall_timeout_seconds: float = 240.0
+    # Interactive plan generation must leave time for gap completion and
+    # scheduling. If recipe structuring is slow, switch to rule parsing early.
+    recipe_extraction_llm_timeout_seconds: float = 30.0
     # Recipe import is an interactive request served through a Backend client
     # with a 30-second read deadline. Fall back before that boundary instead
     # of allowing the shared LLM retry budget to exhaust the HTTP request.
