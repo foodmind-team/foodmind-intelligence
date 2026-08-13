@@ -14,7 +14,12 @@ def test_v1_local_compatibility_route_uses_v2_workflow_and_inference() -> None:
                 "sessionId": "30000000-0000-4000-8000-000000000002",
                 "traceId": "30000000-0000-4000-8000-000000000003",
                 "deadlineAt": (datetime.now(UTC) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
-                "requestContext": {"mealType": "DINNER"},
+                "requestContext": {
+                    "mealType": "DINNER",
+                    "maxBudget": 20.0,
+                    "currency": "SGD",
+                    "maxDistanceKm": 5.0,
+                },
                 "preferenceContext": {"likedCuisineCodes": ["CHINESE"]},
                 "candidates": [
                     {
@@ -28,6 +33,7 @@ def test_v1_local_compatibility_route_uses_v2_workflow_and_inference() -> None:
                             "groupRecordCount": 3 if index == 3 else 0,
                             "groupAverageRating": 4.5 if index == 3 else None,
                             "distanceKm": 1.0 + index,
+                            "priceAmount": 8.0 + index,
                         },
                     }
                     for index in range(1, 4)
@@ -41,8 +47,17 @@ def test_v1_local_compatibility_route_uses_v2_workflow_and_inference() -> None:
     assert body["contractVersion"] == "recommendation-agent-v1"
     assert body["status"] == "SUCCEEDED"
     assert body["featureSchemaVersion"] == "recommendation-features-v1"
-    assert 1 <= len(body["candidates"]) <= 3
+    assert len(body["candidates"]) == 3
     assert [candidate["rank"] for candidate in body["candidates"]] == list(range(1, len(body["candidates"]) + 1))
+    assert [candidate["modelScore"] for candidate in body["candidates"]] == sorted(
+        [candidate["modelScore"] for candidate in body["candidates"]], reverse=True
+    )
+    assert "WITHIN_BUDGET" in body["candidates"][0]["reasonCodes"]
+    assert "NEARBY" in body["candidates"][0]["reasonCodes"]
+    assert "within SGD 20 budget" in body["candidates"][0]["explanation"]
+    assert "within 5 km range" in body["candidates"][0]["explanation"]
+    assert fake.last_request is not None
+    assert fake.last_request["candidates"][0]["evidence"]["contextMatch"] > 0.7
 
 
 def test_v1_compatibility_route_is_disabled_by_default() -> None:
