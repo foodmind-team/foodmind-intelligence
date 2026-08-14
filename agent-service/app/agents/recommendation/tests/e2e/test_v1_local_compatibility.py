@@ -27,6 +27,7 @@ def test_v1_local_compatibility_route_uses_v2_workflow_and_inference() -> None:
                         "candidateKey": f"PLACE_MEAL:40000000-0000-4000-8000-00000000010{index}",
                         "features": {
                             "mealType": "DINNER",
+                            "categoryCode": "NOODLES" if index == 1 else "RICE_BOWL",
                             "cuisineCode": "CHINESE" if index == 1 else "MALAY",
                             "wantToTry": index == 2,
                             "personalRecordCount": index - 1,

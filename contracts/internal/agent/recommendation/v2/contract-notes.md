@@ -15,7 +15,7 @@ approval that is not present in this repository.
   inference implementation.
 - Model/key tuple: `hybrid-ranking-v1`, `recommendation-package-v1`, and <!-- gitleaks:allow -->
   `hmac-sha256-v1`.
-- Policy tuple: `recommendation-diversity-v1`,
+- Policy tuple: `recommendation-diversity-v2`,
   `recommendation-reasons-v1`, and `recommendation-template-v1`.
 - Internal route: `POST /internal/v1/recommendations/generate` carrying the
   strict v2 envelope; authentication is an exact constant-time Bearer secret

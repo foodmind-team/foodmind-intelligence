@@ -10,12 +10,12 @@
   "featureSchemaVersion": "recommendation-features-v2",
   "inferenceContractVersion": "recommendation-inference-v1",
   "modelKeyVersion": "hmac-sha256-v1",
-  "diversityPolicyVersion": "recommendation-diversity-v1",
+  "diversityPolicyVersion": "recommendation-diversity-v2",
   "reasonPolicyVersion": "recommendation-reasons-v1",
   "templateVersion": "recommendation-template-v1",
   "recommendations": [
     { "candidateId": "candidate-a", "rank": 1, "recommendationType": "PERSONAL", "probability": 0.91, "modelScore": 2.31, "reasons": ["USER_CF", "ITEM_CF"], "explanation": "People with similar preferences also liked this. It resembles meals you liked." },
-    { "candidateId": "candidate-b", "rank": 2, "recommendationType": "EXPLORATORY", "probability": 0.82, "modelScore": 1.52, "reasons": ["USER_CF", "WANT_TO_TRY"], "explanation": "People with similar preferences also liked this. You marked this as Want to Try." },
+    { "candidateId": "candidate-b", "rank": 2, "recommendationType": "PERSONAL", "probability": 0.82, "modelScore": 1.52, "reasons": ["USER_CF", "WANT_TO_TRY"], "explanation": "People with similar preferences also liked this. You marked this as Want to Try." },
     { "candidateId": "candidate-c", "rank": 3, "recommendationType": "GROUP_INSPIRED", "probability": 0.78, "modelScore": 1.27, "reasons": ["ITEM_CF", "GROUP_POPULAR"], "explanation": "It resembles meals you liked. It matches preferences shared by the group." }
   ]
 }

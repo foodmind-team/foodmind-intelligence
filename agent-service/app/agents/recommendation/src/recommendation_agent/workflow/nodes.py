@@ -221,7 +221,7 @@ class WorkflowNodes:
                     "featureSchemaVersion": state["inference_result"].feature_schema_version,
                     "inferenceContractVersion": state["inference_result"].inference_contract_version,
                     "modelKeyVersion": state["inference_result"].model_key_version,
-                    "diversityPolicyVersion": "recommendation-diversity-v1",
+                    "diversityPolicyVersion": "recommendation-diversity-v2",
                     "reasonPolicyVersion": "recommendation-reasons-v1",
                     "templateVersion": "recommendation-template-v1",
                     "recommendations": [

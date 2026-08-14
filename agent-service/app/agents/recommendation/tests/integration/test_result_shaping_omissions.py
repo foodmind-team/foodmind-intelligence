@@ -33,7 +33,7 @@ def test_cold_start_omits_group_and_never_emits_cf_reasons() -> None:
     result = _execute("valid-cold-start.json", load_json(INFERENCE_FIXTURES / "valid-cold-start.json"))
     recommendations = result["recommendations"]
     assert isinstance(recommendations, list)
-    assert [item["recommendationType"] for item in recommendations] == ["PERSONAL", "EXPLORATORY"]
+    assert [item["recommendationType"] for item in recommendations] == ["EXPLORATORY", "PERSONAL"]
     assert all(reason not in {"USER_CF", "ITEM_CF"} for item in recommendations for reason in item["reasons"])
 
 

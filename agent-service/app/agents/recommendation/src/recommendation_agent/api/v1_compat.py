@@ -100,7 +100,7 @@ def _candidate_payload(
             "cleanlinessObserved": features.get("cleanlinessScore") is not None,
             "novelty": max(0.0, min(1.0, 1.0 / (1.0 + personal_count))),
             "cuisineCode": _code(features.get("cuisineCode"), "UNKNOWN"),
-            "categoryCode": _code(features.get("mealType"), "MEAL"),
+            "categoryCode": _code(features.get("categoryCode") or features.get("mealType"), "MEAL"),
         },
     }
 
