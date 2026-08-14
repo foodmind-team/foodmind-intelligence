@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 import httpx
 import uvicorn
@@ -38,6 +39,7 @@ def create_app(
                 timeout_seconds=resolved.llm_timeout_seconds,
                 max_retries=resolved.llm_max_retries,
                 temperature=resolved.llm_temperature,
+                thinking_enabled=resolved.llm_thinking_enabled,
                 max_output_tokens=resolved.llm_max_output_tokens,
                 connection_pool_size=resolved.llm_connection_pool_size,
             )
@@ -74,8 +76,18 @@ def create_app(
         return {"status": "alive"}
 
     @application.get("/health/ready")
-    async def ready() -> dict[str, str]:
-        return {"status": "ready"}
+    async def ready() -> dict[str, str | bool | float | int]:
+        api_key_configured = resolved.llm_api_key is not None and bool(resolved.llm_api_key.get_secret_value())
+        return {
+            "status": "ready",
+            "llmEnabled": resolved.llm_enabled,
+            "llmConfigured": api_key_configured,
+            "llmProviderHost": urlsplit(resolved.llm_base_url).hostname or "",
+            "llmModel": resolved.llm_model,
+            "llmThinkingEnabled": resolved.llm_thinking_enabled,
+            "llmTemperature": resolved.llm_temperature,
+            "llmMaxOutputTokens": resolved.llm_max_output_tokens,
+        }
 
     register_exception_handlers(application)
     return application
