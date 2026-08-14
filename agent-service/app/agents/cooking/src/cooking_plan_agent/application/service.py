@@ -14,6 +14,7 @@ CPU-bound solver concern (handbook 9.7):
 
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import cast
 
 from langchain_core.runnables import RunnableConfig
@@ -164,11 +165,22 @@ class GenerateCookingPlanService:
         if thread_id is not None:
             invoke_config["configurable"] = {"thread_id": thread_id}
 
-        result = await self._graph.ainvoke(
-            initial_state,
-            context=self._context,
-            config=invoke_config,
-        )
+        try:
+            result = await self._graph.ainvoke(
+                initial_state,
+                context=self._context,
+                config=invoke_config,
+            )
+        except Exception as exc:
+            if not self._can_retry_with_deterministic_parser(request):
+                raise
+            logger.warning(
+                "Graph execution raised; retrying with deterministic recipe parsing "
+                "| request_id=%s | exception_type=%s",
+                request.request_id,
+                type(exc).__name__,
+            )
+            return await self._execute_deterministic_fallback(request, thread_id)
 
         response = result.get("response")
         if not isinstance(response, PlanResponse):
@@ -178,27 +190,29 @@ class GenerateCookingPlanService:
                 request.request_id,
                 list(result.keys()),
             )
-            return FailedPlanResponse(
+            response = FailedPlanResponse(
                 status="FAILED",
                 error_code=DomainErrorCode.INTERNAL_ERROR.value,
                 correlation_id=request.request_id,
                 # P2-03: public text resolves through the message catalog.
                 message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
             )
+            return await self._retry_internal_failure(request, response, thread_id)
 
         if isinstance(response, ConfirmationPlanResponse) and not response.confirmation_questions:
             logger.error(
                 "Rejected non-actionable confirmation response | request_id=%s",
                 request.request_id,
             )
-            return FailedPlanResponse(
+            response = FailedPlanResponse(
                 status="FAILED",
                 error_code=DomainErrorCode.INTERNAL_ERROR.value,
                 correlation_id=request.request_id,
                 message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
             )
+            return await self._retry_internal_failure(request, response, thread_id)
 
-        return response
+        return await self._retry_internal_failure(request, response, thread_id)
 
     async def execute_with_progress(
         self,
@@ -217,11 +231,64 @@ class GenerateCookingPlanService:
         if thread_id is not None:
             invoke_config["configurable"] = {"thread_id": thread_id}
 
+        try:
+            final_state = await self._stream_graph(
+                initial_state,
+                self._context,
+                invoke_config,
+                on_progress,
+            )
+        except Exception as exc:
+            if not self._can_retry_with_deterministic_parser(request):
+                raise
+            logger.warning(
+                "Graph stream raised; retrying with deterministic recipe parsing | request_id=%s | exception_type=%s",
+                request.request_id,
+                type(exc).__name__,
+            )
+            return await self._stream_deterministic_fallback(request, thread_id, on_progress)
+
+        response = final_state.get("response")
+        if isinstance(response, PlanResponse):
+            if isinstance(response, ConfirmationPlanResponse) and not response.confirmation_questions:
+                logger.error(
+                    "Rejected non-actionable confirmation response | request_id=%s",
+                    request.request_id,
+                )
+                response = FailedPlanResponse(
+                    status="FAILED",
+                    error_code=DomainErrorCode.INTERNAL_ERROR.value,
+                    correlation_id=request.request_id,
+                    message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
+                )
+                return await self._retry_stream_internal_failure(request, response, thread_id, on_progress)
+            return await self._retry_stream_internal_failure(request, response, thread_id, on_progress)
+
+        logger.error(
+            "Graph stream completed without a valid response | request_id=%s | state_keys=%s",
+            request.request_id,
+            list(final_state.keys()),
+        )
+        response = FailedPlanResponse(
+            status="FAILED",
+            error_code=DomainErrorCode.INTERNAL_ERROR.value,
+            correlation_id=request.request_id,
+            message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
+        )
+        return await self._retry_stream_internal_failure(request, response, thread_id, on_progress)
+
+    async def _stream_graph(
+        self,
+        initial_state: PlanState,
+        context: WorkflowContext,
+        invoke_config: RunnableConfig,
+        on_progress: ProgressCallback | None,
+    ) -> dict[str, object]:
         final_state: dict[str, object] = {}
         completed_steps = 0
         async for mode, chunk in self._graph.astream(
             initial_state,
-            context=self._context,
+            context=context,
             config=invoke_config,
             stream_mode=["updates", "values"],
         ):
@@ -234,33 +301,112 @@ class GenerateCookingPlanService:
                 completed_steps += 1
                 if on_progress is not None:
                     await on_progress(node, completed_steps)
+        return final_state
 
-        response = final_state.get("response")
-        if isinstance(response, PlanResponse):
-            if isinstance(response, ConfirmationPlanResponse) and not response.confirmation_questions:
-                logger.error(
-                    "Rejected non-actionable confirmation response | request_id=%s",
-                    request.request_id,
-                )
-                return FailedPlanResponse(
-                    status="FAILED",
-                    error_code=DomainErrorCode.INTERNAL_ERROR.value,
-                    correlation_id=request.request_id,
-                    message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
-                )
-            return response
+    def _can_retry_with_deterministic_parser(self, request: GeneratePlanRequest) -> bool:
+        if request.preparsed_candidates or not any(recipe.text.strip() for recipe in request.recipes):
+            return False
+        from cooking_plan_agent.parsing.extractor import RecipeExtractor as DeterministicRecipeExtractor
 
-        logger.error(
-            "Graph stream completed without a valid response | request_id=%s | state_keys=%s",
-            request.request_id,
-            list(final_state.keys()),
+        return self._context.recipe_extractor is not None and not isinstance(
+            self._context.recipe_extractor,
+            DeterministicRecipeExtractor,
         )
+
+    def _deterministic_context(self) -> WorkflowContext:
+        from cooking_plan_agent.parsing.extractor import RecipeExtractor as DeterministicRecipeExtractor
+
+        return replace(
+            self._context,
+            recipe_extractor=DeterministicRecipeExtractor(),
+            recipe_researcher=None,
+            cache=None,
+            explainer=None,
+            repair_diagnoser=None,
+            agent_controller=None,
+        )
+
+    @staticmethod
+    def _fallback_config(thread_id: str | None) -> RunnableConfig:
+        config: RunnableConfig = {"recursion_limit": 30}
+        if thread_id is not None:
+            config["configurable"] = {"thread_id": f"{thread_id}__deterministic"}
+        return config
+
+    async def _execute_deterministic_fallback(
+        self,
+        request: GeneratePlanRequest,
+        thread_id: str | None,
+    ) -> PlanResponse:
+        result = await self._graph.ainvoke(
+            {"request": request},
+            context=self._deterministic_context(),
+            config=self._fallback_config(thread_id),
+        )
+        response = result.get("response")
+        if isinstance(response, PlanResponse):
+            return response
         return FailedPlanResponse(
             status="FAILED",
             error_code=DomainErrorCode.INTERNAL_ERROR.value,
             correlation_id=request.request_id,
             message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
         )
+
+    async def _stream_deterministic_fallback(
+        self,
+        request: GeneratePlanRequest,
+        thread_id: str | None,
+        on_progress: ProgressCallback | None,
+    ) -> PlanResponse:
+        final_state = await self._stream_graph(
+            {"request": request},
+            self._deterministic_context(),
+            self._fallback_config(thread_id),
+            on_progress,
+        )
+        response = final_state.get("response")
+        if isinstance(response, PlanResponse):
+            return response
+        return FailedPlanResponse(
+            status="FAILED",
+            error_code=DomainErrorCode.INTERNAL_ERROR.value,
+            correlation_id=request.request_id,
+            message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
+        )
+
+    async def _retry_internal_failure(
+        self,
+        request: GeneratePlanRequest,
+        response: PlanResponse,
+        thread_id: str | None,
+    ) -> PlanResponse:
+        if not self._is_internal_failure(response) or not self._can_retry_with_deterministic_parser(request):
+            return response
+        logger.warning(
+            "Graph returned INTERNAL_ERROR; retrying with deterministic recipe parsing | request_id=%s",
+            request.request_id,
+        )
+        return await self._execute_deterministic_fallback(request, thread_id)
+
+    async def _retry_stream_internal_failure(
+        self,
+        request: GeneratePlanRequest,
+        response: PlanResponse,
+        thread_id: str | None,
+        on_progress: ProgressCallback | None,
+    ) -> PlanResponse:
+        if not self._is_internal_failure(response) or not self._can_retry_with_deterministic_parser(request):
+            return response
+        logger.warning(
+            "Graph stream returned INTERNAL_ERROR; retrying with deterministic recipe parsing | request_id=%s",
+            request.request_id,
+        )
+        return await self._stream_deterministic_fallback(request, thread_id, on_progress)
+
+    @staticmethod
+    def _is_internal_failure(response: PlanResponse) -> bool:
+        return isinstance(response, FailedPlanResponse) and response.error_code == DomainErrorCode.INTERNAL_ERROR.value
 
     async def continue_after_confirmation(
         self,
