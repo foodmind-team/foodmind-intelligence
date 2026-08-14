@@ -201,7 +201,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  merge-gate:
+  recommendation-agent-gate:
+    name: Recommendation Agent gate
     if: always()
     needs: [changes, quality, tests, contracts, security, image]
     runs-on: ubuntu-latest

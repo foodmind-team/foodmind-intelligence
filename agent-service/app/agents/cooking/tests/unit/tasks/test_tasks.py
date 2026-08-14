@@ -6,6 +6,7 @@ service submit/cancel/worker execution, and the HTTP endpoints.
 
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 
 import pytest
@@ -302,6 +303,33 @@ async def test_submit_conflicting_payload_raises(service) -> None:
 
 
 @pytest.mark.asyncio
+async def test_new_submission_cancels_same_users_old_task(service) -> None:
+    svc, _ = service
+    first = await svc.submit(_valid_request("req-old"))
+
+    second = await svc.submit(_valid_request("req-new"))
+
+    old = await svc.get(first.task.task_id)
+    assert old is not None and old.status == TaskStatus.CANCELLED
+    assert second.task.status == TaskStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_task_deadline_scales_with_dish_count_and_caps_at_five_minutes(service) -> None:
+    svc, _ = service
+    one = _valid_request("req-one")
+    many = one.model_copy(
+        update={
+            "request_id": "req-many",
+            "recipes": tuple(one.recipes[0].model_copy(update={"recipe_id": f"r{i}"}) for i in range(8)),
+        }
+    )
+
+    assert svc._task_ttl(one, None).total_seconds() == 180  # type: ignore[attr-defined]
+    assert svc._task_ttl(many, None).total_seconds() == 300  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
 async def test_cancel_queued_task(service) -> None:
     svc, _ = service
     outcome = await svc.submit(_valid_request("req-cancel"))
@@ -352,6 +380,71 @@ async def test_worker_executes_task_to_readiness(tmp_path) -> None:
     assert done.status == TaskStatus.READY
     assert done.result is not None and done.result["status"] == "READY"
     assert gen.executed == [("req-run", "req-run:0")]
+    await repo.close()
+
+
+class _StreamingGeneration:
+    def __init__(self) -> None:
+        self.progress_written = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def execute_with_progress(self, request, thread_id=None, on_progress=None):
+        try:
+            await on_progress("validate_input", 1)
+            await on_progress("parse_recipes", 2)
+            self.progress_written.set()
+            await self.release.wait()
+            return ReadyPlanResponse(
+                plan_id="plan-stream",
+                solver_status="OPTIMAL",
+                makespan_minutes=30,
+                timeline=(),
+                completion_checklist=(),
+                mise_en_place=(),
+                dish_completions=(),
+            )
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+
+
+@pytest.mark.asyncio
+async def test_worker_persists_real_node_progress(tmp_path) -> None:
+    repo = SQLiteTaskRepository(str(tmp_path / "progress.sqlite"))
+    await repo.astart()
+    generation = _StreamingGeneration()
+    svc = AsyncTaskService(repo, generation, worker_concurrency=1)
+    outcome = await svc.submit(_valid_request("req-progress"))
+
+    worker = asyncio.create_task(svc._execute_claimed())  # type: ignore[attr-defined]
+    await asyncio.wait_for(generation.progress_written.wait(), timeout=1)
+    running = await svc.get(outcome.task.task_id)
+    assert running is not None
+    assert running.progress.node == "parse_recipes"
+    assert running.progress.completed_steps == 2
+
+    generation.release.set()
+    await worker
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_new_submission_interrupts_old_running_coroutine(tmp_path) -> None:
+    repo = SQLiteTaskRepository(str(tmp_path / "cancel-running.sqlite"))
+    await repo.astart()
+    generation = _StreamingGeneration()
+    svc = AsyncTaskService(repo, generation, worker_concurrency=1)
+    old = await svc.submit(_valid_request("req-running-old"))
+
+    worker = asyncio.create_task(svc._execute_claimed())  # type: ignore[attr-defined]
+    await asyncio.wait_for(generation.progress_written.wait(), timeout=1)
+    await svc.submit(_valid_request("req-running-new"))
+    await asyncio.wait_for(generation.cancelled.wait(), timeout=1)
+    await worker
+
+    cancelled = await svc.get(old.task.task_id)
+    assert cancelled is not None and cancelled.status == TaskStatus.CANCELLED
     await repo.close()
 
 

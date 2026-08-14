@@ -365,7 +365,12 @@ async def explain_schedule_node(
     explainer = runtime.context.explainer
     if explainer is not None:
         try:
-            text = await explainer.explain(summary)
+            import asyncio
+
+            text = await asyncio.wait_for(
+                explainer.explain(summary),
+                timeout=get_settings().research_timeout_seconds,
+            )
             if isinstance(text, str) and text.strip():
                 return {"explanation": text, "explanation_source": "llm"}
         except Exception:  # noqa: BLE001 — additive capability must never fail READY

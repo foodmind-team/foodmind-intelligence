@@ -163,7 +163,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.llm_explainer = None
 
     # RecipeExtractor: LLM-backed when enabled, otherwise rule-based fallback.
-    recipe_extractor = LLMRecipeExtractor(llm_client) if llm_client is not None else None
+    recipe_extractor = (
+        LLMRecipeExtractor(
+            llm_client,
+            timeout_seconds=settings.recipe_extraction_llm_timeout_seconds,
+        )
+        if llm_client is not None
+        else None
+    )
 
     # Recipe import is a separate application boundary: it extracts multiple
     # partial recipes and asks only for facts required before persistence.

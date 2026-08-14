@@ -46,41 +46,16 @@ Steps:
 """
 
 
-def test_returns_multiple_drafts_and_structured_question(client: TestClient) -> None:
+def test_returns_multiple_ready_drafts_with_default_servings(client: TestClient) -> None:
     response = client.post(URL, headers=_headers(), json={"request_id": "req-1", "text": _text()})
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "NEEDS_CLARIFICATION"
+    assert body["status"] == "READY"
     assert [draft["name"] for draft in body["drafts"]] == ["Mushroom Toast", "Berry Bowl"]
-    assert body["questions"] == [
-        {
-            "question_id": "dish-2:servings",
-            "draft_id": "dish-2",
-            "field_path": "servings",
-            "prompt": "How many servings does Berry Bowl make? Enter a whole number from 1 to 50.",
-            "response_type": "TEXT",
-            "required": True,
-            "suggested_value": None,
-        }
-    ]
+    assert [draft["servings"] for draft in body["drafts"]] == [2, 2]
+    assert body["questions"] == []
     assert response.headers["X-Request-ID"] == "recipe-import-contract"
-
-
-def test_answers_continue_to_ready(client: TestClient) -> None:
-    response = client.post(
-        URL,
-        headers=_headers(),
-        json={
-            "request_id": "req-2",
-            "text": _text(),
-            "answers": [{"question_id": "dish-2:servings", "value": "3"}],
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "READY"
-    assert [draft["servings"] for draft in response.json()["drafts"]] == [2, 3]
 
 
 def test_persisted_snapshot_continues_without_reparsing(client: TestClient) -> None:
@@ -94,7 +69,6 @@ def test_persisted_snapshot_continues_without_reparsing(client: TestClient) -> N
         json={
             "request_id": "req-snapshot",
             "text": "This text is intentionally not parseable as the original recipes.",
-            "answers": [{"question_id": "dish-2:servings", "value": "3"}],
             "drafts": first_body["drafts"],
             "questions": first_body["questions"],
         },
@@ -103,7 +77,7 @@ def test_persisted_snapshot_continues_without_reparsing(client: TestClient) -> N
     assert response.status_code == 200
     assert response.json()["status"] == "READY"
     assert [draft["name"] for draft in response.json()["drafts"]] == ["Mushroom Toast", "Berry Bowl"]
-    assert [draft["servings"] for draft in response.json()["drafts"]] == [2, 3]
+    assert [draft["servings"] for draft in response.json()["drafts"]] == [2, 2]
 
 
 def test_mixed_language_input_is_accepted(client: TestClient) -> None:

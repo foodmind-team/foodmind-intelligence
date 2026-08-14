@@ -20,6 +20,7 @@ from cooking_plan_agent.parsing.recipe_imports import (
     DeterministicRecipeImportExtractor,
     expand_prep_boundaries,
     split_on_markers,
+    split_recipe_blocks,
 )
 
 MULTI_DISH_TEXT = """Recipe: Lemon Pasta
@@ -42,27 +43,16 @@ Steps:
 
 
 @pytest.mark.asyncio
-async def test_multi_dish_import_asks_for_missing_servings_then_becomes_ready() -> None:
+async def test_multi_dish_import_defaults_missing_servings_without_clarification() -> None:
     service = ParseRecipeImportService(DeterministicRecipeImportExtractor())
 
     first = await service.execute(ParseRecipeImportRequest(request_id="req-1", text=MULTI_DISH_TEXT))
 
-    assert first.status == "NEEDS_CLARIFICATION"
+    assert first.status == "READY"
     assert [draft.name for draft in first.drafts] == ["Lemon Pasta", "Tomato Salad"]
-    assert [question.question_id for question in first.questions] == ["dish-2:servings"]
-
-    completed = await service.execute(
-        ParseRecipeImportRequest(
-            request_id="req-1",
-            text=MULTI_DISH_TEXT,
-            answers=({"question_id": "dish-2:servings", "value": "4"},),
-        )
-    )
-
-    assert completed.status == "READY"
-    assert completed.questions == ()
-    assert [draft.servings for draft in completed.drafts] == [4, 4]
-    assert all(draft.ingredients and draft.steps for draft in completed.drafts)
+    assert first.questions == ()
+    assert [draft.servings for draft in first.drafts] == [4, 2]
+    assert all(draft.ingredients and draft.steps for draft in first.drafts)
 
 
 class _UnexpectedResumeDependency:
@@ -179,6 +169,66 @@ Ingredients:
 Steps:
 1. Slice.
 """
+
+NOISY_SINGLE_DISH_TEXT = """Recipe VIDEO above. Many people consider this to be the world's best one pot rice meal.
+This Jambalaya is started on the stove then finished in the oven.
+Ingredients
+1 cup long grain rice
+2 cups chicken broth
+Creole Seasoning Mix:
+1 tsp paprika
+Instructions
+Bake for 20 minutes.
+Recipe Notes:
+Rice should be tender but not mushy.
+Nutrition Information:
+Calories: 500
+"""
+
+
+def test_recipe_page_metadata_does_not_create_phantom_dishes() -> None:
+    blocks = split_recipe_blocks(NOISY_SINGLE_DISH_TEXT)
+
+    assert len(blocks) == 1
+
+
+@pytest.mark.asyncio
+async def test_rule_fallback_recovers_short_title_from_page_introduction() -> None:
+    drafts = await DeterministicRecipeImportExtractor().extract(NOISY_SINGLE_DISH_TEXT)
+
+    assert len(drafts) == 1
+    assert drafts[0].name == "Jambalaya"
+    assert drafts[0].steps == ("Bake for 20 minutes.",)
+    assert all("Rice should" not in step and "Calories" not in step for step in drafts[0].steps)
+
+
+class _NoisySingleRecipeLLMClient:
+    async def chat_json(self, messages: list[dict[str, str]], **_: Any) -> dict[str, Any]:
+        system = messages[0]["content"]
+        if "dishes array" in system:
+            assert "Recipe Notes" in system
+            return {"dishes": [messages[1]["content"].splitlines()[0]]}
+        assert "recipes array" in system
+        assert "component mixtures" in system
+        return {
+            "recipes": [
+                {
+                    "name": "Jambalaya",
+                    "servings": 6,
+                    "ingredients": ["1 cup long grain rice", "2 cups chicken broth", "1 tsp paprika"],
+                    "steps": ["Bake for 20 minutes."],
+                }
+            ]
+        }
+
+
+@pytest.mark.asyncio
+async def test_llm_treats_recipe_notes_and_seasoning_mix_as_one_dish() -> None:
+    drafts = await LLMRecipeImportExtractor(_NoisySingleRecipeLLMClient()).extract(NOISY_SINGLE_DISH_TEXT)  # type: ignore[arg-type]
+
+    assert len(drafts) == 1
+    assert drafts[0].name == "Jambalaya"
+    assert drafts[0].ingredients[-1] == "1 tsp paprika"
 
 
 @pytest.mark.asyncio
