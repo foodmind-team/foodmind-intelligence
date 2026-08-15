@@ -95,12 +95,16 @@ class ModelPackage:
             return unavailable_user, unavailable_item
         user = self.collaborative_index.get("userCf", {}).get(model_user_key, {}).get(model_meal_key)
         item = self.collaborative_index.get("itemCf", {}).get(model_user_key, {}).get(model_meal_key)
-        user_signal = unavailable_user if user is None else {
-            "available": True, "score": float(user["score"]), "neighborSupport": int(user["support"])
-        }
-        item_signal = unavailable_item if item is None else {
-            "available": True, "score": float(item["score"]), "supportingItemCount": int(item["support"])
-        }
+        user_signal = (
+            unavailable_user
+            if user is None
+            else {"available": True, "score": float(user["score"]), "neighborSupport": int(user["support"])}
+        )
+        item_signal = (
+            unavailable_item
+            if item is None
+            else {"available": True, "score": float(item["score"]), "supportingItemCount": int(item["support"])}
+        )
         return user_signal, item_signal
 
 
@@ -141,9 +145,11 @@ def _load_collaborative_index(directory: Path, manifest: dict[str, Any]) -> dict
     if hashlib.sha256(raw).hexdigest() != checksum:
         raise ModelPackageError("collaborative index checksum mismatch")
     parsed = json.loads(raw)
-    if (parsed.get("schemaVersion") != metadata["schemaVersion"]
-            or parsed.get("positiveOnly") is not True
-            or parsed.get("sourceSnapshotSha256") != source_checksum):
+    if (
+        parsed.get("schemaVersion") != metadata["schemaVersion"]
+        or parsed.get("positiveOnly") is not True
+        or parsed.get("sourceSnapshotSha256") != source_checksum
+    ):
         raise ModelPackageError("collaborative index content is invalid")
     for section in ("userCf", "itemCf"):
         if not isinstance(parsed.get(section), dict):

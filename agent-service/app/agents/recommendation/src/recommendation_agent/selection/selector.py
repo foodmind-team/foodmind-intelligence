@@ -41,10 +41,7 @@ class DeterministicResultSelector:
             selected_candidates.append(candidate)
             ordered.remove(candidate)
 
-        selected = [
-            _selection(candidate, _recommendation_type(candidate))
-            for candidate in selected_candidates
-        ]
+        selected = [_selection(candidate, _recommendation_type(candidate)) for candidate in selected_candidates]
         return tuple(selected)
 
 
@@ -67,8 +64,7 @@ def _diversity_key(
 ) -> tuple[float, int, float, float, int, str]:
     request_candidate = request_candidates[candidate.candidate_id]
     penalty = max(
-        similarity_penalty(request_candidate, request_candidates[item.candidate_id], policy)
-        for item in selected
+        similarity_penalty(request_candidate, request_candidates[item.candidate_id], policy) for item in selected
     )
     novelty_bonus = min(request_candidate.evidence.novelty * policy.novelty_bonus_multiplier, policy.novelty_bonus_cap)
     adjusted = candidate.probability + novelty_bonus - penalty
