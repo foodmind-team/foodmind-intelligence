@@ -55,7 +55,6 @@ async def research_missing_node(
     from cooking_plan_agent.domain.models import ReconciledEvidence
     from cooking_plan_agent.infrastructure.cache import (
         RESEARCH_SAFETY_POLICY_VERSION,
-        _stable_digest,
         build_research_cache_key,
     )
     from cooking_plan_agent.research.query_builder import build_minimal_query
@@ -64,9 +63,8 @@ async def research_missing_node(
     # P1-06 cache is optional — getattr keeps duck-typed contexts working.
     cache = getattr(runtime.context, "cache", None)
 
-    # P1-06 research cache key: query + provider tag + allow-list + safety
-    # policy version (+ model for LLM-backed researchers).
-    allow_list_fingerprint = _stable_digest(*sorted(set(settings.allowed_research_domains)))
+    # P1-06 research cache key: query + provider tag + safety policy version
+    # (+ model for LLM-backed researchers).
     researcher = runtime.context.recipe_researcher
     if researcher is None:
         # The apply node still runs and supplies deterministic non-safety
@@ -107,7 +105,6 @@ async def research_missing_node(
         key = build_research_cache_key(
             query_text,
             provider_tag=provider_tag,
-            allow_list_fingerprint=allow_list_fingerprint,
             safety_policy_version=RESEARCH_SAFETY_POLICY_VERSION,
             model=model_tag,
         )

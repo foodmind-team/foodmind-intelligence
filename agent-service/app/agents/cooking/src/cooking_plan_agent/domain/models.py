@@ -267,21 +267,6 @@ class EvidenceResult(StrictModel):
     fact_value: str
 
 
-class SearchDocument(StrictModel):
-    """Provider-neutral search result document.
-
-    Normalised from any concrete provider (Brave, SerpAPI, Fake).
-    No provider-specific fields — the rest of the code only sees this shape."""
-
-    title: str
-    url: str
-    snippet: str
-    # Raw content fetched from the page (may be empty for snippet-only providers)
-    raw_content: str = ""
-    # Domain extracted from URL for allow-list matching
-    domain: str = ""
-
-
 class CookingEvidence(StrictModel):
     """Evidence extracted from a single search document (handbook 10.6).
 

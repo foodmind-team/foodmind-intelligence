@@ -67,30 +67,16 @@ def route_after_local_inference(
     if not critical_gaps:
         return "validate_recipe_ir"
 
-    # Check if web research is enabled via Settings (handbook 10.1)
-    from cooking_plan_agent.config.settings import get_settings
-
-    settings = get_settings()
+    # Gap completion is LLM-only now (web search removed). Only non-safety
+    # operational gaps (heat/duration/temperature) are researchable; safety-
+    # critical and other gaps go straight to user confirmation.
     non_safety_operational = [
         g
         for g in critical_gaps
         if g.gap_class != "safety_critical"
         and any(f in g.field_path.lower() for f in ("heat_level", "duration", "temperature"))
     ]
-    if not settings.web_research_enabled:
-        # Even without a provider, the research/apply stage supplies the
-        # deterministic fallback for non-safety operational fields.
-        return "research_missing" if non_safety_operational else "build_confirmation_response"
-
-    # Only route to research for heat/duration/temperature gaps (handbook 10.1)
-    _researchable_fields = {"heat_level", "duration", "temperature", "target_temperature_c"}
-    researchable = [g for g in critical_gaps if any(f in g.field_path.lower() for f in _researchable_fields)]
-
-    if researchable:
-        return "research_missing"
-
-    # Non-researchable critical gaps → confirmation
-    return "build_confirmation_response"
+    return "research_missing" if non_safety_operational else "build_confirmation_response"
 
 
 # ---------------------------------------------------------------------------

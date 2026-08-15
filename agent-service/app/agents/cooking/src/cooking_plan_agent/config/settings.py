@@ -38,7 +38,6 @@ class Settings(BaseSettings):
     solver_timeout_seconds: float = 5.0  # the solver timeout in seconds
     max_recipe_count: int = 6  # the maximum number of recipes to return
     max_task_count: int = 100  # the maximum number of tasks to process
-    web_research_enabled: bool = False  # whether to enable web research
     # P3-03: solver optimisation depth. "makespan" keeps the legacy Phase-1
     # only solve; "phase12" adds holding minimisation; "full" (default) runs
     # makespan → holding → context-switch. Phase 4 (active labour) stays
@@ -150,21 +149,11 @@ class Settings(BaseSettings):
     # 用户 answers 后经 apply_confirmation 续接重排。默认关闭保持原终态。
     confirmation_dialog_enabled: bool = False
 
-    # --- Bounded web research controls (handbook 10.1, 10.9) ---
-    # Per-query timeout in seconds — search fails to confirmation on timeout
+    # --- Gap completion & explanation timeout (formerly web research) ---
+    # Bounds a single gap-completion call and the additive schedule-explainer
+    # call; on timeout the caller falls back to confirmation / deterministic
+    # explanation rather than blocking.
     research_timeout_seconds: float = 10.0
-    # At most N queries per dish in MVP (handbook 10.9)
-    research_max_queries_per_dish: int = 2
-    # At most N results per query
-    research_max_results_per_query: int = 3
-    # Domain allow-list for web research (handbook 10.4).
-    # Separate source classes are maintained in research/config.py,
-    # but the raw list lives here for environment-variable configuration.
-    allowed_research_domains: list[str] = []
-    # Median Absolute Deviation threshold for duration reconciliation
-    # (handbook 10.7). If MAD exceeds this fraction of the median,
-    # the result is flagged as needs_confirmation.
-    research_disagreement_threshold: float = 0.5
 
     # --- Intermediate artifact cache (P1-06) ---
     # Caches stable parse/research artifacts (never final READY responses).
