@@ -58,9 +58,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _shutting_down
 
     from cooking_plan_agent.config.settings import get_settings
-    from cooking_plan_agent.research.config import DomainAllowList
-    from cooking_plan_agent.research.providers.fake import FakeSearchProvider
-    from cooking_plan_agent.research.researcher import Researcher
 
     settings = get_settings()
 
@@ -140,29 +137,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         LLMRecipeImportExtractor,
     )
 
+    # LLM master switch: a None client means "LLM disabled" and the whole
+    # pipeline falls back to rule-based parsing.
     llm_client: LLMClient | None = None
     if settings.llm_enabled:
+        # Create the process-level LLM client. Provider-neutral: base_url/model
+        # can be swapped to any OpenAI-compatible endpoint (Ollama / cloud) via
+        # COOKING_PLAN_LLM_* env vars.
+        # api_key is unwrapped from SecretStr; None when unset (local Ollama needs none).
         llm_client = LLMClient(
             base_url=settings.llm_base_url,
             model=settings.llm_model,
             api_key=settings.llm_api_key.get_secret_value() if settings.llm_api_key else None,
+            # Timeout / retries / temperature / output cap / pool — all from COOKING_PLAN_LLM_*.
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
             temperature=settings.llm_temperature,
             max_output_tokens=settings.llm_max_output_tokens,
             connection_pool_size=settings.llm_connection_pool_size,
         )
-        # P1-02: one lifecycle-level client, closed exactly once on shutdown.
+        # P1-02: one lifecycle-level client, created once and closed exactly
+        # once on shutdown (no per-call connection-pool rebuild).
         _provider_clients.append(llm_client)
+        # Schedule explainer (P4-01): LLM-generated "why this schedule" prose —
+        # an additive capability with a deterministic fallback on failure.
         app.state.llm_explainer = LLMPlanExplainer(llm_client)
         logger.info(
             "LLM integration enabled",
             extra={"llm_model": settings.llm_model, "llm_base_url": settings.llm_base_url},
         )
     else:
+        # LLM disabled: leave the explainer unset so downstream graph nodes
+        # take the deterministic / disabled branch.
         app.state.llm_explainer = None
 
-    # RecipeExtractor: LLM-backed when enabled, otherwise rule-based fallback.
+    # RecipeExtractor: single-recipe structuring. LLM-backed when the client is
+    # enabled; None otherwise — downstream nodes fall back to the rule-based
+    # extractor (parsing.extractor.RecipeExtractor) on a None value.
+    # `recipe_extraction_llm_timeout_seconds` is intentionally shorter than the
+    # shared LLM timeout so interactive plan generation still leaves time for
+    # gap completion and scheduling before the request deadline.
     recipe_extractor = (
         LLMRecipeExtractor(
             llm_client,
@@ -176,17 +190,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # partial recipes and asks only for facts required before persistence.
     from cooking_plan_agent.parsing.recipe_imports import DeterministicRecipeImportExtractor
 
+    # The rule importer is always built: it splits pasted multi-dish text into
+    # blocks and extracts each with the rule extractor. When LLM is enabled it
+    # doubles as the LLM importer's fallback (LLM failure -> rule importer);
+    # when LLM is disabled it is used directly.
     deterministic_importer = DeterministicRecipeImportExtractor()
     recipe_import_extractor = (
         LLMRecipeImportExtractor(
             llm_client,
             deterministic_importer,
+            # Shorter timeout: import is served through a Backend client with a
+            # 30s read deadline, so fall back before exhausting that boundary.
             timeout_seconds=settings.recipe_import_llm_timeout_seconds,
+            # Larger output cap: one JSON with a ~6-dish array exceeds the shared
+            # 2048-token budget; truncation used to force the weak rule fallback.
             max_output_tokens=settings.recipe_import_max_output_tokens,
         )
         if llm_client is not None
         else deterministic_importer
     )
+    # answer_normaliser translates free-text clarification answers (e.g. Chinese
+    # free text) into English. Only the LLM importer has normalise_answers(); the
+    # rule importer cannot translate, so the normaliser stays unset.
     app.state.recipe_import_service = ParseRecipeImportService(
         recipe_import_extractor,
         answer_normaliser=(
@@ -194,26 +219,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ),
     )
 
-    # Wire RecipeResearcher when web research is enabled (handbook 10.1).
-    recipe_researcher: Researcher | LLMKnowledgeResearcher | None = None
-    if settings.web_research_enabled:
-        from cooking_plan_agent.research.researcher import SearchProvider
-
-        allow_list = DomainAllowList.from_settings(
-            custom_domains=settings.allowed_research_domains,
-        )
-        provider: SearchProvider
-        if llm_client is not None:
-            # LLM knowledge research — fills gaps from model culinary knowledge
-            # without web search (deterministic domain filtering still applies).
-            recipe_researcher = LLMKnowledgeResearcher(llm_client)
-        else:
-            provider = FakeSearchProvider()
-            recipe_researcher = Researcher(
-                provider=provider,
-                allow_list=allow_list,
-                settings=settings,
-            )
+    # RecipeResearcher: gap completion is LLM-only now (web search removed).
+    # When the LLM client is present it answers heat/duration/temperature gaps
+    # from model knowledge; when absent, no researcher is wired and downstream
+    # falls back to confirmation / deterministic defaults.
+    recipe_researcher: LLMKnowledgeResearcher | None = (
+        LLMKnowledgeResearcher(llm_client) if llm_client is not None else None
+    )
 
     workflow_context = WorkflowContext(
         recipe_extractor=recipe_extractor,  # type: ignore[arg-type]

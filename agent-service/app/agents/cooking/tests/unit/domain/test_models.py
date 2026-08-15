@@ -43,7 +43,6 @@ from cooking_plan_agent.domain.models import (
     ResourceNeed,
     SafetyFinding,
     SafetyReport,
-    SearchDocument,
     TaskDependency,
     WorkflowError,
 )
@@ -701,16 +700,6 @@ class TestEvidenceModels:
             retrieved_at="2026-07-01T00:00:00Z",
         )
         assert ref.source_type == "web_search"
-
-    def test_search_document(self):
-        doc = SearchDocument(
-            title="Test",
-            url="https://example.com",
-            snippet="Test snippet",
-            domain="example.com",
-        )
-        assert doc.domain == "example.com"
-        assert doc.raw_content == ""
 
     def test_cooking_evidence(self):
         ev = CookingEvidence(

@@ -232,19 +232,17 @@ def build_research_cache_key(
     query_text: str,
     *,
     provider_tag: str,
-    allow_list_fingerprint: str,
     safety_policy_version: str,
     model: str = "",
 ) -> str:
     """Key for a research artifact (P1-06 rule 3).
 
-    Includes the query, the provider identity, the domain allow-list, and the
-    safety policy version so evidence is never shared across policy regimes.
+    Includes the query, the provider identity, and the safety policy version
+    so evidence is never shared across policy regimes.
     """
     return _stable_digest(
         query_text,
         provider_tag,
-        allow_list_fingerprint,
         safety_policy_version,
         model,
     )
