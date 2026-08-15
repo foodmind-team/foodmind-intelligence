@@ -93,15 +93,27 @@ class InferenceRequest(WireModel):
 
 
 class UserCf(WireModel):
-    available: Literal[False] = False
-    score: None = None
-    neighbor_support: Literal[0] = 0
+    available: StrictBool = False
+    score: Ratio | None = None
+    neighbor_support: Annotated[StrictInt, Field(ge=0, le=1_000_000)] = 0
+
+    @model_validator(mode="after")
+    def validate_support(self) -> Self:
+        if self.available != (self.score is not None and self.neighbor_support > 0):
+            raise ValueError("UserCF availability and support are inconsistent")
+        return self
 
 
 class ItemCf(WireModel):
-    available: Literal[False] = False
-    score: None = None
-    supporting_item_count: Literal[0] = 0
+    available: StrictBool = False
+    score: Ratio | None = None
+    supporting_item_count: Annotated[StrictInt, Field(ge=0, le=1_000_000)] = 0
+
+    @model_validator(mode="after")
+    def validate_support(self) -> Self:
+        if self.available != (self.score is not None and self.supporting_item_count > 0):
+            raise ValueError("ItemCF availability and support are inconsistent")
+        return self
 
 
 class Prediction(WireModel):
