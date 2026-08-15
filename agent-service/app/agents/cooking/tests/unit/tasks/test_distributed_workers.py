@@ -367,7 +367,8 @@ async def test_scale_down_to_single_worker_loses_no_tasks(tmp_path) -> None:
 
     task_ids = []
     for i in range(4):
-        outcome = await svc.submit(_request(f"req-scale-{i}"))
+        request = _request(f"req-scale-{i}").model_copy(update={"user_id": f"dist-user-{i}"})
+        outcome = await svc.submit(request)
         task_ids.append(outcome.task.task_id)
 
     for _ in range(4):

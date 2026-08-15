@@ -26,11 +26,6 @@ async def research_missing_node(
     On any failure (timeout, provider error, no results), the evidence
     stays empty and routing falls back to confirmation — never unsafe guess.
     """
-    researcher = runtime.context.recipe_researcher
-    if researcher is None:
-        # No researcher wired — nothing to do (MVP without research)
-        return {}
-
     gaps = state.get("gaps", ())
     if not gaps:
         return {}
@@ -72,6 +67,12 @@ async def research_missing_node(
     # P1-06 research cache key: query + provider tag + allow-list + safety
     # policy version (+ model for LLM-backed researchers).
     allow_list_fingerprint = _stable_digest(*sorted(set(settings.allowed_research_domains)))
+    researcher = runtime.context.recipe_researcher
+    if researcher is None:
+        # The apply node still runs and supplies deterministic non-safety
+        # defaults; safety gaps remain unresolved for confirmation.
+        return {"research_evidence": {}}
+
     provider_tag = type(researcher).__name__
     model_tag = settings.llm_model
 
@@ -126,7 +127,16 @@ async def research_missing_node(
     # retain the handbook limit of two queries per dish.
     import asyncio
 
-    resolved_evidence = await asyncio.gather(*(_resolve(gap) for gap in selected_gaps))
+    async def _resolve_bounded(gap: object) -> ReconciledEvidence:
+        try:
+            return await asyncio.wait_for(
+                _resolve(gap),
+                timeout=settings.research_timeout_seconds,
+            )
+        except TimeoutError:
+            return ReconciledEvidence(source_count=0, needs_confirmation=True)
+
+    resolved_evidence = await asyncio.gather(*(_resolve_bounded(gap) for gap in selected_gaps))
     research_evidence = {gap.gap_id: resolved for gap, resolved in zip(selected_gaps, resolved_evidence, strict=True)}
 
     return {"research_evidence": research_evidence}
@@ -156,9 +166,6 @@ async def apply_research_evidence_node(
     from cooking_plan_agent.research.evidence_apply import apply_evidence_to_candidate
 
     research_evidence = state.get("research_evidence", {})
-    if not research_evidence:
-        # No research ran — leave gaps untouched; downstream routing handles them.
-        return {}
 
     candidates = list(state.get("extracted_candidates", ()))
     gaps = state.get("gaps", ())
@@ -168,11 +175,6 @@ async def apply_research_evidence_node(
     needs_confirmation = False
 
     for gap in gaps:
-        reconciled = research_evidence.get(gap.gap_id)
-        if reconciled is None:
-            # Gap not targeted by research — stays unresolved.
-            continue
-
         # Locate the recipe by stable recipe_id, never by list position.
         candidate_idx = next(
             (i for i, candidate in enumerate(candidates) if candidate.recipe_id == gap.recipe_id),
@@ -180,6 +182,27 @@ async def apply_research_evidence_node(
         )
         if candidate_idx is None:
             needs_confirmation = True  # recipe-level location failure
+            continue
+
+        reconciled = research_evidence.get(gap.gap_id)
+        if reconciled is None or reconciled.source_count <= 0:
+            from cooking_plan_agent.parsing.inference import (
+                InferenceResult,
+                infer_deterministic_default,
+                merge_inference,
+            )
+
+            fallback = infer_deterministic_default(candidates[candidate_idx], gap)
+            if fallback is not None:
+                filled_gap, assumption = fallback
+                candidates[candidate_idx] = merge_inference(
+                    candidates[candidate_idx],
+                    InferenceResult((filled_gap,), (), (assumption,)),
+                )
+                applied_gap_ids.add(gap.gap_id)
+                assumptions.append(assumption)
+                continue
+            # Safety and non-operational gaps stay unresolved.
             continue
 
         result = apply_evidence_to_candidate(candidates[candidate_idx], gap, reconciled)
@@ -194,7 +217,23 @@ async def apply_research_evidence_node(
             if reconciled.needs_confirmation:
                 needs_confirmation = True
         else:
-            needs_confirmation = needs_confirmation or result.needs_confirmation
+            from cooking_plan_agent.parsing.inference import (
+                InferenceResult,
+                infer_deterministic_default,
+                merge_inference,
+            )
+
+            fallback = infer_deterministic_default(candidates[candidate_idx], gap)
+            if fallback is not None:
+                filled_gap, assumption = fallback
+                candidates[candidate_idx] = merge_inference(
+                    candidates[candidate_idx],
+                    InferenceResult((filled_gap,), (), (assumption,)),
+                )
+                applied_gap_ids.add(gap.gap_id)
+                assumptions.append(assumption)
+            else:
+                needs_confirmation = needs_confirmation or result.needs_confirmation
 
     remaining_gaps = tuple(g for g in gaps if g.gap_id not in applied_gap_ids)
     if any(g.gap_class in ("critical", "safety_critical") for g in remaining_gaps):

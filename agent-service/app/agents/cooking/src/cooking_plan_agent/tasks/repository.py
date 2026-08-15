@@ -23,7 +23,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
-from cooking_plan_agent.tasks.models import TaskRecord, TaskStatus, utc_now
+from cooking_plan_agent.tasks.models import TaskProgress, TaskRecord, TaskStatus, utc_now
 
 
 def _row_to_record(row: tuple[Any, ...]) -> TaskRecord:
@@ -121,8 +121,16 @@ class TaskRepository(ABC):
         """Persist execution state with optimistic event-version control."""
 
     @abstractmethod
+    async def update_progress(self, task_id: str, progress: TaskProgress) -> TaskRecord | None:
+        """Persist RUNNING progress without overwriting the worker lease."""
+
+    @abstractmethod
     async def list_running(self) -> list[TaskRecord]:
         """Return QUEUED/RUNNING tasks (recovery after restart, P3-01)."""
+
+    @abstractmethod
+    async def list_active_by_user(self, user_id: str) -> list[TaskRecord]:
+        """Return the user's QUEUED/RUNNING tasks, oldest first."""
 
     @abstractmethod
     async def claim_available(self, lease_seconds: float) -> TaskRecord | None:
@@ -358,8 +366,31 @@ class SQLiteTaskRepository(TaskRepository):
         await cursor.close()
         return await self.get(record.task_id) if changed else None
 
+    async def update_progress(self, task_id: str, progress: TaskProgress) -> TaskRecord | None:
+        cursor = await self.conn.execute(
+            """
+            UPDATE cooking_tasks
+            SET progress=?, updated_at=?, event_id = event_id + 1
+            WHERE task_id=? AND status='RUNNING'
+            """,
+            (progress.model_dump_json(), utc_now().isoformat(), task_id),
+        )
+        await self.conn.commit()
+        changed = cursor.rowcount
+        await cursor.close()
+        return await self.get(task_id) if changed else None
+
     async def list_running(self) -> list[TaskRecord]:
         cursor = await self.conn.execute(f"{self._SELECT} WHERE status IN ('QUEUED', 'RUNNING') ORDER BY created_at")
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [_row_to_record(r) for r in rows]
+
+    async def list_active_by_user(self, user_id: str) -> list[TaskRecord]:
+        cursor = await self.conn.execute(
+            f"{self._SELECT} WHERE user_id = ? AND status IN ('QUEUED', 'RUNNING') ORDER BY created_at",
+            (user_id,),
+        )
         rows = await cursor.fetchall()
         await cursor.close()
         return [_row_to_record(r) for r in rows]

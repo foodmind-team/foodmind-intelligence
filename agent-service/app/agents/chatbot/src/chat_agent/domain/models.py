@@ -23,10 +23,20 @@ class WireModel(BaseModel):
 
 
 BoundedText = Annotated[str, StringConstraints(min_length=1, max_length=12000)]
+TurnText = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+SuggestionText = Annotated[str, StringConstraints(min_length=1, max_length=200)]
 SourceType = Literal["FOOD_RECORD", "FOOD_PRODUCT", "PLACE"]
 Route = Literal["SUMMARY", "SEARCH", "COMPARE", "NAVIGATION", "OUT_OF_SCOPE"]
 RequestedRoute = Literal["SUMMARY", "SEARCH", "COMPARE", "NAVIGATION"]
 ResponseStatus = Literal["SUCCEEDED", "FALLBACK_SUCCEEDED", "UNSUPPORTED"]
+Destination = Literal[
+    "INVENTORY",
+    "SHOPPING_LISTS",
+    "SAVED_RECIPES",
+    "COOKING_PLANS",
+    "RECOMMENDATIONS",
+    "EXPLORE",
+]
 
 
 class SharedReference(WireModel):
@@ -35,6 +45,11 @@ class SharedReference(WireModel):
     source_id: UUID
     title: Annotated[str | None, StringConstraints(max_length=500)] = None
     snippet: Annotated[str | None, StringConstraints(max_length=4000)] = None
+
+
+class ConversationTurn(WireModel):
+    role: Literal["USER", "ASSISTANT"]
+    content: TurnText
 
 
 class AgentChatRequest(WireModel):
@@ -48,6 +63,7 @@ class AgentChatRequest(WireModel):
     requested_route: RequestedRoute | None = None
     delegation_token: Annotated[str | None, StringConstraints(max_length=8192)] = Field(default=None, repr=False)
     shared_references: Annotated[list[SharedReference], Field(max_length=20)] = Field(default_factory=list)
+    recent_turns: Annotated[list[ConversationTurn], Field(max_length=8)] = Field(default_factory=list)
 
 
 class ChatSource(WireModel):
@@ -69,6 +85,8 @@ class AgentChatResponse(WireModel):
     response_status: ResponseStatus
     answer: Annotated[str, StringConstraints(min_length=1, max_length=4000)]
     sources: Annotated[list[ChatSource], Field(max_length=10)] = Field(default_factory=list)
+    suggested_questions: Annotated[list[SuggestionText], Field(max_length=3)] = Field(default_factory=list)
+    suggested_destinations: Annotated[list[Destination], Field(max_length=3)] = Field(default_factory=list)
 
 
 class ErrorEnvelope(BaseModel):
