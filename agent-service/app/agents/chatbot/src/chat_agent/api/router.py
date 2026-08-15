@@ -40,6 +40,23 @@ _NAVIGATION = re.compile(
     re.IGNORECASE,
 )
 _COUNT = re.compile(r"\b(how many|count|number of|are there|do you have)\b|有多少|多少|数量", re.IGNORECASE)
+_GREETING = re.compile(r"^(?:hi|hello|hey|你好|您好|嗨)[!！。. ]*$", re.IGNORECASE)
+_PLATFORM_SCOPE = re.compile(
+    r"\b(?:foodmind|platform\s+(?:item(?:s)?|feature(?:s)?|data|recommendation(?:s)?|recipe(?:s)?|record(?:s)?|"
+    r"group(?:s)?|profile|preference(?:s)?)|recommend(?:ation|ations)?|meal|food|drink|recipe|cook(?:ing)?|ingredient|"
+    r"restaurant(?:s)?|place(?:s)?|menu|"
+    r"catalog(?:ue)?|shopping(?:\s+list)?|grocer(?:y|ies)|inventory|food\s+record|drink\s+record|history|"
+    r"saved(?:\s+item|\s+recipe)?|group(?:s)?|explore|dashboard|insight(?:s)?|profile|preference(?:s)?|"
+    r"allerg(?:y|en|ies)|dietary|nutrition|budget)\b"
+    r"|推荐|菜谱|食谱|做饭|烹饪|餐食|食物|饮品|餐厅|菜单|目录|购物清单|库存|记录|历史|收藏|群组|"
+    r"探索|仪表盘|洞察|个人资料|偏好|过敏|饮食|营养|预算",
+    re.IGNORECASE,
+)
+_EXTERNAL_TOPIC = re.compile(
+    r"\b(?:weather|forecast|temperature|rain|politics|election|stock(?:\s+market)?|crypto|sports?\s+score)\b"
+    r"|天气|气温|下雨|政治|选举|股市|股票|加密货币|比赛比分",
+    re.IGNORECASE,
+)
 
 
 @router.post("/generate", response_model=AgentChatResponse)
@@ -61,6 +78,10 @@ async def _generate(
     tools: BackendToolClient,
     settings: Settings,
 ) -> AgentChatResponse:
+    if not _is_platform_related(body):
+        logger.info("chat_generation outcome=unsupported reason=platform_scope trace_id=%s", body.trace_id)
+        return _out_of_scope(body)
+
     route = _route(body)
     sources = tuple(GroundedSource.from_reference(item) for item in body.shared_references[:10])
     if route == "SEARCH":
@@ -148,6 +169,13 @@ def _route(body: AgentChatRequest) -> Route:
     return "SUMMARY" if body.shared_references else "NAVIGATION"
 
 
+def _is_platform_related(body: AgentChatRequest) -> bool:
+    """Keep chat within FoodMind instead of relying on a provider to decline unrelated prompts."""
+    if _EXTERNAL_TOPIC.search(body.message):
+        return False
+    return bool(body.shared_references or _GREETING.fullmatch(body.message) or _PLATFORM_SCOPE.search(body.message))
+
+
 def _messages(body: AgentChatRequest, route: Route, sources: tuple[GroundedSource, ...]) -> list[dict[str, str]]:
     references = [
         {
@@ -159,12 +187,15 @@ def _messages(body: AgentChatRequest, route: Route, sources: tuple[GroundedSourc
         }
         for item in sources[:10]
     ]
-    system = """You are FoodMind Chat, a natural, adaptable read-only assistant.
-Answer the user's question directly and conversationally. Vary your wording and structure to fit the question;
-avoid canned templates. You may use the supplied FoodMind sources when relevant and answer freely from general
-knowledge. Treat supplied grounding facts as authoritative and never invent facts attributed to FoodMind data.
-Never create, update, or delete data. Never write to FoodMind.
-Reply in the same language as the user's message. Do not include a bibliography; FoodMind renders source cards.
+    system = """You are FoodMind Chat, a natural, adaptable read-only assistant for the FoodMind platform.
+Only answer questions about FoodMind, its features, or the user's authorised FoodMind data: meal and drink
+recommendations, recipes and cooking, catalogue items and places, records, shopping lists, inventory, groups,
+history, insights, profile, and preferences. Do not answer general knowledge or external topics such as weather,
+news, politics, finance, or sports. If an unrelated request reaches you, say that you can only help with FoodMind
+and briefly name relevant FoodMind areas. Treat supplied grounding facts as authoritative and never invent facts
+attributed to FoodMind data. Never create, update, or delete data. Never write to FoodMind.
+Reply in the same language as the user's message. Vary your wording and structure to fit the question.
+Continue to avoid canned templates. Do not include a bibliography; FoodMind renders source cards.
 Offer useful nuance, alternatives, or a brief follow-up question when that genuinely improves the answer.
 Keep practical suggestions feasible and respect every stated time, ingredient, dietary, and budget constraint.
 FoodMind areas: Home recommendations, Groups, Explore, Saved items, Saved recipes, Food and Drink Records,
@@ -211,6 +242,24 @@ def _fallback(route: Route, sources: tuple[GroundedSource, ...]) -> str:
     if route == "SEARCH":
         return f"I found these FoodMind sources: {', '.join(titles)}."
     return f"The shared FoodMind sources are: {', '.join(titles)}."
+
+
+def _out_of_scope(body: AgentChatRequest) -> AgentChatResponse:
+    chinese = bool(re.search(r"[\u3400-\u9fff]", body.message))
+    answer = (
+        "我无法回答与 FoodMind 平台无关的问题。我可以帮助你使用 FoodMind 的推荐、食谱、记录、"
+        "购物清单、库存、群组和个人偏好。"
+        if chinese
+        else "I can't answer questions unrelated to the FoodMind platform. I can help with FoodMind recommendations, "
+        "recipes, records, shopping lists, inventory, groups, and preferences."
+    )
+    return _response(
+        body,
+        route="OUT_OF_SCOPE",
+        response_status="UNSUPPORTED",
+        answer=answer,
+        sources=(),
+    )
 
 
 def _tool_unavailable(body: AgentChatRequest) -> AgentChatResponse:

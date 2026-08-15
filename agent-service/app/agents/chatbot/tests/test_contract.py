@@ -195,6 +195,52 @@ def test_recommendation_question_is_answered_readonly_instead_of_out_of_scope() 
     assert response.json()["responseStatus"] == "FALLBACK_SUCCEEDED"
 
 
+@pytest.mark.parametrize("message", ["How is the weather today?", "今天天气怎么样？"])
+def test_external_question_is_rejected_before_model_or_tools(message: str) -> None:
+    tools = FakeBackendTools()
+    llm = FakeLLM("This must never be returned.")
+    payload = request_payload(requested_route="SEARCH")
+    payload["message"] = message
+    with TestClient(
+        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
+    ) as client:
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["route"] == "OUT_OF_SCOPE"
+    assert body["responseStatus"] == "UNSUPPORTED"
+    assert body["sources"] == []
+    assert tools.search_calls == []
+    assert llm.calls == []
+    if "天气" in message:
+        assert "无法回答" in body["answer"]
+    else:
+        assert "can't answer" in body["answer"]
+
+
+def test_platform_question_still_uses_the_model_after_scope_check() -> None:
+    llm = FakeLLM("Use FoodMind Preferences to set dietary requirements.")
+    payload = request_payload()
+    payload["message"] = "How do I set my dietary preferences in FoodMind?"
+    with TestClient(
+        create_app(settings=settings(), llm_client=llm, backend_tool_client=FakeBackendTools())  # type: ignore[arg-type]
+    ) as client:
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+    assert response.status_code == 200
+    assert response.json()["route"] == "NAVIGATION"
+    assert response.json()["responseStatus"] == "SUCCEEDED"
+    assert response.json()["answer"] == "Use FoodMind Preferences to set dietary requirements."
+    assert len(llm.calls) == 1
+
+
 def test_search_tool_failure_returns_source_free_navigation() -> None:
     tools = FakeBackendTools()
     tools.fail = True

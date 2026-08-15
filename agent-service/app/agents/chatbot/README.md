@@ -4,8 +4,11 @@ Private FastAPI service for `POST /internal/v1/chat/generate`. It mirrors the
 Spring Boot `chat-agent-v1` contract, authenticates `Authorization: Bearer`,
 and uses an OpenAI-compatible chat-completions provider such as DeepSeek.
 
-Chatbot is read-only. It can freely explore the current user's authorised
-records, products, and places: targeted search calls Backend
+Chatbot is read-only and limited to FoodMind. It answers questions about the
+platform, its features, and the current user's authorised FoodMind data. An
+unrelated question (for example, weather) returns an `OUT_OF_SCOPE` /
+`UNSUPPORTED` response before any model or Backend tool is called. It can
+explore the current user's authorised records, products, and places: targeted search calls Backend
 `POST /internal/v1/search`, while broad collection questions use the bounded
 `POST /internal/v1/explore` tool. Summary and comparison refresh references
 through `POST /internal/v1/references/resolve`. Every call uses the Backend
