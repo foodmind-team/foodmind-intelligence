@@ -35,13 +35,14 @@ def test_app_factory_creates_valid_app():
 
     app = create_app()
 
-    # Health endpoints are registered directly on the app
-    routes = {r.path for r in app.routes if hasattr(r, "path") and isinstance(r.path, str)}
-    assert "/health/live" in routes
-    assert "/health/ready" in routes
+    # Health endpoints are registered via the health router. Use the OpenAPI
+    # schema (not app.routes) since FastAPI registers included routers as
+    # _IncludedRouter, which exposes no path attribute.
+    schema = app.openapi()
+    assert "/health/live" in schema["paths"]
+    assert "/health/ready" in schema["paths"]
 
     # OpenAPI spec includes the generate endpoint
-    schema = app.openapi()
     assert "/internal/v1/agents/cooking-plan/generate" in schema["paths"]
 
 
