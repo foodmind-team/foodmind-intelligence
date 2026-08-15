@@ -6,17 +6,22 @@
 # supply fakes. Avoid creating clients at module import time.
 import logging
 import signal
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
 
 from cooking_plan_agent.api import register_exception_handlers
 from cooking_plan_agent.api import router as agent_router
 from cooking_plan_agent.api.compat_router import router as compat_router
+from cooking_plan_agent.api.health import router as health_router
+from cooking_plan_agent.api.middleware import (
+    add_correlation_id_header,
+    get_active_request_count,
+    set_shutting_down,
+    shutdown_middleware,
+)
 from cooking_plan_agent.application import GenerateCookingPlanService, ParseRecipeImportService
 from cooking_plan_agent.observability.logging import RedactingJsonFormatter, configure_structured_logging
 from cooking_plan_agent.safety.engine import SafetyEngine
@@ -30,15 +35,10 @@ _RedactingJsonFormatter = RedactingJsonFormatter
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# Graceful shutdown state (Handbook 12.5)
+# Provider clients (Handbook 12.5)
 # ============================================================================
-# Track whether the server is shutting down so we can:
-#   - Reject new requests with 503
-#   - Allow in-flight work to complete (bounded timeout)
-#   - Close provider clients cleanly
-
-_shutting_down = False
-_active_request_count = 0
+# Long-lived clients are closed cleanly on shutdown. Shutdown gating state
+# (_shutting_down / _active_request_count) lives in api.middleware.
 _provider_clients: list[object] = []  # populated when LLM/search providers are wired
 
 
@@ -55,8 +55,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Handbook 12.5: on shutdown, stop accepting requests, wait for in-flight
     work to finish, close provider clients, flush logs.
     """
-    global _shutting_down
-
     from cooking_plan_agent.config.settings import get_settings
 
     settings = get_settings()
@@ -113,7 +111,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Reset shutdown flag on startup (critical for tests: module-level
     # global persists across TestClient instances and must be reset).
-    _shutting_down = False
+    set_shutting_down(False)
 
     logger.info(
         "Starting Cooking Plan Agent",
@@ -326,20 +324,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # ---- Graceful shutdown (Handbook 12.5) ----
     logger.info("Shutting down Cooking Plan Agent")
-    _shutting_down = True
+    set_shutting_down(True)
 
     # Allow in-flight work to drain (bounded timeout).
     import asyncio
 
     drain_seconds = 10
     for _ in range(drain_seconds * 10):
-        if _active_request_count <= 0:
+        if get_active_request_count() <= 0:
             break
         await asyncio.sleep(0.1)
-    if _active_request_count > 0:
+    if get_active_request_count() > 0:
         logger.warning(
             "Forcing shutdown with active requests",
-            extra={"active_count": _active_request_count},
+            extra={"active_count": get_active_request_count()},
         )
 
     # Close provider clients.
@@ -386,67 +384,11 @@ def _handle_sigterm(signum: int, frame: object | None) -> None:
     teardown. This handler ensures we also set our shutdown flag early so
     new requests are rejected with 503 before the event loop stops.
     """
-    global _shutting_down
-    _shutting_down = True
+    set_shutting_down(True)
     logger.info("Received SIGTERM — draining in-flight requests")
 
 
 signal.signal(signal.SIGTERM, _handle_sigterm)
-
-
-# ---------------------------------------------------------------------------
-# Correlation ID response middleware (handbook 9.10)
-# ---------------------------------------------------------------------------
-
-
-async def _add_correlation_id_header(
-    request: Request,
-    call_next: Callable[[Request], Awaitable[Response]],
-) -> Response:
-    """Propagate the correlation ID from request.state into response headers."""
-    response = await call_next(request)
-    correlation_id = getattr(request.state, "correlation_id", None)
-    if correlation_id:
-        response.headers["X-Request-ID"] = correlation_id
-    return response
-
-
-# ---------------------------------------------------------------------------
-# Shutdown middleware: reject new requests during graceful shutdown (12.5)
-# ---------------------------------------------------------------------------
-
-
-async def _shutdown_middleware(
-    request: Request,
-    call_next: Callable[[Request], Awaitable[Response]],
-) -> Response:
-    """Reject new requests with 503 when the server is shutting down.
-
-    Handbook 12.5: stop accepting new requests; allow bounded in-flight
-    work to finish or cancel cleanly.
-
-    P3-05: the 503 body uses the unified ErrorEnvelope so shutdown is
-    indistinguishable (structurally) from backpressure overload.
-    """
-    global _active_request_count
-    if _shutting_down:
-        from cooking_plan_agent.domain.models import ErrorEnvelope
-
-        correlation_id = str(getattr(request.state, "correlation_id", "unknown"))
-        envelope = ErrorEnvelope(
-            status=503,
-            error_code="SHUTTING_DOWN",
-            message="Service is shutting down. Please retry.",
-            correlation_id=correlation_id,
-            retryable=True,
-        )
-        return JSONResponse(status_code=503, content=envelope.model_dump())
-    _active_request_count += 1
-    try:
-        response = await call_next(request)
-        return response
-    finally:
-        _active_request_count -= 1
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +414,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(application)
 
     # Shutdown middleware: must be outermost so it runs first on every request.
-    application.middleware("http")(_shutdown_middleware)
+    application.middleware("http")(shutdown_middleware)
 
     # ---- CORS (P0-08) ----
     # Internal APIs do NOT enable CORS by default. Only when an explicit
@@ -496,65 +438,10 @@ def create_app() -> FastAPI:
             expose_headers=["X-Request-ID"],
         )
 
-    application.middleware("http")(_add_correlation_id_header)
+    application.middleware("http")(add_correlation_id_header)
 
     # ---- Health endpoints (Handbook 12.4) ----
-
-    @application.get("/health/live", tags=["health"])
-    async def liveness() -> dict[str, str]:
-        """Liveness: process/event loop is alive. No external calls.
-
-        Handbook 12.4: used by orchestrators to verify basic process health.
-        """
-        return {"status": "alive"}
-
-    @application.get("/health/ready", tags=["health"], response_model=dict[str, object])
-    async def readiness() -> JSONResponse:
-        """Readiness: application is ready to serve traffic.
-
-        Handbook 12.4: checks that the application graph/services were constructed
-        and local configuration is valid. Returns 503 if not ready.
-        """
-        settings_ok = getattr(application.state, "settings_validated", False)
-        graph_ok = getattr(application.state, "graph_compiled", False)
-        task_api_ok = not settings.task_api_enabled or getattr(application.state, "task_service", None) is not None
-        shutting_down = _shutting_down
-
-        ready = settings_ok and graph_ok and task_api_ok and not shutting_down
-        status_code = 200 if ready else 503
-
-        return JSONResponse(
-            status_code=status_code,
-            content={
-                "status": "ready" if ready else "not_ready",
-                "checks": {
-                    "settings_validated": settings_ok,
-                    "graph_compiled": graph_ok,
-                    "task_api_ready": task_api_ok,
-                    "shutting_down": shutting_down,
-                },
-            },
-        )
-
-    @application.get("/health/load", tags=["health"])
-    async def load_snapshot() -> dict[str, object]:
-        """Load snapshot from the request limiter (P1-03).
-
-        Bypasses the business limiter (separate route, no lease dependency)
-        so orchestrators can always probe the process while it is overloaded.
-        """
-        from cooking_plan_agent.api.backpressure import RequestLimiter
-
-        limiter = getattr(application.state, "request_limiter", None)
-        if not isinstance(limiter, RequestLimiter):
-            return {"limiter": "not_initialised"}
-        snapshot = limiter.snapshot()
-        return {
-            "active": snapshot.active,
-            "queued": snapshot.queued,
-            "rejected_total": snapshot.rejected_total,
-            "queue_wait_ms": snapshot.queue_wait_ms,
-        }
+    application.include_router(health_router)
 
     return application
 
