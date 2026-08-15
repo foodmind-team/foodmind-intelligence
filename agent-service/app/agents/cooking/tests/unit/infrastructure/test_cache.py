@@ -129,18 +129,17 @@ def test_parse_key_changes_with_text_model_prompt_schema() -> None:
     assert len({k1, *variants}) == 6, "Every key dimension must invalidate"
 
 
-def test_research_key_includes_provider_allowlist_policy() -> None:
-    base = dict(provider_tag="FakeSearchProvider", allow_list_fingerprint="f1", safety_policy_version="1")
+def test_research_key_includes_provider_policy() -> None:
+    base = dict(provider_tag="LLMKnowledgeResearcher", safety_policy_version="1")
     k1 = build_research_cache_key("query", **base)
     assert build_research_cache_key("query", **base) == k1
 
     variants = [
         build_research_cache_key("different-query", **base),
-        build_research_cache_key("query", **{**base, "provider_tag": "OtherSearchProvider"}),
-        build_research_cache_key("query", **{**base, "allow_list_fingerprint": "f2"}),
+        build_research_cache_key("query", **{**base, "provider_tag": "OtherResearcher"}),
         build_research_cache_key("query", **{**base, "safety_policy_version": "2"}),
     ]
-    assert len({k1, *variants}) == 5
+    assert len({k1, *variants}) == 4
 
 
 # ---------------------------------------------------------------------------
