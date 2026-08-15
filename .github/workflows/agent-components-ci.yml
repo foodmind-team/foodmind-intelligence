@@ -133,7 +133,8 @@ jobs:
           agent-service/app/agents/cooking
           inference-service
 
-  merge-gate:
+  agent-components-gate:
+    name: Agent components gate
     if: always()
     needs: [changes, chatbot, cooking, inference, security]
     runs-on: ubuntu-latest

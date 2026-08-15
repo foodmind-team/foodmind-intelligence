@@ -115,6 +115,9 @@ class Settings(BaseSettings):
     # Overall envelope timeout for the whole multi-recipe extraction batch.
     # Per-call timeout is llm_timeout_seconds; this bounds the gather.
     llm_overall_timeout_seconds: float = 240.0
+    # Interactive plan generation must leave time for gap completion and
+    # scheduling. If recipe structuring is slow, switch to rule parsing early.
+    recipe_extraction_llm_timeout_seconds: float = 30.0
     # Recipe import is an interactive request served through a Backend client
     # with a 30-second read deadline. Fall back before that boundary instead
     # of allowing the shared LLM retry budget to exhaust the HTTP request.
@@ -200,7 +203,7 @@ class Settings(BaseSettings):
     # SQLite file backing the task repository (P3-01 MVP storage).
     task_db_path: str = "data/tasks.sqlite"
     # Default task TTL; tasks exceeding it move to EXPIRED.
-    task_default_ttl_seconds: int = 3600
+    task_default_ttl_seconds: int = 300
     # Max tasks the in-process worker executes concurrently.
     task_worker_concurrency: int = 2
 

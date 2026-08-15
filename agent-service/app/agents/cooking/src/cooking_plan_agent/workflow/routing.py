@@ -71,9 +71,16 @@ def route_after_local_inference(
     from cooking_plan_agent.config.settings import get_settings
 
     settings = get_settings()
+    non_safety_operational = [
+        g
+        for g in critical_gaps
+        if g.gap_class != "safety_critical"
+        and any(f in g.field_path.lower() for f in ("heat_level", "duration", "temperature"))
+    ]
     if not settings.web_research_enabled:
-        # Research disabled — all critical gaps → confirmation
-        return "build_confirmation_response"
+        # Even without a provider, the research/apply stage supplies the
+        # deterministic fallback for non-safety operational fields.
+        return "research_missing" if non_safety_operational else "build_confirmation_response"
 
     # Only route to research for heat/duration/temperature gaps (handbook 10.1)
     _researchable_fields = {"heat_level", "duration", "temperature", "target_temperature_c"}

@@ -18,6 +18,10 @@ _RECIPE_HEADING = re.compile(
     r"\s*(?:\d+\s*)?[：:]?\s*(?:[-–—]\s*)?(.*)$",
     re.IGNORECASE,
 )
+_NON_DISH_RECIPE_SECTION = re.compile(
+    r"^(?:video\b|notes?\b|nutrition(?:al)?\b|information\b|tips?\b|cook\s+mode\b)",
+    re.IGNORECASE,
+)
 _MARKDOWN_DISH_HEADING = re.compile(r"^\s*#\s+(.+?)\s*$")
 # "Ingredients Preparation", "I. Ingredients Preparation" — a common pasted
 # recipe template heading. Deliberately NOT matching "Ingredients:" sections.
@@ -53,7 +57,24 @@ def clean_recipe_text(text: str) -> str:
     return collapse_blank_lines(normalise_line_endings(text))
 
 
-def split_recipe_blocks(text: str) -> tuple[str, ...]:
+def _is_recipe_heading(line: str) -> bool:
+    """Return whether a ``Recipe ...`` line starts an actual dish.
+
+    Recipe pages commonly contain headings such as ``Recipe Notes`` and
+    boilerplate such as ``Recipe VIDEO above``. Treating those as dish
+    boundaries irreversibly splits one recipe before semantic LLM parsing.
+    """
+
+    match = _RECIPE_HEADING.match(line)
+    if match is None:
+        return False
+    remainder = match.group(1).strip()
+    if not remainder or _NON_DISH_RECIPE_SECTION.match(remainder):
+        return False
+    return not bool(re.search(r"[.!?…]", remainder))
+
+
+def split_recipe_blocks(text: str, *, split_blank_lines: bool = True) -> tuple[str, ...]:
     """Split common multi-recipe text formats without guessing dish content.
 
     Recognised boundaries, in priority order:
@@ -73,7 +94,7 @@ def split_recipe_blocks(text: str) -> tuple[str, ...]:
     heading_indexes = [
         index
         for index, line in enumerate(lines)
-        if _RECIPE_HEADING.match(line) or _MARKDOWN_DISH_HEADING.match(line) or _PREP_HEADING.match(line)
+        if _is_recipe_heading(line) or _MARKDOWN_DISH_HEADING.match(line) or _PREP_HEADING.match(line)
     ]
     if len(heading_indexes) > 1:
         blocks: list[str] = []
@@ -85,9 +106,10 @@ def split_recipe_blocks(text: str) -> tuple[str, ...]:
         return tuple(blocks)
 
     # No explicit separator — try the blank-line heuristic as a last resort.
-    blank_split = tuple(part.strip() for part in _DOUBLE_BLANK.split(text) if part.strip())
-    if len(blank_split) > 1:
-        return blank_split
+    if split_blank_lines:
+        blank_split = tuple(part.strip() for part in _DOUBLE_BLANK.split(text) if part.strip())
+        if len(blank_split) > 1:
+            return blank_split
 
     return (text.strip(),)
 
@@ -163,7 +185,9 @@ def _normalise_heading(block: str) -> str:
     if not lines:
         return block
     # "Recipe: X" / "# X" → keep X as the dish name.
-    match = _RECIPE_HEADING.match(lines[0]) or _MARKDOWN_DISH_HEADING.match(lines[0])
+    match = (_RECIPE_HEADING.match(lines[0]) if _is_recipe_heading(lines[0]) else None) or _MARKDOWN_DISH_HEADING.match(
+        lines[0]
+    )
     if match:
         lines[0] = match.group(1).strip()
     # Drop pasted template headings ("Ingredients Preparation",

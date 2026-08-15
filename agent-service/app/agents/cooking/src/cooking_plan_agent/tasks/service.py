@@ -49,6 +49,14 @@ from cooking_plan_agent.tasks.repository import (
 
 logger = logging.getLogger(__name__)
 
+_MAX_TASK_RUNTIME_SECONDS = 300
+_ONE_DISH_RUNTIME_SECONDS = 180
+_PER_EXTRA_DISH_SECONDS = 30
+
+
+class _TaskRunCancelled(Exception):
+    """Internal control flow used when a persisted task is cancelled."""
+
 
 @dataclass(frozen=True)
 class SubmitOutcome:
@@ -76,7 +84,7 @@ class AsyncTaskService:
         generation_service: GenerateCookingPlanService,
         *,
         queue: TaskQueue | None = None,
-        default_ttl_seconds: int = 3600,
+        default_ttl_seconds: int = _MAX_TASK_RUNTIME_SECONDS,
         worker_concurrency: int = 2,
         lease_seconds: float = 60.0,
         max_attempts: int = 3,
@@ -94,6 +102,8 @@ class AsyncTaskService:
         self._lease_seconds = lease_seconds
         self._max_attempts = max_attempts
         self._worker_task: asyncio.Task[None] | None = None
+        self._submission_lock = asyncio.Lock()
+        self._active_runs: dict[str, asyncio.Task[PlanResponse]] = {}
         # P4-04: SSE subscription registry — task_id -> subscriber queues.
         # Subscribers are only ever notified after a successful persisted
         # state change (see _notify call sites), never from in-memory state.
@@ -143,35 +153,55 @@ class AsyncTaskService:
         TaskIdempotencyConflict (409). New request -> persisted QUEUED task.
         """
         payload = json.loads(request.model_dump_json())
-        ttl = timedelta(seconds=ttl_seconds) if ttl_seconds else self._default_ttl
+        async with self._submission_lock:
+            existing = await self._repo.get_by_request_id(request.request_id)
+            if existing is not None:
+                if existing.request_payload != payload:
+                    raise TaskIdempotencyConflict(request.request_id)
+                return SubmitOutcome(task=existing, created=False)
 
-        record = TaskRecord(
-            task_id=new_task_id(),
-            request_id=request.request_id,
-            user_id=request.user_id,
-            request_payload=payload,
-            thread_id=self._thread_id(request),
-            created_at=utc_now(),
-            updated_at=utc_now(),
-            expires_at=utc_now() + ttl,
-        )
-        try:
-            await self._repo.create(record)
+            # A user can own only one active generation. Cancelling before
+            # insertion also frees the in-process LLM coroutine immediately.
+            for active in await self._repo.list_active_by_user(request.user_id):
+                await self.cancel(active.task_id)
+
+            ttl = self._task_ttl(request, ttl_seconds)
+            now = utc_now()
+            record = TaskRecord(
+                task_id=new_task_id(),
+                request_id=request.request_id,
+                user_id=request.user_id,
+                request_payload=payload,
+                thread_id=self._thread_id(request),
+                created_at=now,
+                updated_at=now,
+                expires_at=now + ttl,
+            )
+            try:
+                await self._repo.create(record)
+            except DuplicateRequestError:
+                existing = await self._repo.get_by_request_id(request.request_id)
+                if existing is None:
+                    raise
+                if existing.request_payload != payload:
+                    raise TaskIdempotencyConflict(request.request_id) from None
+                return SubmitOutcome(task=existing, created=False)
+
             logger.info(
-                "Task submitted | task_id=%s | request_id=%s",
+                "Task submitted | task_id=%s | request_id=%s | deadline_seconds=%d",
                 record.task_id,
                 record.request_id,
+                int(ttl.total_seconds()),
             )
             return SubmitOutcome(task=record, created=True)
-        except DuplicateRequestError:
-            existing = await self._repo.get_by_request_id(request.request_id)
-            if existing is None:
-                # Race: duplicate vanished between create and read — retry once.
-                await self._repo.create(record)
-                return SubmitOutcome(task=record, created=True)
-            if existing.request_payload != payload:
-                raise TaskIdempotencyConflict(request.request_id) from None
-            return SubmitOutcome(task=existing, created=False)
+
+    def _task_ttl(self, request: GeneratePlanRequest, requested_seconds: int | None) -> timedelta:
+        if requested_seconds is not None:
+            return timedelta(seconds=min(requested_seconds, _MAX_TASK_RUNTIME_SECONDS))
+        dish_count = max(1, len(request.recipes))
+        target = _ONE_DISH_RUNTIME_SECONDS + _PER_EXTRA_DISH_SECONDS * (dish_count - 1)
+        configured_max = min(int(self._default_ttl.total_seconds()), _MAX_TASK_RUNTIME_SECONDS)
+        return timedelta(seconds=min(target, configured_max))
 
     async def get(self, task_id: str) -> TaskRecord | None:
         """Fetch a task by ID (404 when absent)."""
@@ -191,6 +221,9 @@ class AsyncTaskService:
         cancelled = record.model_copy(update={"status": TaskStatus.CANCELLED, "updated_at": utc_now()})
         updated = await self._repo.update(cancelled, expected_status=record.status)
         if updated is not None:
+            active_run = self._active_runs.get(task_id)
+            if active_run is not None:
+                active_run.cancel()
             self._notify(updated)
         return updated or record
 
@@ -423,6 +456,9 @@ class AsyncTaskService:
             )
             updated = await self._queue.complete(expired, expected_status=record.status)
             if updated is not None:
+                active_run = self._active_runs.get(record.task_id)
+                if active_run is not None:
+                    active_run.cancel()
                 self._notify(updated)
                 logger.info(
                     "Task expired | task_id=%s | from=%s",
@@ -452,6 +488,8 @@ class AsyncTaskService:
             updated = await self._queue.complete(terminal, expected_status=TaskStatus.RUNNING)
             if updated is not None:
                 self._notify(updated)  # P4-04: terminal snapshot -> done event
+        except _TaskRunCancelled:
+            return
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — failure handling below
@@ -561,10 +599,57 @@ class AsyncTaskService:
         crash mid-flight resumes from the last node boundary on retry.
         """
         request = GeneratePlanRequest.model_validate(record.request_payload)
-        response: PlanResponse = await self._generation.execute(
-            request,
-            thread_id=record.thread_id,
+
+        async def _persist_progress(node: str, completed_steps: int) -> None:
+            current = await self._repo.get(record.task_id)
+            if current is None or current.status != TaskStatus.RUNNING:
+                raise _TaskRunCancelled
+            updated = await self._repo.update_progress(
+                record.task_id,
+                TaskProgress(node=node, completed_steps=completed_steps),
+            )
+            if updated is None:
+                raise _TaskRunCancelled
+            self._notify(updated)
+
+        streaming_execute = getattr(self._generation, "execute_with_progress", None)
+        if callable(streaming_execute):
+            coroutine = streaming_execute(
+                request,
+                thread_id=record.thread_id,
+                on_progress=_persist_progress,
+            )
+        else:
+            coroutine = self._generation.execute(request, thread_id=record.thread_id)
+
+        run_task = asyncio.create_task(coroutine)
+        self._active_runs[record.task_id] = run_task
+        remaining_seconds = (
+            max(0.0, (record.expires_at - utc_now()).total_seconds())
+            if record.expires_at is not None
+            else float(_MAX_TASK_RUNTIME_SECONDS)
         )
+        try:
+            response: PlanResponse = await asyncio.wait_for(run_task, timeout=remaining_seconds)
+        except TimeoutError:
+            return record.model_copy(
+                update={
+                    "status": TaskStatus.EXPIRED,
+                    "updated_at": utc_now(),
+                    "progress": TaskProgress(
+                        node="expired",
+                        message="Plan generation reached its time limit",
+                    ),
+                }
+            )
+        except asyncio.CancelledError:
+            current = await self._repo.get(record.task_id)
+            if current is not None and current.status in (TaskStatus.CANCELLED, TaskStatus.EXPIRED):
+                raise _TaskRunCancelled from None
+            raise
+        finally:
+            self._active_runs.pop(record.task_id, None)
+
         status = _status_for_response(response.status)
         return record.model_copy(
             update={
