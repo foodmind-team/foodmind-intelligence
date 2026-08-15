@@ -22,7 +22,7 @@
     "featureSchemaVersion": { "const": "recommendation-features-v2" },
     "inferenceContractVersion": { "const": "recommendation-inference-v1" },
     "modelKeyVersion": { "const": "hmac-sha256-v1" },
-    "diversityPolicyVersion": { "const": "recommendation-diversity-v1" },
+    "diversityPolicyVersion": { "const": "recommendation-diversity-v2" },
     "reasonPolicyVersion": { "const": "recommendation-reasons-v1" },
     "templateVersion": { "const": "recommendation-template-v1" },
     "recommendations": {

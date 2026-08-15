@@ -33,11 +33,10 @@ def backend_validate(
     if list(_VALIDATOR.iter_errors(response)):
         return False
     recommendations = response["recommendations"]
-    if recommendations and recommendations[0]["recommendationType"] != "PERSONAL":
-        return False
-    scores = [item["probability"] for item in recommendations]
-    if scores != sorted(scores, reverse=True):
-        return False
+    if recommendations:
+        lead_prediction = max(inference["predictions"], key=lambda item: (item["probability"], item["modelScore"]))
+        if recommendations[0]["candidateId"] != lead_prediction["candidateId"]:
+            return False
     request_ids = {item["candidateId"] for item in request["candidates"]}
     if not {item["candidateId"] for item in recommendations}.issubset(request_ids):
         return False
@@ -56,7 +55,14 @@ def backend_validate(
             return False
         if item["explanation"] != " ".join(_TEMPLATES[reason] for reason in item["reasons"]):
             return False
-        if item["recommendationType"] == "GROUP_INSPIRED" and not _group_supported(facts):
+        expected_type = (
+            "GROUP_INSPIRED"
+            if _group_supported(facts)
+            else "PERSONAL"
+            if _personal_supported(prediction, facts)
+            else "EXPLORATORY"
+        )
+        if item["recommendationType"] != expected_type:
             return False
     return True
 

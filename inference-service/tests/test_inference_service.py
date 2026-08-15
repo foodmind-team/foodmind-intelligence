@@ -17,7 +17,7 @@ def _package(directory: Path) -> None:
     artifact = directory / "hybrid_lr_model.npz"
     np.savez(
         artifact,
-        weights=np.array([0.0, 1.0, 0.5, 0.4, 0.2, 0.8, 0.1]),
+        weights=np.linspace(0.0, 1.0, len(FEATURE_NAMES) + 1),
         mean=np.zeros(len(FEATURE_NAMES)),
         std=np.ones(len(FEATURE_NAMES)),
         feature_names=np.array(FEATURE_NAMES),
@@ -79,6 +79,41 @@ def test_loads_package_and_scores_candidates(tmp_path: Path) -> None:
     assert body["predictions"][0]["candidateId"] == "candidate-1"
     assert 0.0 <= body["predictions"][0]["probability"] <= 1.0
     assert body["predictions"][0]["signals"] == _request()["candidates"][0]["evidence"]
+    assert body["predictions"][0]["userCf"] == {"available": False, "score": None, "neighborSupport": 0}
+    assert body["predictions"][0]["itemCf"] == {"available": False, "score": None, "supportingItemCount": 0}
+
+
+def test_exposes_verified_collaborative_signals(tmp_path: Path) -> None:
+    _package(tmp_path)
+    index = {
+        "schemaVersion": "foodmind-collaborative-index-v1",
+        "sourceSnapshotSha256": "a" * 64,
+        "positiveOnly": True,
+        "userCf": {"A" * 43: {"meal_key_00000001": {"score": 0.8, "support": 3}}},
+        "itemCf": {"A" * 43: {"meal_key_00000001": {"score": 0.7, "support": 2}}},
+    }
+    raw = json.dumps(index).encode("utf-8")
+    (tmp_path / "collaborative_index.json").write_bytes(raw)
+    manifest_path = tmp_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["collaborativeIndex"] = {
+        "artifact": "collaborative_index.json",
+        "artifactSha256": hashlib.sha256(raw).hexdigest(),
+        "schemaVersion": "foodmind-collaborative-index-v1",
+        "sourceSnapshotSha256": "a" * 64,
+        "positiveOnly": True,
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    settings = Settings(model_package_dir=tmp_path, internal_service_token="test-inference-token")
+    with TestClient(create_app(settings)) as client:
+        response = client.post(
+            "/internal/v1/recommendations/score",
+            headers={"Authorization": "Bearer test-inference-token"},
+            json=_request(),
+        )
+    prediction = response.json()["predictions"][0]
+    assert prediction["userCf"] == {"available": True, "score": 0.8, "neighborSupport": 3}
+    assert prediction["itemCf"] == {"available": True, "score": 0.7, "supportingItemCount": 2}
 
 
 def test_requires_service_authentication(tmp_path: Path) -> None:

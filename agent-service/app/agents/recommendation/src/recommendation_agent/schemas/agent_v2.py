@@ -189,7 +189,7 @@ class AgentResponse(StrictWireModel):
     feature_schema_version: Literal["recommendation-features-v2"] = "recommendation-features-v2"
     inference_contract_version: Literal["recommendation-inference-v1"] = "recommendation-inference-v1"
     model_key_version: Literal["hmac-sha256-v1"] = "hmac-sha256-v1"
-    diversity_policy_version: Literal["recommendation-diversity-v1"] = "recommendation-diversity-v1"
+    diversity_policy_version: Literal["recommendation-diversity-v2"] = "recommendation-diversity-v2"
     reason_policy_version: Literal["recommendation-reasons-v1"] = "recommendation-reasons-v1"
     template_version: Literal["recommendation-template-v1"] = "recommendation-template-v1"
     recommendations: Annotated[tuple[Recommendation, ...], BeforeValidator(_tuple_from_json), Field(max_length=3)]

@@ -69,13 +69,20 @@ model keys, feature values, request bodies, raw exceptions, and credentialed
 URIs must never be logged or returned in errors.
 
 Production result shaping is deterministic under
-`recommendation-diversity-v1`, `recommendation-reasons-v1`, and
-`recommendation-template-v1`. It preserves the confidence lead within the
-frozen tie band, selects only evidence-supported Personal, Exploratory, and
-Group-inspired candidates, and derives at most two allow-listed reasons.
+`recommendation-diversity-v2`, `recommendation-reasons-v1`, and
+`recommendation-template-v1`. It keeps the highest model probability as the
+lead, then greedily reranks alternatives with bounded novelty bonuses and
+same-offering, Meal, category, and cuisine penalties. Recommendation types
+come only from evidence predicates, and each result has at most two
+allow-listed reasons.
 No LLM participates in ranking, selection, or reason derivation. Explanation
 rendering is constrained to approved reason vocabulary and deterministic
 templates remain the failure path.
+
+The current local `hybrid-ranking-v1` package exposes six runtime features.
+UserCF and ItemCF are returned as unavailable by the current inference runtime,
+and two mapped runtime features have neutral weights. Diversity v2 is a
+deterministic post-model policy; it is not evidence of a retrained CF model.
 
 For the deterministic private-boundary smoke and release-evidence checksum
 check, run:

@@ -75,10 +75,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 candidateId=candidate.candidate_id,
                 probability=float(probability),
                 modelScore=float(model_score),
+                userCf=user_cf,
+                itemCf=item_cf,
                 signals=candidate.evidence,
             )
             for candidate in body.candidates
-            for probability, model_score in (model.score(candidate),)
+            for probability, model_score, user_cf, item_cf in (model.score(body.model_user_key, candidate),)
         )
         return InferenceSuccess(requestId=body.request_id, traceId=body.trace_id, predictions=predictions)
 
