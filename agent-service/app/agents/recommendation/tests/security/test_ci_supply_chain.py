@@ -16,7 +16,7 @@ def test_github_actions_are_pinned_to_full_commit_shas() -> None:
     assert "pip-audit==2.9.0" in workflow
     assert "pip-licenses==5.5.5" in workflow
     assert re.search(r"zricethezav/gitleaks:v8\.28\.0@sha256:[0-9a-f]{64}", workflow)
-    assert re.search(r"aquasec/trivy:0\.56\.1@sha256:[0-9a-f]{64}", workflow)
+    assert re.search(r"aquasec/trivy:0\.74\.0@sha256:[0-9a-f]{64}", workflow)
     assert '--fail-on "GPL-2.0-only;' in workflow
 
 
