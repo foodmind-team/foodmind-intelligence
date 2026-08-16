@@ -154,58 +154,47 @@ def infer_local(
             unresolved.append(gap)
             continue
 
-        # Try heat inference
-        if "heat_level" in gap.field_path:
-            result = _infer_heat(gap, candidate, technique)
-            if result:
-                filled.append(result[0])
-                assumptions.append(result[1])
-            else:
-                unresolved.append(gap)
-            continue
-
-        # Try duration inference
-        if "duration" in gap.field_path.lower():
-            result = _infer_duration(gap, technique)
-            if result:
-                filled.append(result[0])
-                assumptions.append(result[1])
-            else:
-                unresolved.append(gap)
-            continue
-
-        # Try temperature inference
-        if "temperature" in gap.field_path.lower():
-            if gap.gap_class == GapClass.SAFETY_CRITICAL:
-                # NEVER infer safety-critical temperatures locally
-                unresolved.append(gap)
-                continue
-            result = _infer_temperature(gap, technique)
-            if result:
-                filled.append(result[0])
-                assumptions.append(result[1])
-            else:
-                unresolved.append(gap)
-            continue
-
-        # Try resource inference
-        if "resource" in gap.field_path.lower():
-            result = _infer_resources(gap, technique)
-            if result:
-                filled.append(result[0])
-                assumptions.append(result[1])
-            else:
-                unresolved.append(gap)
-            continue
-
-        # Can't infer this gap type
-        unresolved.append(gap)
+        result = infer_gap(candidate, gap, technique)
+        if result is not None:
+            filled.append(result[0])
+            assumptions.append(result[1])
+        else:
+            unresolved.append(gap)
 
     return InferenceResult(
         filled_gaps=tuple(filled),
         unresolved_gaps=tuple(unresolved),
         assumptions=tuple(assumptions),
     )
+
+
+def infer_gap(
+    candidate: ExtractedRecipeCandidate,
+    gap: RecipeGap,
+    technique: str,
+) -> tuple[RecipeGap, Assumption] | None:
+    """Fill a single gap using local cooking knowledge.
+
+    Pure dispatch on ``gap.field_path``. Returns None when the gap cannot be
+    inferred locally (e.g. a safety-critical temperature), leaving the caller
+    to decide whether to keep it unresolved.
+
+    ``technique`` is the recipe's primary cooking technique, detected once by
+    the caller via ``_detect_primary_technique`` so the detection cost is not
+    repeated per gap.
+    """
+    if "heat_level" in gap.field_path:
+        return _infer_heat(gap, candidate, technique)
+    if "duration" in gap.field_path.lower():
+        return _infer_duration(gap, technique)
+    if "temperature" in gap.field_path.lower():
+        if gap.gap_class == GapClass.SAFETY_CRITICAL:
+            # NEVER infer safety-critical temperatures locally
+            return None
+        return _infer_temperature(gap, technique)
+    if "resource" in gap.field_path.lower():
+        return _infer_resources(gap, technique)
+    return None
 
 
 def infer_deterministic_default(

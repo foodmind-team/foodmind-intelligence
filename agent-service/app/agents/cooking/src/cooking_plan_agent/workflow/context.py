@@ -96,6 +96,19 @@ class AgentController(Protocol):
     async def decide(self, state_summary: dict[str, object]) -> dict[str, object]: ...
 
 
+@runtime_checkable
+class PreferenceStore(Protocol):
+    """P5-4: 长期偏好存储 —— 读/写用户已确认的偏好。
+
+    仅存储用户显式提供/确认过的信息（隐私：不记录原始菜谱文本）。
+    ``get`` 对未知 user_id 返回空 dict，保证无记忆时为「零操作」。
+    """
+
+    def get(self, user_id: str) -> dict[str, object]: ...
+
+    def put(self, user_id: str, payload: dict[str, object]) -> None: ...
+
+
 # ---------------------------------------------------------------------------
 # Context dataclass
 # ---------------------------------------------------------------------------
@@ -131,6 +144,4 @@ class WorkflowContext:
     # P5-2: 可选 ReAct 控制器。缺失或未启用时图直接走确定性 DAG。
     agent_controller: "AgentController | None" = None
     # P5-4: 可选长期偏好存储。缺失或请求无 user_id 时不注入记忆（零回归）。
-    preference_store: "object | None" = None
-    # Future services (all optional until fully implemented):
-    # optimiser: ScheduleOptimiser | None = None
+    preference_store: PreferenceStore | None = None
