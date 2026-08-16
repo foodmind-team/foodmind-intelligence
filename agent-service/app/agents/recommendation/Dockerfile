@@ -17,7 +17,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY --from=uv /uv /usr/local/bin/uv
 
-RUN groupadd --gid 10001 recommendation \
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip uninstall --yes setuptools \
+    && groupadd --gid 10001 recommendation \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin recommendation
 
 WORKDIR /app
