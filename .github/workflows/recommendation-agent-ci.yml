@@ -189,8 +189,8 @@ jobs:
       - name: Container vulnerability scan
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
-          aquasec/trivy:0.56.1@sha256:c42bb3221509b0a9fa2291cd79a3a818b30a172ab87e9aac8a43997a5b56f293
-          image --scanners vuln --ignore-unfixed --severity CRITICAL,HIGH --exit-code 1
+          aquasec/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
+          image --scanners vuln --ignore-unfixed --severity MEDIUM,HIGH,CRITICAL --exit-code 1
           foodmind-recommendation-agent:ci
       - name: Upload image evidence
         if: always()
