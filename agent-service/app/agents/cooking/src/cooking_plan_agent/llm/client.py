@@ -24,7 +24,7 @@ class LLMError(Exception):
 
 
 class ToolCall(NamedTuple):
-    """一次 LLM 请求的工具调用（P5-1）。"""
+    """A single tool call within an LLM request (P5-1)."""
 
     id: str
     name: str
@@ -180,15 +180,15 @@ class LLMClient:
         messages: list[dict[str, str]],
         tools: list[dict[str, object]],
     ) -> tuple[str | None, tuple[ToolCall, ...]]:
-        """OpenAI 兼容 tool-calling 请求（P5-1）。
+        """OpenAI-compatible tool-calling request (P5-1).
 
         Args:
-            messages: OpenAI 风格消息列表。
-            tools: OpenAI tool 格式的工具描述列表。
+            messages: OpenAI-style message list.
+            tools: OpenAI tool-format tool descriptions.
 
         Returns:
-            (assistant_text, tool_calls)。无工具调用时 tool_calls 为空元组。
-            文本可能为 None（纯工具调用轮）。
+            (assistant_text, tool_calls). ``tool_calls`` is an empty tuple when
+            there are no tool calls. The text may be None on a pure tool-call turn.
         """
         payload: dict[str, object] = {
             "model": self._model,

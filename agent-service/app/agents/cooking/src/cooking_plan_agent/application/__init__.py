@@ -1,27 +1,19 @@
-"""Application layer — use cases and service ports.
+"""Application layer — use cases.
 
 This package defines what the system *does* in technology-agnostic terms.
-It contains the entry use case (GenerateCookingPlanService) and service
-ports (Protocol classes) that decouple the domain from infrastructure.
+It contains the entry use cases (GenerateCookingPlanService and
+ParseRecipeImportService).
 
-Handbook sections: 9.4 (Application Service), 3.6 (Ports & Adapters).
+Handbook section: 9.4 (Application Service).
 
 Re-exports the public API so callers only need one import:
   >>> from cooking_plan_agent.application import GenerateCookingPlanService
 """
 
-from cooking_plan_agent.application.ports import (
-    Clock,
-    RecipeExtractor,
-    RecipeResearcher,
-)
 from cooking_plan_agent.application.recipe_import_service import ParseRecipeImportService
 from cooking_plan_agent.application.service import GenerateCookingPlanService
 
 __all__ = [
-    "Clock",
     "GenerateCookingPlanService",
     "ParseRecipeImportService",
-    "RecipeExtractor",
-    "RecipeResearcher",
 ]

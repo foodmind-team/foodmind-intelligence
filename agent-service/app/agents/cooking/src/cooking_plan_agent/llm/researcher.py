@@ -1,6 +1,6 @@
 """LLM-backed knowledge researcher — fills recipe gaps from model knowledge.
 
-Implements the RecipeResearcher Protocol (application/ports.py) using the
+Implements the RecipeResearcher Protocol (workflow/context.py) using the
 local LLM's culinary knowledge instead of web search. The workflow node
 (research_missing_node) calls research() and treats any failure as
 needs_confirmation — never an unsafe guess.

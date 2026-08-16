@@ -22,7 +22,6 @@ from langgraph.graph.state import CompiledStateGraph
 
 from cooking_plan_agent.domain.errors import DomainErrorCode, public_message_for
 from cooking_plan_agent.domain.models import (
-    Assumption,
     ConfirmationAnswersRequest,
     ConfirmationPlanResponse,
     ExtractedRecipeCandidate,
@@ -82,42 +81,23 @@ class GenerateCookingPlanService:
         import asyncio
 
         from cooking_plan_agent.parsing.extractor import RecipeExtractor as RuleExtractor
-        from cooking_plan_agent.parsing.gaps import GapClass, find_recipe_gaps
+        from cooking_plan_agent.parsing.gaps import find_recipe_gaps
         from cooking_plan_agent.parsing.inference import (
             InferenceResult,
             _detect_primary_technique,
-            _infer_duration,
-            _infer_heat,
-            _infer_resources,
-            _infer_temperature,
+            infer_gap,
             merge_inference,
         )
 
         extractor = self._context.recipe_extractor or RuleExtractor()
 
-        def _fill_gap(
-            candidate: ExtractedRecipeCandidate,
-            gap: RecipeGap,
-        ) -> tuple[RecipeGap, Assumption] | None:
-            technique = _detect_primary_technique(candidate)
-            if "heat_level" in gap.field_path:
-                return _infer_heat(gap, candidate, technique)
-            if "duration" in gap.field_path.lower():
-                return _infer_duration(gap, technique)
-            if "temperature" in gap.field_path.lower():
-                if gap.gap_class == GapClass.SAFETY_CRITICAL:
-                    return None
-                return _infer_temperature(gap, technique)
-            if "resource" in gap.field_path.lower():
-                return _infer_resources(gap, technique)
-            return None
-
         async def _process_one(recipe: RecipeInput) -> ExtractedRecipeCandidate:
             candidate = await extractor.extract(recipe.text)
+            technique = _detect_primary_technique(candidate)
             filled: list[RecipeGap] = []
             unresolved: list[RecipeGap] = []
             for gap in find_recipe_gaps(candidate):
-                result = _fill_gap(candidate, gap)
+                result = infer_gap(candidate, gap, technique)
                 if result is not None:
                     filled.append(result[0])
                 else:
