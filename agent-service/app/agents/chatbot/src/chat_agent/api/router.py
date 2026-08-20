@@ -53,6 +53,11 @@ _NAVIGATION = re.compile(
     re.IGNORECASE,
 )
 _COUNT = re.compile(r"\b(how many|count|number of|are there|do you have)\b|有多少|数量", re.IGNORECASE)
+_RECENT_RECORD = re.compile(
+    r"(?=[\s\S]*\b(?:recent(?:ly)?|latest|last)\b)(?=[\s\S]*\b(?:record(?:s|ed)?|meal(?:s)?|place(?:s)?)\b)"
+    r"|(?=[\s\S]*(?:最近|上次))(?=[\s\S]*(?:记录|地点))",
+    re.IGNORECASE,
+)
 _FOOD_SCOPE = re.compile(
     r"\b(food|meal|drink|nutrition|nutrient|calorie|protein|carb|fat|fibre|fiber|sodium|sugar|"
     r"allergy|allergen|diet|recipe|cook|cooking|ingredient|restaurant|cafe|menu|grocery|pantry|"
@@ -144,11 +149,18 @@ async def _generate(
         if not body.delegation_token:
             return _tool_unavailable(body)
         try:
-            sources = await tools.search(
-                query=_search_query(body),
-                delegation_token=body.delegation_token,
-                timeout_seconds=_remaining_timeout(body, settings.backend_timeout_seconds),
-            )
+            if _is_recent_record_intent(body.message):
+                sources = await tools.explore(
+                    source_types=["FOOD_RECORD"],
+                    delegation_token=body.delegation_token,
+                    timeout_seconds=_remaining_timeout(body, settings.backend_timeout_seconds),
+                )
+            else:
+                sources = await tools.search(
+                    query=_search_query(body),
+                    delegation_token=body.delegation_token,
+                    timeout_seconds=_remaining_timeout(body, settings.backend_timeout_seconds),
+                )
         except (BackendToolError, TimeoutError):
             return _tool_unavailable(body)
     elif route in {"SUMMARY", "COMPARE"}:
@@ -359,6 +371,10 @@ def _search_query(body: AgentChatRequest) -> str:
     return f"{previous}\nFollow-up: {body.message}" if previous else body.message
 
 
+def _is_recent_record_intent(message: str) -> bool:
+    return _RECENT_RECORD.search(message) is not None
+
+
 def _messages(body: AgentChatRequest, route: Route, sources: tuple[GroundedSource, ...]) -> list[dict[str, str]]:
     references = [
         {
@@ -492,6 +508,17 @@ def _fallback(body: AgentChatRequest, route: Route, sources: tuple[GroundedSourc
             )
         return "请附上要比较的 FoodMind 内容。" if chinese else "Attach the FoodMind items you want to compare."
     if route == "SEARCH":
+        if _is_recent_record_intent(body.message):
+            place = next(
+                (item.subtitle for item in sources if item.source_type == "FOOD_RECORD" and item.subtitle), None
+            )
+            if place:
+                return f"你最近记录的地点是 {place}。" if chinese else f"Your most recently recorded place is {place}."
+            return (
+                "我找到了你最近的一条饮食记录，但其中没有记录地点。"
+                if chinese
+                else "I found your most recent FoodMind record, but it does not include a place."
+            )
         if titles:
             return (
                 ("我找到这些 FoodMind 来源：" if chinese else "I found these FoodMind sources: ")

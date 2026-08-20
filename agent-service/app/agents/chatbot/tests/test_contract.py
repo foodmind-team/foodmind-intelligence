@@ -45,10 +45,11 @@ class FakeBackendTools:
             raise BackendToolError("unavailable")
         return (
             GroundedSource(
-                source_type="PLACE",
+                source_type="FOOD_RECORD",
                 source_id=uuid4(),
-                title="Orchard Garden Kitchen",
-                snippet="Orchard",
+                title="Chicken rice",
+                subtitle="Orchard Garden Kitchen",
+                snippet="at Orchard Garden Kitchen",
                 grounding_metadata={"origin": "backend_explore", "hasNext": False},
             ),
         )
@@ -154,6 +155,28 @@ def test_explicit_search_route_wins_and_searches_without_shared_references() -> 
     assert response.json()["route"] == "SEARCH"
     assert response.json()["sources"][0]["groundingMetadata"]["origin"] == "backend_search"
     assert tools.search_calls[0]["delegation_token"] == "delegation-token"
+
+
+@pytest.mark.parametrize("message", ["Find the place I recorded recently", "我最近记录的地点是什么？"])
+def test_recent_record_intent_explores_food_records_instead_of_full_text_search(message: str) -> None:
+    tools = FakeBackendTools()
+    payload = request_payload(requested_route="SEARCH")
+    payload["message"] = message
+    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "SEARCH"
+    assert response.json()["sources"][0]["sourceType"] == "FOOD_RECORD"
+    assert "Orchard Garden Kitchen" in response.json()["answer"]
+    assert tools.search_calls == []
+    assert len(tools.explore_calls) == 1
+    assert tools.explore_calls[0]["source_types"] == ["FOOD_RECORD"]
+    assert tools.explore_calls[0]["delegation_token"] == "delegation-token"
 
 
 def test_count_question_routes_to_authorised_search_instead_of_navigation() -> None:
