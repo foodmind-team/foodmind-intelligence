@@ -120,6 +120,15 @@ class BackendToolClient:
             {
                 "type": "function",
                 "function": {
+                    "name": "profile",
+                    "description": "Read the current user's minimal trusted FoodMind preference profile. Use it for "
+                    "saved preferences, dietary tags, allergens, budget, cuisine, meal, spice, or drink questions.",
+                    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "search",
                     "description": "Search the current user's authorised FoodMind records, products, and places. "
                     "Build a self-contained query from the conversation.",
@@ -171,6 +180,22 @@ class BackendToolClient:
                 },
             },
         ]
+
+    async def profile_for_tool(
+        self,
+        *,
+        arguments: str,
+        delegation_token: str,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        """Validate the no-argument profile tool before making the delegated read."""
+        try:
+            payload = json.loads(arguments)
+        except json.JSONDecodeError as exc:
+            raise BackendToolError("Profile arguments are invalid JSON") from exc
+        if payload != {}:
+            raise BackendToolError("Profile arguments must be an empty object")
+        return await self.profile(delegation_token=delegation_token, timeout_seconds=timeout_seconds)
 
     async def execute_tool_call(
         self,
