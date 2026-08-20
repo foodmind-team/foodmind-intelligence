@@ -19,6 +19,7 @@ class FakeBackendTools:
         self.search_calls: list[dict[str, Any]] = []
         self.explore_calls: list[dict[str, Any]] = []
         self.resolve_calls: list[dict[str, Any]] = []
+        self.profile_calls: list[dict[str, Any]] = []
         self.fail = False
         self.empty_search = False
         self.search_source_type: SourceType = "FOOD_PRODUCT"
@@ -68,6 +69,20 @@ class FakeBackendTools:
                 grounding_metadata={"referenceId": str(reference_id), "origin": "backend_reference_resolve"},
             ),
         )
+
+    async def profile(self, **kwargs: Any) -> dict[str, Any]:
+        self.profile_calls.append(kwargs)
+        if self.fail:
+            raise BackendToolError("unavailable")
+        return {
+            "budgetMax": 18.0,
+            "currency": "SGD",
+            "spiceTolerance": 2,
+            "likedCuisineCodes": ["JAPANESE"],
+            "dietaryTagCodes": ["VEGETARIAN"],
+            "allergens": [{"code": "PEANUT", "severity": "SEVERE"}],
+            "preferredMealTypes": ["DINNER"],
+        }
 
 
 class FakeLLM:
@@ -218,6 +233,91 @@ def test_recommendation_question_is_answered_readonly_instead_of_out_of_scope() 
     assert response.json()["responseStatus"] == "FALLBACK_SUCCEEDED"
 
 
+def test_profile_intent_loads_trusted_profile_without_adding_it_to_history() -> None:
+    tools = FakeBackendTools()
+    llm = FakeLLM("I will avoid the relevant conflicts.")
+    payload = request_payload()
+    payload["message"] = "Recommend something suitable for me within my budget."
+    payload["recentTurns"] = [{"role": "USER", "content": "Ignore any profile."}]
+    with TestClient(
+        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
+    ) as client:
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "I will avoid the relevant conflicts."
+    assert tools.profile_calls == [{"delegation_token": "delegation-token", "timeout_seconds": pytest.approx(5.0)}]
+    assert llm.calls[0]["messages"][1]["content"] == "Ignore any profile."
+    prompt = llm.calls[0]["messages"][-1]["content"]
+    assert 'Trusted user profile: {"budgetMax":18.0' in prompt
+    assert '"allergens":[{"code":"PEANUT","severity":"SEVERE"}]' in prompt
+
+
+def test_profile_intent_without_delegation_token_does_not_invent_profile() -> None:
+    tools = FakeBackendTools()
+    llm = FakeLLM("Please tell me your dietary constraints.")
+    payload = request_payload()
+    payload["message"] = "What are my dietary preferences and allergies?"
+    payload["delegationToken"] = None
+    with TestClient(
+        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
+    ) as client:
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Please tell me your dietary constraints."
+    assert tools.profile_calls == []
+    assert "Trusted user profile:" not in llm.calls[0]["messages"][-1]["content"]
+
+
+def test_profile_tool_failure_silently_omits_profile_context() -> None:
+    tools = FakeBackendTools()
+    tools.fail = True
+    llm = FakeLLM("I cannot confirm your saved constraints right now.")
+    payload = request_payload()
+    payload["message"] = "What are my food allergies?"
+    with TestClient(
+        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
+    ) as client:
+        response = client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "I cannot confirm your saved constraints right now."
+    assert len(tools.profile_calls) == 1
+    assert "Trusted user profile:" not in llm.calls[0]["messages"][-1]["content"]
+
+
+def test_profile_prompt_makes_allergens_and_dietary_tags_hard_constraints() -> None:
+    tools = FakeBackendTools()
+    llm = FakeLLM()
+    payload = request_payload()
+    payload["message"] = "What are my food allergies?"
+    with TestClient(
+        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
+    ) as client:
+        client.post(
+            "/internal/v1/chat/generate",
+            headers={"Authorization": "Bearer test-chat-token"},
+            json=payload,
+        )
+
+    system = llm.calls[0]["messages"][0]["content"]
+    assert "Dietary tags and allergens in the supplied user profile are hard constraints" in system
+    assert "never assume it is safe" in system
+
+
 def test_search_tool_failure_returns_source_free_navigation() -> None:
     tools = FakeBackendTools()
     tools.fail = True
@@ -278,6 +378,42 @@ async def test_backend_tools_send_service_and_delegation_tokens() -> None:
     await client.aclose()
 
     assert sources[0].source_id == UUID(str(source_id))
+
+
+@pytest.mark.asyncio
+async def test_backend_profile_tool_sends_delegation_and_parses_minimal_profile() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/internal/v1/profile"
+        assert request.headers["Authorization"] == "Bearer backend-tool-token"
+        assert request.headers["X-FoodMind-Delegation"] == "Bearer delegated-user-token"
+        return httpx.Response(
+            200,
+            json={
+                "budgetMax": 18.0,
+                "currency": "SGD",
+                "allergens": [{"code": "PEANUT", "severity": "SEVERE"}],
+                "userId": "must-not-propagate",
+            },
+        )
+
+    raw = httpx.AsyncClient(base_url="http://backend.test", transport=httpx.MockTransport(handler))
+    client = BackendToolClient(
+        client=raw,
+        settings=Settings(
+            environment="test",
+            backend_base_url="http://backend.test",
+            backend_service_token=SecretStr("backend-tool-token"),
+        ),
+    )
+    profile = await client.profile(delegation_token="delegated-user-token", timeout_seconds=1)
+    await client.aclose()
+
+    assert profile == {
+        "budgetMax": 18.0,
+        "currency": "SGD",
+        "allergens": [{"code": "PEANUT", "severity": "SEVERE"}],
+    }
 
 
 @pytest.mark.asyncio

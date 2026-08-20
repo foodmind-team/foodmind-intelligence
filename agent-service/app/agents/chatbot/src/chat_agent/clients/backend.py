@@ -12,6 +12,24 @@ from chat_agent.config.settings import Settings
 from chat_agent.domain.models import GroundedSource, SourceType
 
 _SOURCE_TYPES = {"FOOD_RECORD", "FOOD_PRODUCT", "PLACE"}
+_PROFILE_SCALAR_FIELDS = {
+    "budgetMin",
+    "budgetMax",
+    "currency",
+    "spiceTolerance",
+    "preferredArea",
+    "maxDistanceKm",
+    "foodGoal",
+    "drinkSweetnessPreference",
+    "drinkIcePreference",
+    "cookingRegion",
+}
+_PROFILE_CODE_LIST_FIELDS = {
+    "likedCuisineCodes",
+    "dislikedCuisineCodes",
+    "dietaryTagCodes",
+    "preferredMealTypes",
+}
 
 
 class BackendToolError(Exception):
@@ -82,6 +100,19 @@ class BackendToolClient:
             raise BackendToolError("Backend reference response is invalid")
         return tuple(_resolved_source(item) for item in raw if isinstance(item, dict) and item.get("available") is True)
 
+    async def profile(
+        self,
+        *,
+        delegation_token: str,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        raw = await self._get(
+            "/internal/v1/profile",
+            delegation_token=delegation_token,
+            timeout_seconds=timeout_seconds,
+        )
+        return _profile_response(raw)
+
     async def _post(
         self,
         path: str,
@@ -98,6 +129,29 @@ class BackendToolClient:
                     "Authorization": f"Bearer {self._settings.backend_service_token.get_secret_value()}",
                     "X-FoodMind-Delegation": f"Bearer {delegation_token}",
                     "Content-Type": "application/json",
+                },
+                timeout=min(timeout_seconds, self._settings.backend_timeout_seconds),
+            )
+            response.raise_for_status()
+            if len(response.content) > self._settings.backend_max_response_bytes:
+                raise BackendToolError("Backend tool response is too large")
+            return response.json()
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise BackendToolError("Backend tool request failed") from exc
+
+    async def _get(
+        self,
+        path: str,
+        *,
+        delegation_token: str,
+        timeout_seconds: float,
+    ) -> Any:
+        try:
+            response = await self._client.get(
+                path,
+                headers={
+                    "Authorization": f"Bearer {self._settings.backend_service_token.get_secret_value()}",
+                    "X-FoodMind-Delegation": f"Bearer {delegation_token}",
                 },
                 timeout=min(timeout_seconds, self._settings.backend_timeout_seconds),
             )
@@ -142,6 +196,46 @@ def _search_result(raw: Any) -> tuple[tuple[GroundedSource, ...], bool]:
         tuple(_search_source(item) for item in cast(list[Any], raw["items"])),
         raw.get("hasNext") is True,
     )
+
+
+def _profile_response(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise BackendToolError("Backend profile response is invalid")
+    profile: dict[str, Any] = {}
+    for field in _PROFILE_SCALAR_FIELDS:
+        value = raw.get(field)
+        if value is None:
+            continue
+        if field in {"budgetMin", "budgetMax", "maxDistanceKm"}:
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise BackendToolError("Backend profile response is invalid")
+        elif field == "spiceTolerance":
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise BackendToolError("Backend profile response is invalid")
+        elif not isinstance(value, str):
+            raise BackendToolError("Backend profile response is invalid")
+        profile[field] = value
+    for field in _PROFILE_CODE_LIST_FIELDS:
+        value = raw.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise BackendToolError("Backend profile response is invalid")
+        profile[field] = value
+    allergens = raw.get("allergens")
+    if allergens is not None:
+        if not isinstance(allergens, list):
+            raise BackendToolError("Backend profile response is invalid")
+        parsed_allergens: list[dict[str, str]] = []
+        for allergen in allergens:
+            if not isinstance(allergen, dict):
+                raise BackendToolError("Backend profile response is invalid")
+            code, severity = allergen.get("code"), allergen.get("severity")
+            if not isinstance(code, str) or not isinstance(severity, str):
+                raise BackendToolError("Backend profile response is invalid")
+            parsed_allergens.append({"code": code, "severity": severity})
+        profile["allergens"] = parsed_allergens
+    return profile
 
 
 def _with_page_metadata(source: GroundedSource, has_next: bool) -> GroundedSource:
