@@ -89,9 +89,11 @@ class GenerateCookingPlanService:
             merge_inference,
         )
 
+        # 生产环境优先用注入的 LLM 提取器，否则退回规则提取器
         extractor = self._context.recipe_extractor or RuleExtractor()
 
         async def _process_one(recipe: RecipeInput) -> ExtractedRecipeCandidate:
+            # 单道菜处理：提取 → 检测主技法 → 逐项补齐缺口 → 合并推理结果
             candidate = await extractor.extract(recipe.text)
             technique = _detect_primary_technique(candidate)
             filled: list[RecipeGap] = []
@@ -110,8 +112,10 @@ class GenerateCookingPlanService:
                     assumptions=(),
                 ),
             )
+            # 回填请求携带的 recipe_id
             return merged.model_copy(update={"recipe_id": recipe.recipe_id})
 
+        # 并发处理所有菜谱（无状态依赖，用 gather 提速）
         candidates = await asyncio.gather(*(_process_one(recipe) for recipe in body.recipes))
         return PreprocessRecipesResponse(recipes=tuple(candidates))
 
@@ -143,6 +147,7 @@ class GenerateCookingPlanService:
 
         invoke_config: RunnableConfig = {"recursion_limit": 30}
         if thread_id is not None:
+            # 提供 thread_id 时启用 checkpoint 持久化，便于进程重启后恢复
             invoke_config["configurable"] = {"thread_id": thread_id}
 
         try:
@@ -152,6 +157,7 @@ class GenerateCookingPlanService:
                 config=invoke_config,
             )
         except Exception as exc:
+            # 只有"可退回确定性解析"的场景才降级，否则原样上抛
             if not self._can_retry_with_deterministic_parser(request):
                 raise
             logger.warning(
@@ -164,7 +170,7 @@ class GenerateCookingPlanService:
 
         response = result.get("response")
         if not isinstance(response, PlanResponse):
-            # Graph reached END without a valid terminal response — defensive fallback.
+            # 图走到 END 却没产出合法终态——防御性兜底
             logger.error(
                 "Graph completed without a valid response field | request_id=%s | state_keys=%s",
                 request.request_id,
@@ -174,12 +180,13 @@ class GenerateCookingPlanService:
                 status="FAILED",
                 error_code=DomainErrorCode.INTERNAL_ERROR.value,
                 correlation_id=request.request_id,
-                # P2-03: public text resolves through the message catalog.
+                # P2-03: 公开文案统一走消息目录解析
                 message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
             )
             return await self._retry_internal_failure(request, response, thread_id)
 
         if isinstance(response, ConfirmationPlanResponse) and not response.confirmation_questions:
+            # 拒收"无确认问题"的确认响应（不可操作）
             logger.error(
                 "Rejected non-actionable confirmation response | request_id=%s",
                 request.request_id,
@@ -231,6 +238,7 @@ class GenerateCookingPlanService:
         response = final_state.get("response")
         if isinstance(response, PlanResponse):
             if isinstance(response, ConfirmationPlanResponse) and not response.confirmation_questions:
+                # 拒收不可操作的确认响应，转 FAILED
                 logger.error(
                     "Rejected non-actionable confirmation response | request_id=%s",
                     request.request_id,
@@ -244,6 +252,7 @@ class GenerateCookingPlanService:
                 return await self._retry_stream_internal_failure(request, response, thread_id, on_progress)
             return await self._retry_stream_internal_failure(request, response, thread_id, on_progress)
 
+        # 流式执行完成但无合法响应——防御性兜底
         logger.error(
             "Graph stream completed without a valid response | request_id=%s | state_keys=%s",
             request.request_id,
@@ -266,6 +275,7 @@ class GenerateCookingPlanService:
     ) -> dict[str, object]:
         final_state: dict[str, object] = {}
         completed_steps = 0
+        # astream 同时返回 updates（已完成节点）与 values（完整权威状态）
         async for mode, chunk in self._graph.astream(
             initial_state,
             context=context,
@@ -273,10 +283,12 @@ class GenerateCookingPlanService:
             stream_mode=["updates", "values"],
         ):
             if mode == "values":
+                # values 是权威完整状态，持续覆盖以保留最新
                 final_state = cast(dict[str, object], chunk)
                 continue
             for node in chunk:
                 if node == "__interrupt__":
+                    # 中断节点不计数、不回调
                     continue
                 completed_steps += 1
                 if on_progress is not None:
@@ -284,10 +296,12 @@ class GenerateCookingPlanService:
         return final_state
 
     def _can_retry_with_deterministic_parser(self, request: GeneratePlanRequest) -> bool:
+        # 已携带预解析候选、或没有任何有效菜谱文本时，无法退回确定性解析
         if request.preparsed_candidates or not any(recipe.text.strip() for recipe in request.recipes):
             return False
         from cooking_plan_agent.parsing.extractor import RecipeExtractor as DeterministicRecipeExtractor
 
+        # 只有"当前注入的是非确定性提取器"时才允许退回
         return self._context.recipe_extractor is not None and not isinstance(
             self._context.recipe_extractor,
             DeterministicRecipeExtractor,
@@ -296,6 +310,7 @@ class GenerateCookingPlanService:
     def _deterministic_context(self) -> WorkflowContext:
         from cooking_plan_agent.parsing.extractor import RecipeExtractor as DeterministicRecipeExtractor
 
+        # 构造"纯确定性"上下文：禁用 LLM 提取及所有依赖 LLM 的组件
         return replace(
             self._context,
             recipe_extractor=DeterministicRecipeExtractor(),
@@ -310,6 +325,7 @@ class GenerateCookingPlanService:
     def _fallback_config(thread_id: str | None) -> RunnableConfig:
         config: RunnableConfig = {"recursion_limit": 30}
         if thread_id is not None:
+            # 用独立线程名隔离确定性回退的 checkpoint，避免污染原线程
             config["configurable"] = {"thread_id": f"{thread_id}__deterministic"}
         return config
 
@@ -318,6 +334,7 @@ class GenerateCookingPlanService:
         request: GeneratePlanRequest,
         thread_id: str | None,
     ) -> PlanResponse:
+        # 用纯确定性上下文重跑一次，规避 LLM 相关故障
         result = await self._graph.ainvoke(
             {"request": request},
             context=self._deterministic_context(),
@@ -326,6 +343,7 @@ class GenerateCookingPlanService:
         response = result.get("response")
         if isinstance(response, PlanResponse):
             return response
+        # 仍无合法终态 → 稳定 FAILED
         return FailedPlanResponse(
             status="FAILED",
             error_code=DomainErrorCode.INTERNAL_ERROR.value,
@@ -339,6 +357,7 @@ class GenerateCookingPlanService:
         thread_id: str | None,
         on_progress: ProgressCallback | None,
     ) -> PlanResponse:
+        # 流式版确定性回退：同样用纯确定性上下文重跑
         final_state = await self._stream_graph(
             {"request": request},
             self._deterministic_context(),
@@ -361,6 +380,7 @@ class GenerateCookingPlanService:
         response: PlanResponse,
         thread_id: str | None,
     ) -> PlanResponse:
+        # 仅当"内部错误"且可退回确定性解析时才重试，否则直接返回原响应
         if not self._is_internal_failure(response) or not self._can_retry_with_deterministic_parser(request):
             return response
         logger.warning(
@@ -386,6 +406,7 @@ class GenerateCookingPlanService:
 
     @staticmethod
     def _is_internal_failure(response: PlanResponse) -> bool:
+        # 判定是否为 INTERNAL_ERROR 的失败响应（作为可重试的前置条件）
         return isinstance(response, FailedPlanResponse) and response.error_code == DomainErrorCode.INTERNAL_ERROR.value
 
     async def continue_after_confirmation(
@@ -420,6 +441,7 @@ class GenerateCookingPlanService:
 
         from langgraph.types import Command
 
+        # 用 Command(resume=...) 重新进入同一 checkpoint 线程，让 apply_confirmation 消费答案
         result = await self._graph.ainvoke(
             Command(resume=[answer.model_dump(mode="json") for answer in body.answers]),
             context=self._context,
@@ -440,7 +462,7 @@ class GenerateCookingPlanService:
                     message=public_message_for(DomainErrorCode.INTERNAL_ERROR.value),
                 )
             return response
-        # Resumed but no terminal response — defensive FAILED fallback.
+        # 恢复后仍无终态——防御性 FAILED
         logger.error(
             "Confirmation resume completed without a response | plan_id=%s | state_keys=%s",
             body.plan_id,

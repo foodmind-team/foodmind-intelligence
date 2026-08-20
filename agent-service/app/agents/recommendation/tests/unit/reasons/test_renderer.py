@@ -13,5 +13,5 @@ async def test_renderer_composes_only_fixed_observational_templates() -> None:
     selections = await DeterministicResultSelector().select(request, result)
     reasoned = await DeterministicReasonDeriver().derive(request, result, selections)
     rendered = await DeterministicExplanationRenderer().render(reasoned)
-    assert rendered[0].explanation == "People with similar preferences also liked this. It resembles meals you liked."
+    assert rendered[0].explanation == "People with similar preferences also liked this. You marked this as Want to Try."
     assert all(len(item.explanation) <= 160 for item in rendered)

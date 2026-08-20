@@ -7,7 +7,12 @@ from recommendation_agent.domain.models import (
     SelectedCandidate,
 )
 from recommendation_agent.policy.diversity import DIVERSITY_POLICY, DiversityPolicy
-from recommendation_agent.policy.reason_predicates import group_supported, preference_supported, user_cf_supported
+from recommendation_agent.policy.reason_predicates import (
+    group_supported,
+    preference_supported,
+    user_cf_supported,
+    want_to_try_supported,
+)
 from recommendation_agent.schemas.agent_v2 import AgentRequest, Candidate
 from recommendation_agent.selection.similarity import similarity_penalty
 
@@ -45,8 +50,9 @@ class DeterministicResultSelector:
         return tuple(selected)
 
 
-def _stable_key(candidate: ScoredCandidate, request_index: dict[str, int]) -> tuple[float, float, int, str]:
+def _stable_key(candidate: ScoredCandidate, request_index: dict[str, int]) -> tuple[int, float, float, int, str]:
     return (
+        0 if candidate.evidence.want_to_try else 1,
         -candidate.probability,
         -candidate.model_score,
         request_index[candidate.candidate_id],
@@ -61,7 +67,7 @@ def _diversity_key(
     request_index: dict[str, int],
     used_types: set[RecommendationType],
     policy: DiversityPolicy,
-) -> tuple[float, int, float, float, int, str]:
+) -> tuple[int, float, int, float, float, int, str]:
     request_candidate = request_candidates[candidate.candidate_id]
     penalty = max(
         similarity_penalty(request_candidate, request_candidates[item.candidate_id], policy) for item in selected
@@ -70,6 +76,7 @@ def _diversity_key(
     adjusted = candidate.probability + novelty_bonus - penalty
     recommendation_type = _recommendation_type(candidate)
     return (
+        0 if candidate.evidence.want_to_try else 1,
         -adjusted,
         0 if recommendation_type not in used_types else 1,
         -candidate.probability,
@@ -82,7 +89,7 @@ def _diversity_key(
 def _recommendation_type(candidate: ScoredCandidate) -> RecommendationType:
     if group_supported(candidate):
         return RecommendationType.GROUP_INSPIRED
-    if user_cf_supported(candidate) or preference_supported(candidate):
+    if user_cf_supported(candidate) or preference_supported(candidate) or want_to_try_supported(candidate):
         return RecommendationType.PERSONAL
     return RecommendationType.EXPLORATORY
 

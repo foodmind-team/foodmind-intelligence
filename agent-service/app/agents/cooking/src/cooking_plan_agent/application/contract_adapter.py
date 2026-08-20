@@ -46,11 +46,13 @@ from cooking_plan_agent.domain.models import (
 )
 
 # Batch-size caps enforced on the Java side (CookingPlanResultValidator).
+# 以下上限由 Java 侧 CookingPlanResultValidator 强制，此处保持一致
 _MAX_INGREDIENTS = 50
 _MAX_STEPS = 30
 _MAX_WARNINGS = 10
 
 # Warning allow-list members we may emit (subset of the Java enum).
+# 允许发出的告警码白名单（Java 枚举的子集）
 _BUDGET_ESTIMATE_ONLY = "BUDGET_ESTIMATE_ONLY"
 
 
@@ -64,6 +66,8 @@ def _compatibility_kitchen_resources() -> tuple[KitchenResourceSnapshot, ...]:
     """
     from cooking_plan_agent.normalisation.names import ESSENTIAL_RESOURCE_TYPES
 
+    # 兼容路径固定假设一套"标准厨房"（stove 4 个炉眼、其余 1 份），
+    # 因为冻结的 v1 DTO 早于显式厨房资源快照；v2 原生调用方仍传真实库存。
     return tuple(
         KitchenResourceSnapshot(
             resource_id=f"compat-{resource_type}",
@@ -89,6 +93,7 @@ def _to_extracted_candidate(candidate: CompatCandidateRequest) -> ExtractedRecip
     """
     snapshot = candidate.snapshot
 
+    # 食材：纯结构到结构映射，置信度固定 1.0，来源标记为 SNAPSHOT（无 LLM、无文本解析）
     ingredients = tuple(
         ExtractedIngredient(
             raw_text=ing.ingredientName,
@@ -111,6 +116,7 @@ def _to_extracted_candidate(candidate: CompatCandidateRequest) -> ExtractedRecip
         for step in snapshot.steps
     )
 
+    # 组装内部候选模型：原始份数、语言固定 en、来源 SNAPSHOT
     return ExtractedRecipeCandidate(
         recipe_id=str(candidate.recipeId),
         dish_name=snapshot.name,
@@ -131,6 +137,7 @@ def _to_inventory_lots(compat: CompatCookingRequest) -> tuple[InventoryLotSnapsh
     """
     lots: list[InventoryLotSnapshot] = []
     for item in compat.request.ingredients:
+        # 把调用方已有食材视为库存，让内部可行性检查直接使用而不再报缺货
         lots.append(
             InventoryLotSnapshot(
                 lot_id=f"compat-{item.ingredientName}-{len(lots)}",
@@ -152,12 +159,12 @@ def build_internal_request(compat: CompatCookingRequest) -> GeneratePlanRequest:
     descriptors for traceability/logging only.
     """
     request_snapshot = compat.request
+    # 仅保留带食材或步骤的候选快照，避免空快照进入工作流
     candidates = tuple(
         _to_extracted_candidate(c) for c in compat.candidates if c.snapshot.ingredients or c.snapshot.steps
     )
 
-    # Lightweight descriptors mirroring the native request shape.  The
-    # workflow ignores them when preparsed_candidates is non-empty.
+    # 轻量描述符：镜像原生请求结构；preparsed_candidates 非空时工作流会忽略它
     recipes = tuple(
         RecipeInput(
             recipe_id=str(c.recipeId),
@@ -190,6 +197,7 @@ def selected_recipe_id(compat: CompatCookingRequest) -> UUID | None:
     """
     if not compat.candidates:
         return None
+    # MVP 规则：选择第一个受控候选；必须命中调用方提供的 recipeId（Java UNKNOWN_RECIPE 校验）
     return compat.candidates[0].recipeId
 
 
@@ -207,6 +215,7 @@ def deadline_budget_seconds(deadline_at: datetime | None, now: datetime) -> floa
     if deadline_at is None:
         return None
     remaining = (deadline_at - now).total_seconds()
+    # 已过截止时间则返回 0.0，让调用方在进入工作流前快速失败（P0-02 rule 7）
     return max(0.0, remaining)
 
 
@@ -229,6 +238,7 @@ def _build_ingredients(
     if selected is None:
         return ()
 
+    # 完成清单里的食材视为 AVAILABLE，其余为 TO_BUY
     available_names = {item.ingredient_name.lower().strip() for item in response.completion_checklist}
 
     result: list[CompatIngredientResponse] = []
@@ -262,6 +272,7 @@ def _build_steps(compat: CompatCookingRequest) -> tuple[CompatStepResponse, ...]
             continue
         if len(result) >= _MAX_STEPS:
             break
+        # 重新编号：stepNo 取当前结果长度 + 1，保证从 1 连续
         result.append(
             CompatStepResponse(
                 stepNo=len(result) + 1,
@@ -295,18 +306,19 @@ def to_compat_response(
         servings=compat.request.servings,
     )
 
+    # 非 READY 终态一律映射为 FAILED（Java 侧再视为 AGENT_UNAVAILABLE，安全终态）
     if not isinstance(response, ReadyPlanResponse):
-        # Non-READY terminal state → FAILED; keep correlation ID for triage.
+        # 保留关联 ID 以便排查
         return base
 
     steps = _build_steps(compat)
     ingredients = _build_ingredients(compat, response)
-    # Cost/currency come from the selected candidate when the caller asked
-    # for a budget; otherwise leave them empty (validator allows nulls).
+    # 仅当调用方要求预算时，从选中候选取费用/币种；否则留空（校验器允许 null）
     selected = compat.candidates[0] if compat.candidates else None
     estimated_cost = selected.snapshot.estimatedCost if selected is not None else None
     currency = selected.snapshot.currency if selected is not None else None
 
+    # READY → SUCCEEDED，回填 sourceRecipeId、总时长、费用、食材、步骤、告警
     return base.model_copy(
         update={
             "status": "SUCCEEDED",
@@ -329,6 +341,7 @@ def _build_warnings(compat: CompatCookingRequest, estimated_cost: Decimal | None
     must be in the validator's allow-list.
     """
     warnings: list[object] = []
+    # 有费用且调用方提供了预算时，发一条"费用仅为估算"的告警（须在白名单内）
     if estimated_cost is not None and compat.request.maxBudget is not None:
         from cooking_plan_agent.api.compat_models import CompatWarningResponse
 
@@ -344,4 +357,5 @@ def _build_warnings(compat: CompatCookingRequest, estimated_cost: Decimal | None
 
 def is_contract_supported(contract_version: str) -> bool:
     """Return True when the caller's contract version is supported."""
+    # 仅支持冻结的 CONTRACT_VERSION，其余一律拒绝（UNSUPPORTED_VERSION）
     return contract_version == CONTRACT_VERSION
