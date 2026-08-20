@@ -1,13 +1,41 @@
+# =============================================================================
+# 本地烹饪知识推断模块（parsing/inference）
+# -----------------------------------------------------------------------------
+# 实现手册 4.11：用确定性、基于规则的烹饪知识填补检测到的菜谱缺口。
+# 无 LLM 依赖 —— 这是联网研究之前的“本地推断兜底”。
+# 设计原则：
+#   - 只有推断规则，绝不调用 provider
+#   - 所有决策确定且可解释
+#   - 置信度反映推断的可靠性
+#   - 安全关键缺口绝不以高置信度推断
+# 核心函数：
+#   - infer_local                 ：对候选的缺口集应用本地知识填充
+#   - infer_gap                   ：按 field_path 分派到具体推断（火力/时长/温度/资源）
+#   - infer_deterministic_default ：非安全字段的最后兜底默认值
+#   - merge_inference             ：把填充结果回写进候选
+# =============================================================================
+
 """Local cooking knowledge inference — handbook 4.11.
+
+本地烹饪知识推断 —— 手册 4.11。
 
 Fills detected recipe gaps using deterministic, rule-based cooking knowledge.
 No LLM dependency — this is the local inference fallback before web research.
+
+用确定性、基于规则的烹饪知识填补检测到的菜谱缺口。
+无 LLM 依赖 —— 这是联网研究之前的本地推断兜底。
 
 Design principles:
   - Only inference rules, NO provider calls
   - All decisions are deterministic and explainable
   - Confidence scores reflect the reliability of the inference
   - Safety-critical gaps are NEVER inferred with high confidence
+
+设计原则：
+  - 只有推断规则，绝不调用 provider
+  - 所有决策确定且可解释
+  - 置信度反映推断的可靠性
+  - 安全关键缺口绝不以高置信度推断
 """
 
 from __future__ import annotations
@@ -25,16 +53,22 @@ from cooking_plan_agent.parsing.gaps import GapClass
 
 # =============================================================================
 # InferenceResult — output of the local inference step
+# 推断结果 —— 本地推断步骤的输出
 # =============================================================================
 
 
 class InferenceResult(NamedTuple):
-    """Result of applying local inference to fill recipe gaps.
+    """本地推断填充菜谱缺口的结果。
+
+    Result of applying local inference to fill recipe gaps.
 
     Attributes:
         filled_gaps: Gaps that were successfully filled by local rules.
+            filled_gaps：被本地规则成功填充的缺口。
         unresolved_gaps: Critical gaps that local inference could not fill.
+            unresolved_gaps：本地推断无法填充的关键缺口。
         assumptions: Explanatory assumptions made during inference.
+            assumptions：推断过程中做出的解释性假设。
     """
 
     filled_gaps: tuple[RecipeGap, ...]
@@ -44,10 +78,12 @@ class InferenceResult(NamedTuple):
 
 # =============================================================================
 # Heat level inference rules
+# 火力档位推断规则
 # =============================================================================
 
 # Technique → default heat level mapping
 # These are standard culinary conventions, not guesses.
+# 技法 → 默认火力档位映射。这些是标准烹饪惯例，不是猜测。
 _TECHNIQUE_HEAT_MAP: dict[str, tuple[HeatLevel, str]] = {
     "stir_fry": (HeatLevel.HIGH, "stir-frying typically requires high heat"),
     "deep_fry": (HeatLevel.HIGH, "deep-frying requires high heat for proper oil temperature"),
@@ -66,10 +102,12 @@ _TECHNIQUE_HEAT_MAP: dict[str, tuple[HeatLevel, str]] = {
 
 # =============================================================================
 # Duration inference rules
+# 时长推断规则
 # =============================================================================
 
 # Technique → default duration range in minutes
 # These are conservative defaults based on common cooking practice.
+# 技法 → 默认时长区间（分钟）。这些是基于常见烹饪实践的保守默认值。
 _TECHNIQUE_DURATION_MAP: dict[str, tuple[int, int, str]] = {
     "stir_fry": (3, 8, "stir-frying typically takes 3-8 minutes"),
     "deep_fry": (3, 10, "deep-frying typically takes 3-10 minutes depending on food size"),
@@ -87,9 +125,11 @@ _TECHNIQUE_DURATION_MAP: dict[str, tuple[int, int, str]] = {
 
 # =============================================================================
 # Temperature inference rules
+# 温度推断规则
 # =============================================================================
 
 # Technique → typical target temperature in Celsius
+# 技法 → 典型目标温度（摄氏度）
 _TECHNIQUE_TEMPERATURE_MAP: dict[str, tuple[Decimal, str]] = {
     "bake": (Decimal(180), "standard baking temperature is 180°C (350°F)"),
     "roast": (Decimal(200), "standard roasting temperature is 200°C (400°F)"),
@@ -99,9 +139,11 @@ _TECHNIQUE_TEMPERATURE_MAP: dict[str, tuple[Decimal, str]] = {
 
 # =============================================================================
 # Resource inference rules
+# 资源推断规则
 # =============================================================================
 
 # Technique → default required resources
+# 技法 → 默认所需资源
 _TECHNIQUE_RESOURCES: dict[str, tuple[str, ...]] = {
     "stir_fry": ("stove", "wok", "spatula"),
     "deep_fry": ("stove", "pot"),
@@ -120,6 +162,7 @@ _TECHNIQUE_RESOURCES: dict[str, tuple[str, ...]] = {
 
 # =============================================================================
 # Public API
+# 公共 API
 # =============================================================================
 
 
@@ -127,29 +170,39 @@ def infer_local(
     candidate: ExtractedRecipeCandidate,
     gaps: tuple[RecipeGap, ...],
 ) -> InferenceResult:
-    """Apply local cooking knowledge to fill detected gaps.
+    """应用本地烹饪知识填充检测到的缺口。
+
+    Apply local cooking knowledge to fill detected gaps.
 
     Processes each gap and attempts to fill it with deterministic rules.
     Critical and safety_critical gaps that can be filled by local knowledge
     are resolved. Safety-critical gaps that CANNOT be reliably inferred
     remain unresolved and must be routed to confirmation or web research.
 
+    逐个处理缺口，尝试用确定性规则填充。本地知识能填充的 critical / safety_critical
+    缺口被解决；无法可靠推断的 safety_critical 缺口保持未解决，须路由到确认或联网研究。
+
     Args:
         candidate: The extracted recipe candidate with gaps.
+            candidate：带缺口的提取菜谱候选。
         gaps: Detected gaps from find_recipe_gaps().
+            gaps：来自 find_recipe_gaps() 的检测缺口。
 
     Returns:
         InferenceResult with filled/unresolved gaps and assumptions made.
+        含已填充 / 未解决缺口与所做假设的 InferenceResult。
     """
     filled: list[RecipeGap] = []
     unresolved: list[RecipeGap] = []
     assumptions: list[Assumption] = []
 
     # Detect the cooking technique for the recipe (from step analysis)
+    # 从步骤分析检测菜谱的主要烹饪技法
     technique = _detect_primary_technique(candidate)
 
     for gap in gaps:
         # Only attempt to fill critical and safety_critical gaps
+        # 只尝试填充 critical 与 safety_critical 缺口
         if gap.gap_class not in (GapClass.CRITICAL, GapClass.SAFETY_CRITICAL):
             unresolved.append(gap)
             continue
@@ -173,15 +226,23 @@ def infer_gap(
     gap: RecipeGap,
     technique: str,
 ) -> tuple[RecipeGap, Assumption] | None:
-    """Fill a single gap using local cooking knowledge.
+    """用本地烹饪知识填充单个缺口。
+
+    Fill a single gap using local cooking knowledge.
 
     Pure dispatch on ``gap.field_path``. Returns None when the gap cannot be
     inferred locally (e.g. a safety-critical temperature), leaving the caller
     to decide whether to keep it unresolved.
 
+    纯按 gap.field_path 分派。当缺口无法本地推断（如安全关键温度）时返回 None，
+    由调用方决定是否保持未解决。
+
     ``technique`` is the recipe's primary cooking technique, detected once by
     the caller via ``_detect_primary_technique`` so the detection cost is not
     repeated per gap.
+
+    technique 是菜谱的主要烹饪技法，由调用方通过 _detect_primary_technique 检测一次，
+    避免每个缺口重复检测。
     """
     if "heat_level" in gap.field_path:
         return _infer_heat(gap, candidate, technique)
@@ -190,6 +251,7 @@ def infer_gap(
     if "temperature" in gap.field_path.lower():
         if gap.gap_class == GapClass.SAFETY_CRITICAL:
             # NEVER infer safety-critical temperatures locally
+            # 绝不在本地推断安全关键温度
             return None
         return _infer_temperature(gap, technique)
     if "resource" in gap.field_path.lower():
@@ -201,10 +263,14 @@ def infer_deterministic_default(
     candidate: ExtractedRecipeCandidate,
     gap: RecipeGap,
 ) -> tuple[RecipeGap, Assumption] | None:
-    """Return a conservative last-resort value for a non-safety field.
+    """为非安全字段返回一个保守的最后兜底值。
+
+    Return a conservative last-resort value for a non-safety field.
 
     This is deliberately used only after model/research inference produced
     no usable value. Safety-critical gaps are never defaulted.
+
+    刻意仅在模型 / 研究推断未产生可用值之后使用。安全关键缺口绝不默认填充。
     """
     if gap.gap_class == GapClass.SAFETY_CRITICAL:
         return None
@@ -257,6 +323,7 @@ def infer_deterministic_default(
 
 # =============================================================================
 # Merge inference results back into the candidate
+# 把推断结果回写进候选
 # =============================================================================
 
 
@@ -264,17 +331,24 @@ def merge_inference(
     candidate: ExtractedRecipeCandidate,
     result: InferenceResult,
 ) -> ExtractedRecipeCandidate:
-    """Apply filled gaps back into the candidate, producing an updated candidate.
+    """把已填充的缺口应用回候选，生成更新后的候选。
+
+    Apply filled gaps back into the candidate, producing an updated candidate.
 
     Only fields that were successfully filled by local inference are applied.
     Unresolved gaps are left as-is — downstream routing handles them.
 
+    仅应用本地推断成功填充的字段。未解决缺口保持原样 —— 由下游路由处理。
+
     Args:
         candidate: The original extracted candidate.
+            candidate：原始提取候选。
         result: InferenceResult from infer_local().
+            result：来自 infer_local() 的 InferenceResult。
 
     Returns:
         Updated ExtractedRecipeCandidate with inferred values applied.
+        已应用推断值的更新 ExtractedRecipeCandidate。
     """
     updated_steps = list(candidate.steps)
 
@@ -283,7 +357,7 @@ def merge_inference(
         if step_idx is not None and step_idx < len(updated_steps):
             step = updated_steps[step_idx]
 
-            # Apply the inferred values
+            # Apply the inferred values  应用推断值
             field = gap.field_path.rsplit(".", 1)[-1] if "." in gap.field_path else gap.field_path
 
             if "heat_level" in field and gap.current_value:
@@ -339,7 +413,7 @@ def merge_inference(
                     pass
 
             elif "resource" in field and gap.current_value:
-                # Resource values are comma-separated
+                # Resource values are comma-separated  资源值以逗号分隔
                 resources = tuple(r.strip() for r in gap.current_value.split(",") if r.strip())
                 if resources:
                     updated_steps[step_idx] = step.model_copy(
@@ -355,6 +429,7 @@ def merge_inference(
 
 # Technique keyword → technique name mapping for Chinese text
 # Used by _detect_primary_technique to bridge extractor output and inference maps.
+# 中文文本的技法关键词 → 技法名映射。用于 _detect_primary_technique 桥接提取器输出与推断映射。
 _CHINESE_TECHNIQUE_KEYWORDS: dict[str, str] = {
     "焯水": "boil",
     "煮": "boil",
@@ -386,6 +461,8 @@ _CHINESE_TECHNIQUE_KEYWORDS: dict[str, str] = {
 # Common English spellings whose surface form differs from the canonical
 # inference-map key. Keep these aliases next to the language-specific lookup
 # so extraction and local gap filling agree on the same technique.
+# 表面形式与规范推断映射键不同的常见英文拼写。把这些别名放在语言特定查找旁边，
+# 使提取与本地缺口填充对同一技法达成一致。
 _ENGLISH_TECHNIQUE_ALIASES: dict[str, str] = {
     "pan-fry": "sauté",
     "pan fry": "sauté",
@@ -400,15 +477,20 @@ _ENGLISH_TECHNIQUE_ALIASES: dict[str, str] = {
 
 # =============================================================================
 # Internal inference helpers
+# 内部推断辅助函数
 # =============================================================================
 
 
 def _detect_primary_technique(candidate: ExtractedRecipeCandidate) -> str:
-    """Detect the primary cooking technique from the recipe's steps.
+    """从菜谱步骤检测主要烹饪技法。
+
+    Detect the primary cooking technique from the recipe's steps.
 
     Searches step instruction text for both English and Chinese technique
     keywords. Returns the most frequently mentioned technique, or 'general'
     if none are found.
+
+    在步骤指令文本中搜索中英文技法关键词。返回出现最频繁的技法，若未找到则返回 'general'。
     """
     heating_steps = [s for s in candidate.steps if s.category == "heating"]
     if not heating_steps:
@@ -420,7 +502,7 @@ def _detect_primary_technique(candidate: ExtractedRecipeCandidate) -> str:
 
     for step in heating_steps:
         instruction = step.instruction.lower()
-        # Check English technique names
+        # Check English technique names  检查英文技法名
         for tech in _TECHNIQUE_HEAT_MAP:
             term = tech.replace("_", " ")
             if term in instruction or tech.replace("_", "-") in instruction:
@@ -430,7 +512,7 @@ def _detect_primary_technique(candidate: ExtractedRecipeCandidate) -> str:
             if keyword in instruction:
                 technique_counts[tech] += 1
 
-        # Check Chinese technique keywords
+        # Check Chinese technique keywords  检查中文技法关键词
         for zh_keyword, tech in _CHINESE_TECHNIQUE_KEYWORDS.items():
             if zh_keyword in step.instruction:
                 technique_counts[tech] += 1
@@ -446,12 +528,12 @@ def _infer_heat(
     candidate: ExtractedRecipeCandidate,
     technique: str,
 ) -> tuple[RecipeGap, Assumption] | None:
-    """Infer missing heat level from technique."""
+    """从技法推断缺失的火力档位。"""
     if technique not in _TECHNIQUE_HEAT_MAP:
         return None
 
     heat, explanation = _TECHNIQUE_HEAT_MAP[technique]
-    confidence = Decimal("0.7")  # Moderate — technique-level inference
+    confidence = Decimal("0.7")  # Moderate — technique-level inference  中等 —— 技法级推断
 
     filled_gap = gap.model_copy(
         update={
@@ -470,14 +552,15 @@ def _infer_duration(
     gap: RecipeGap,
     technique: str,
 ) -> tuple[RecipeGap, Assumption] | None:
-    """Infer missing duration from technique."""
+    """从技法推断缺失的时长。"""
     if technique not in _TECHNIQUE_DURATION_MAP:
         return None
 
     dur_min, dur_max, explanation = _TECHNIQUE_DURATION_MAP[technique]
     # Use midpoint as the inferred passive duration
+    # 用区间中点作为推断的被动时长
     inferred = (dur_min + dur_max) // 2
-    confidence = Decimal("0.5")  # Low confidence — duration varies a lot
+    confidence = Decimal("0.5")  # Low confidence — duration varies a lot  低置信度 —— 时长差异大
 
     filled_gap = gap.model_copy(
         update={
@@ -496,7 +579,7 @@ def _infer_temperature(
     gap: RecipeGap,
     technique: str,
 ) -> tuple[RecipeGap, Assumption] | None:
-    """Infer missing temperature from technique."""
+    """从技法推断缺失的温度。"""
     if technique not in _TECHNIQUE_TEMPERATURE_MAP:
         return None
 
@@ -520,7 +603,7 @@ def _infer_resources(
     gap: RecipeGap,
     technique: str,
 ) -> tuple[RecipeGap, Assumption] | None:
-    """Infer missing resource hints from technique."""
+    """从技法推断缺失的资源提示。"""
     if technique not in _TECHNIQUE_RESOURCES:
         return None
 
@@ -541,7 +624,7 @@ def _infer_resources(
 
 
 def _extract_step_index(field_path: str) -> int | None:
-    """Extract step index from field path like 'steps[2].heat_level'."""
+    """从 'steps[2].heat_level' 这类字段路径提取步骤索引。"""
     import re
 
     match = re.search(r"steps\[(\d+)\]", field_path)
