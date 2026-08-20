@@ -1,7 +1,7 @@
 # FoodMind Chat Agent
 
 Private FastAPI service for `POST /internal/v1/chat/generate`. It mirrors the
-Spring Boot `chat-agent-v1` contract, authenticates `Authorization: Bearer`,
+Spring Boot `chat-agent-v2` contract, authenticates `Authorization: Bearer`,
 and uses an OpenAI-compatible chat-completions provider such as DeepSeek.
 
 Chatbot is read-only. It can freely explore the current user's authorised

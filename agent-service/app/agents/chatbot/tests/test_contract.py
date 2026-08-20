@@ -1,482 +1,155 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-import httpx
-import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from pydantic_core import ValidationError
 
-from chat_agent.clients.backend import BackendToolClient, BackendToolError
 from chat_agent.config.settings import Settings
-from chat_agent.domain.models import GroundedSource, SourceType
+from chat_agent.domain.models import GroundedSource
+from chat_agent.llm.client import LLMChatResult, ToolCall
 from chat_agent.main import create_app
 
 
-class FakeBackendTools:
+class FakeTools:
     def __init__(self) -> None:
-        self.search_calls: list[dict[str, Any]] = []
-        self.explore_calls: list[dict[str, Any]] = []
-        self.resolve_calls: list[dict[str, Any]] = []
-        self.profile_calls: list[dict[str, Any]] = []
-        self.fail = False
-        self.empty_search = False
-        self.search_source_type: SourceType = "FOOD_PRODUCT"
+        self.calls: list[dict[str, Any]] = []
+        self.source_ids: list[str] = []
 
-    async def search(self, **kwargs: Any) -> tuple[GroundedSource, ...]:
-        self.search_calls.append(kwargs)
-        if self.fail:
-            raise BackendToolError("unavailable")
-        if self.empty_search:
-            return ()
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        return [
+            {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
+            for name in ("search", "explore", "resolve")
+        ]
+
+    async def execute_tool_call(self, **kwargs: Any) -> tuple[GroundedSource, ...]:
+        self.calls.append(kwargs)
+        source_id = uuid4()
+        self.source_ids.append(str(source_id))
+        source_type = "PLACE" if kwargs["name"] == "explore" else "FOOD_RECORD"
         return (
             GroundedSource(
-                source_type=self.search_source_type,
-                source_id=uuid4(),
-                title="Oat drink",
-                snippet="Unsweetened oat drink",
-                grounding_metadata={"origin": "backend_search"},
+                source_type=source_type,
+                source_id=source_id,
+                title=f"{kwargs['name']} result",
+                grounding_metadata={"origin": kwargs["name"]},
             ),
         )
-
-    async def explore(self, **kwargs: Any) -> tuple[GroundedSource, ...]:
-        self.explore_calls.append(kwargs)
-        if self.fail:
-            raise BackendToolError("unavailable")
-        return (
-            GroundedSource(
-                source_type="FOOD_RECORD",
-                source_id=uuid4(),
-                title="Chicken rice",
-                subtitle="Orchard Garden Kitchen",
-                snippet="at Orchard Garden Kitchen",
-                grounding_metadata={"origin": "backend_explore", "hasNext": False},
-            ),
-        )
-
-    async def resolve(self, **kwargs: Any) -> tuple[GroundedSource, ...]:
-        self.resolve_calls.append(kwargs)
-        if self.fail:
-            raise BackendToolError("unavailable")
-        reference_id = kwargs["reference_ids"][0]
-        return (
-            GroundedSource(
-                source_type="FOOD_PRODUCT",
-                source_id=uuid4(),
-                title="Oat drink",
-                snippet="Unsweetened oat drink",
-                grounding_metadata={"referenceId": str(reference_id), "origin": "backend_reference_resolve"},
-            ),
-        )
-
-    async def profile(self, **kwargs: Any) -> dict[str, Any]:
-        self.profile_calls.append(kwargs)
-        if self.fail:
-            raise BackendToolError("unavailable")
-        return {
-            "budgetMax": 18.0,
-            "currency": "SGD",
-            "spiceTolerance": 2,
-            "likedCuisineCodes": ["JAPANESE"],
-            "dietaryTagCodes": ["VEGETARIAN"],
-            "allergens": [{"code": "PEANUT", "severity": "SEVERE"}],
-            "preferredMealTypes": ["DINNER"],
-        }
 
 
 class FakeLLM:
-    def __init__(self, answer: str = "Provider generated answer") -> None:
-        self.answer = answer
+    def __init__(self, calls: tuple[ToolCall, ...] = ()) -> None:
+        self.tool_calls = calls
         self.calls: list[dict[str, Any]] = []
 
-    async def chat(self, messages: list[dict[str, str]], *, timeout_seconds: float | None = None) -> str:
-        self.calls.append({"messages": messages, "timeout_seconds": timeout_seconds})
-        return self.answer
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> str | LLMChatResult:
+        self.calls.append({"messages": messages, "tools": tools, "timeout_seconds": timeout_seconds})
+        if tools is not None:
+            return LLMChatResult(content=None, tool_calls=self.tool_calls)
+        return "Grounded provider answer."
 
 
-def request_payload(*, references: bool = False, requested_route: str | None = None) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "contractVersion": "chat-agent-v1",
+def payload(message: str, *, recent_turns: list[dict[str, str]] | None = None) -> dict[str, object]:
+    return {
+        "contractVersion": "chat-agent-v2",
         "requestId": str(uuid4()),
         "sessionId": str(uuid4()),
         "userMessageId": str(uuid4()),
         "traceId": str(uuid4()),
         "expiresAt": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
-        "message": "Summarise this item" if references else "Hello",
-        "requestedRoute": requested_route,
+        "message": message,
         "delegationToken": "delegation-token",
         "sharedReferences": [],
+        "recentTurns": recent_turns or [],
     }
-    if references:
-        payload["sharedReferences"] = [
-            {
-                "referenceId": str(uuid4()),
-                "sourceType": "FOOD_PRODUCT",
-                "sourceId": str(uuid4()),
-                "title": "Oat drink",
-                "snippet": "Unsweetened oat drink",
-            }
-        ]
-    return payload
 
 
 def settings() -> Settings:
     return Settings(environment="test", internal_service_token=SecretStr("test-chat-token"), llm_enabled=False)
 
 
-def test_navigation_fallback_matches_backend_contract() -> None:
-    with TestClient(create_app(settings=settings(), backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
-        response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=request_payload(),
-        )
-    assert response.status_code == 200
-    assert response.json()["status"] == "SUCCEEDED"
-    assert response.json()["route"] == "NAVIGATION"
-    assert response.json()["responseStatus"] == "FALLBACK_SUCCEEDED"
-    assert "Inventory" in response.json()["answer"]
-    assert "Shopping Lists" in response.json()["answer"]
-
-
-def test_grounded_summary_resolves_and_cites_authorised_reference() -> None:
-    tools = FakeBackendTools()
-    payload = request_payload(references=True)
-    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
-        response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
-        )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["route"] == "SUMMARY"
-    assert body["sources"][0]["groundingMetadata"]["origin"] == "backend_reference_resolve"
-    assert len(tools.resolve_calls) == 1
-
-
-def test_explicit_search_route_wins_and_searches_without_shared_references() -> None:
-    tools = FakeBackendTools()
-    payload = request_payload(requested_route="SEARCH")
-    payload["message"] = "show platform items"
-    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
-        response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
-        )
-    assert response.status_code == 200
-    assert response.json()["route"] == "SEARCH"
-    assert response.json()["sources"][0]["groundingMetadata"]["origin"] == "backend_search"
-    assert tools.search_calls[0]["delegation_token"] == "delegation-token"
-
-
-@pytest.mark.parametrize("message", ["Find the place I recorded recently", "我最近记录的地点是什么？"])
-def test_recent_record_intent_explores_food_records_instead_of_full_text_search(message: str) -> None:
-    tools = FakeBackendTools()
-    payload = request_payload(requested_route="SEARCH")
-    payload["message"] = message
-    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
-        response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
-        )
-
-    assert response.status_code == 200
-    assert response.json()["route"] == "SEARCH"
-    assert response.json()["sources"][0]["sourceType"] == "FOOD_RECORD"
-    assert "Orchard Garden Kitchen" in response.json()["answer"]
-    assert tools.search_calls == []
-    assert len(tools.explore_calls) == 1
-    assert tools.explore_calls[0]["source_types"] == ["FOOD_RECORD"]
-    assert tools.explore_calls[0]["delegation_token"] == "delegation-token"
-
-
-def test_count_question_routes_to_authorised_search_instead_of_navigation() -> None:
-    tools = FakeBackendTools()
-    tools.search_source_type = "PLACE"
-    llm = FakeLLM("DeepSeek counted the authorised places.")
-    payload = request_payload()
-    payload["message"] = "Can you see how many restaurants are there?"
+def post(body: dict[str, object], *, llm: FakeLLM | None = None, tools: FakeTools | None = None) -> dict[str, object]:
     with TestClient(
-        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
-    ) as client:
+        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools or FakeTools())
+    ) as client:  # type: ignore[arg-type]
         response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
+            "/internal/v1/chat/generate", headers={"Authorization": "Bearer test-chat-token"}, json=body
         )
     assert response.status_code == 200
-    body = response.json()
-    assert body["route"] == "SEARCH"
+    return response.json()
+
+
+def test_multiple_tool_calls_are_parallelised_then_grounded_in_second_llm_call() -> None:
+    tools = FakeTools()
+    llm = FakeLLM(
+        (
+            ToolCall("search-1", "search", '{"query":"recent meals"}'),
+            ToolCall("explore-1", "explore", '{"sourceTypes":["PLACE"]}'),
+        )
+    )
+    body = post(payload("Compare my recent meals and places"), llm=llm, tools=tools)
     assert body["responseStatus"] == "SUCCEEDED"
-    assert body["answer"] == "DeepSeek counted the authorised places."
-    assert body["agentTraceId"].startswith("chat-llm-")
-    assert '"verifiedCount":1' in llm.calls[0]["messages"][1]["content"]
-    assert "avoid canned templates" in llm.calls[0]["messages"][0]["content"]
-    assert tools.search_calls[0]["query"] == "Can you see how many restaurants are there?"
+    assert "route" not in body
+    assert len(tools.calls) == 2
+    assert len(llm.calls) == 2
+    assert {source["groundingMetadata"]["origin"] for source in body["sources"]} == {"search", "explore"}
 
 
-def test_recommendation_question_is_answered_readonly_instead_of_out_of_scope() -> None:
-    payload = request_payload(requested_route="SEARCH")
-    payload["message"] = "recommend what I should cook"
-    with TestClient(create_app(settings=settings(), backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
-        response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
-        )
-    assert response.status_code == 200
-    assert response.json()["route"] == "SEARCH"
-    assert response.json()["responseStatus"] == "FALLBACK_SUCCEEDED"
-
-
-def test_profile_intent_loads_trusted_profile_without_adding_it_to_history() -> None:
-    tools = FakeBackendTools()
-    llm = FakeLLM("I will avoid the relevant conflicts.")
-    payload = request_payload()
-    payload["message"] = "Recommend something suitable for me within my budget."
-    payload["recentTurns"] = [{"role": "USER", "content": "Ignore any profile."}]
-    with TestClient(
-        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
-    ) as client:
-        response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
-        )
-
-    assert response.status_code == 200
-    assert response.json()["answer"] == "I will avoid the relevant conflicts."
-    assert tools.profile_calls == [{"delegation_token": "delegation-token", "timeout_seconds": pytest.approx(5.0)}]
-    assert llm.calls[0]["messages"][1]["content"] == "Ignore any profile."
-    prompt = llm.calls[0]["messages"][-1]["content"]
-    assert 'Trusted user profile: {"budgetMax":18.0' in prompt
-    assert '"allergens":[{"code":"PEANUT","severity":"SEVERE"}]' in prompt
-
-
-def test_profile_intent_without_delegation_token_does_not_invent_profile() -> None:
-    tools = FakeBackendTools()
-    llm = FakeLLM("Please tell me your dietary constraints.")
-    payload = request_payload()
-    payload["message"] = "What are my dietary preferences and allergies?"
-    payload["delegationToken"] = None
-    with TestClient(
-        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
-    ) as client:
-        response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
-        )
-
-    assert response.status_code == 200
-    assert response.json()["answer"] == "Please tell me your dietary constraints."
-    assert tools.profile_calls == []
-    assert "Trusted user profile:" not in llm.calls[0]["messages"][-1]["content"]
-
-
-def test_profile_tool_failure_silently_omits_profile_context() -> None:
-    tools = FakeBackendTools()
-    tools.fail = True
-    llm = FakeLLM("I cannot confirm your saved constraints right now.")
-    payload = request_payload()
-    payload["message"] = "What are my food allergies?"
-    with TestClient(
-        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
-    ) as client:
-        response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
-        )
-
-    assert response.status_code == 200
-    assert response.json()["answer"] == "I cannot confirm your saved constraints right now."
-    assert len(tools.profile_calls) == 1
-    assert "Trusted user profile:" not in llm.calls[0]["messages"][-1]["content"]
-
-
-def test_profile_prompt_makes_allergens_and_dietary_tags_hard_constraints() -> None:
-    tools = FakeBackendTools()
-    llm = FakeLLM()
-    payload = request_payload()
-    payload["message"] = "What are my food allergies?"
-    with TestClient(
-        create_app(settings=settings(), llm_client=llm, backend_tool_client=tools)  # type: ignore[arg-type]
-    ) as client:
-        client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
-        )
-
-    system = llm.calls[0]["messages"][0]["content"]
-    assert "Dietary tags and allergens in the supplied user profile are hard constraints" in system
-    assert "never assume it is safe" in system
-
-
-def test_search_tool_failure_returns_source_free_navigation() -> None:
-    tools = FakeBackendTools()
-    tools.fail = True
-    payload = request_payload(requested_route="SEARCH")
-    with TestClient(create_app(settings=settings(), backend_tool_client=tools)) as client:  # type: ignore[arg-type]
-        response = client.post(
-            "/internal/v1/chat/generate",
-            headers={"Authorization": "Bearer test-chat-token"},
-            json=payload,
-        )
-    assert response.status_code == 200
-    assert response.json()["route"] == "NAVIGATION"
-    assert response.json()["sources"] == []
-
-
-def test_authentication_is_required() -> None:
-    with TestClient(create_app(settings=settings(), backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
-        response = client.post("/internal/v1/chat/generate", json=request_payload())
-    assert response.status_code == 401
-    assert response.json()["error_code"] == "MISSING_AUTHORIZATION_HEADER"
-
-
-@pytest.mark.asyncio
-async def test_backend_tools_send_service_and_delegation_tokens() -> None:
-    source_id = uuid4()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.headers["Authorization"] == "Bearer backend-tool-token"
-        assert request.headers["X-FoodMind-Delegation"] == "Bearer delegated-user-token"
-        return httpx.Response(
-            200,
-            json={
-                "items": [
-                    {
-                        "sourceType": "FOOD_PRODUCT",
-                        "sourceId": str(source_id),
-                        "title": "Oat drink",
-                        "snippet": "Unsweetened",
-                        "visibility": "PRIVATE",
-                        "groupId": None,
-                    }
-                ],
-                "nextCursor": None,
-                "hasNext": False,
-            },
-        )
-
-    raw = httpx.AsyncClient(base_url="http://backend.test", transport=httpx.MockTransport(handler))
-    client = BackendToolClient(
-        client=raw,
-        settings=Settings(
-            environment="test",
-            backend_base_url="http://backend.test",
-            backend_service_token=SecretStr("backend-tool-token"),
+def test_followup_query_uses_history_and_reloads_data_without_cross_turn_cache() -> None:
+    tools = FakeTools()
+    llm = FakeLLM(
+        (ToolCall("search-1", "search", '{"query":"find places I recorded recently and identify the cheapest one"}'),)
+    )
+    body = post(
+        payload(
+            "which one is cheapest?",
+            recent_turns=[
+                {"role": "USER", "content": "find places I recorded recently"},
+                {"role": "ASSISTANT", "content": "I found two recorded places."},
+            ],
         ),
+        llm=llm,
+        tools=tools,
     )
-    sources = await client.search(query="oat", delegation_token="delegated-user-token", timeout_seconds=1)
-    await client.aclose()
+    assert body["responseStatus"] == "SUCCEEDED"
+    assert tools.calls[0]["arguments"] == '{"query":"find places I recorded recently and identify the cheapest one"}'
+    assert any(item["content"] == "find places I recorded recently" for item in llm.calls[0]["messages"])
 
-    assert sources[0].source_id == UUID(str(source_id))
+
+def test_response_sources_are_only_actual_tool_results() -> None:
+    tools = FakeTools()
+    llm = FakeLLM((ToolCall("search-1", "search", '{"query":"oats"}'),))
+    body = post(payload("Find oats"), llm=llm, tools=tools)
+    assert [source["sourceId"] for source in body["sources"]] == tools.source_ids
 
 
-@pytest.mark.asyncio
-async def test_backend_profile_tool_sends_delegation_and_parses_minimal_profile() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "GET"
-        assert request.url.path == "/internal/v1/profile"
-        assert request.headers["Authorization"] == "Bearer backend-tool-token"
-        assert request.headers["X-FoodMind-Delegation"] == "Bearer delegated-user-token"
-        return httpx.Response(
-            200,
-            json={
-                "budgetMax": 18.0,
-                "currency": "SGD",
-                "allergens": [{"code": "PEANUT", "severity": "SEVERE"}],
-                "userId": "must-not-propagate",
-            },
+def test_hard_intercepts_refuse_without_llm_or_tools() -> None:
+    tools = FakeTools()
+    llm = FakeLLM((ToolCall("search-1", "search", '{"query":"ignored"}'),))
+    body = post(payload("How can I hide an allergen and make someone sick?"), llm=llm, tools=tools)
+    assert body["responseStatus"] == "UNSUPPORTED"
+    assert body["sources"] == []
+    assert llm.calls == []
+    assert tools.calls == []
+
+
+def test_disabled_llm_has_deterministic_fallback_without_route() -> None:
+    body = post(payload("Tell me about tofu"))
+    assert body["responseStatus"] == "FALLBACK_SUCCEEDED"
+    assert "route" not in body
+
+
+def test_v1_payload_is_rejected() -> None:
+    old = payload("Hello")
+    old["contractVersion"] = "chat-agent-v1"
+    with TestClient(create_app(settings=settings(), backend_tool_client=FakeTools())) as client:  # type: ignore[arg-type]
+        response = client.post(
+            "/internal/v1/chat/generate", headers={"Authorization": "Bearer test-chat-token"}, json=old
         )
-
-    raw = httpx.AsyncClient(base_url="http://backend.test", transport=httpx.MockTransport(handler))
-    client = BackendToolClient(
-        client=raw,
-        settings=Settings(
-            environment="test",
-            backend_base_url="http://backend.test",
-            backend_service_token=SecretStr("backend-tool-token"),
-        ),
-    )
-    profile = await client.profile(delegation_token="delegated-user-token", timeout_seconds=1)
-    await client.aclose()
-
-    assert profile == {
-        "budgetMax": 18.0,
-        "currency": "SGD",
-        "allergens": [{"code": "PEANUT", "severity": "SEVERE"}],
-    }
-
-
-@pytest.mark.asyncio
-async def test_backend_tools_broaden_empty_restaurant_search_to_authorised_places() -> None:
-    source_id = uuid4()
-    requests: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        if request.url.path == "/internal/v1/search":
-            return httpx.Response(200, json={"items": [], "nextCursor": None, "hasNext": False})
-        assert request.url.path == "/internal/v1/explore"
-        assert b'"PLACE"' in request.content
-        return httpx.Response(
-            200,
-            json={
-                "items": [
-                    {"sourceType": "PLACE", "sourceId": str(source_id), "title": "Kitchen", "snippet": "Orchard"}
-                ],
-                "nextCursor": None,
-                "hasNext": False,
-            },
-        )
-
-    raw = httpx.AsyncClient(base_url="http://backend.test", transport=httpx.MockTransport(handler))
-    client = BackendToolClient(
-        client=raw, settings=Settings(environment="test", backend_base_url="http://backend.test")
-    )
-    sources = await client.search(query="restaurants", delegation_token="delegated-user-token", timeout_seconds=1)
-    await client.aclose()
-
-    assert len(requests) == 2
-    assert sources[0].source_type == "PLACE"
-    assert sources[0].grounding_metadata["hasNext"] is False
-
-
-def test_shared_deepseek_key_configures_chat_provider(monkeypatch) -> None:
-    monkeypatch.delenv("CHAT_AGENT_LLM_API_KEY", raising=False)
-    monkeypatch.setenv("CHAT_AGENT_LLM_ENABLED", "true")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
-
-    resolved = Settings(environment="test")
-
-    assert resolved.llm_api_key is not None
-    assert resolved.llm_api_key.get_secret_value() == "test-deepseek-key"
-
-    with TestClient(create_app(settings=resolved, backend_tool_client=FakeBackendTools())) as client:  # type: ignore[arg-type]
-        assert client.app.state.llm_client is not None
-        assert client.get("/health/ready").json() == {
-            "status": "ready",
-            "llmEnabled": True,
-            "llmConfigured": True,
-            "llmProviderHost": "api.deepseek.com",
-            "llmModel": "deepseek-v4-pro",
-            "llmThinkingEnabled": False,
-            "llmTemperature": 1.0,
-            "llmMaxOutputTokens": 800,
-        }
-
-
-def test_enabled_llm_without_api_key_fails_fast(monkeypatch) -> None:
-    monkeypatch.delenv("CHAT_AGENT_LLM_API_KEY", raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-
-    with pytest.raises(ValidationError, match="an LLM API key is required"):
-        Settings(environment="local", llm_enabled=True, _env_file=None)
+    assert response.status_code == 422

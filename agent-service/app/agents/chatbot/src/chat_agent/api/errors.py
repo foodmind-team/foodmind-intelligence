@@ -13,7 +13,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             content={
                 "status": 422,
                 "error_code": "SCHEMA_MISMATCH",
-                "message": "The request does not match chat-agent-v1.",
+                "message": "The request does not match chat-agent-v2.",
                 "retryable": False,
             },
         )
