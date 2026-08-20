@@ -1,4 +1,4 @@
-"""Pydantic mirrors of the Spring Boot chat-agent-v1 wire contract."""
+"""Pydantic mirrors of the Spring Boot chat-agent-v2 wire contract."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,8 +26,6 @@ BoundedText = Annotated[str, StringConstraints(min_length=1, max_length=12000)]
 TurnText = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
 SuggestionText = Annotated[str, StringConstraints(min_length=1, max_length=200)]
 SourceType = Literal["FOOD_RECORD", "FOOD_PRODUCT", "PLACE"]
-Route = Literal["SUMMARY", "SEARCH", "COMPARE", "NAVIGATION", "OUT_OF_SCOPE"]
-RequestedRoute = Literal["SUMMARY", "SEARCH", "COMPARE", "NAVIGATION"]
 ResponseStatus = Literal["SUCCEEDED", "FALLBACK_SUCCEEDED", "UNSUPPORTED"]
 Destination = Literal[
     "INVENTORY",
@@ -53,14 +51,13 @@ class ConversationTurn(WireModel):
 
 
 class AgentChatRequest(WireModel):
-    contract_version: Literal["chat-agent-v1"]
+    contract_version: Literal["chat-agent-v2"]
     request_id: UUID
     session_id: UUID
     user_message_id: UUID
     trace_id: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     expires_at: datetime | None = None
     message: BoundedText
-    requested_route: RequestedRoute | None = None
     delegation_token: Annotated[str | None, StringConstraints(max_length=8192)] = Field(default=None, repr=False)
     shared_references: Annotated[list[SharedReference], Field(max_length=20)] = Field(default_factory=list)
     recent_turns: Annotated[list[ConversationTurn], Field(max_length=8)] = Field(default_factory=list)
@@ -75,13 +72,12 @@ class ChatSource(WireModel):
 
 class AgentChatResponse(WireModel):
     status: Literal["SUCCEEDED"] = "SUCCEEDED"
-    contract_version: Literal["chat-agent-v1"] = "chat-agent-v1"
+    contract_version: Literal["chat-agent-v2"] = "chat-agent-v2"
     request_id: UUID
     session_id: UUID
     user_message_id: UUID
     trace_id: str
     agent_trace_id: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-    route: Route
     response_status: ResponseStatus
     answer: Annotated[str, StringConstraints(min_length=1, max_length=4000)]
     sources: Annotated[list[ChatSource], Field(max_length=10)] = Field(default_factory=list)

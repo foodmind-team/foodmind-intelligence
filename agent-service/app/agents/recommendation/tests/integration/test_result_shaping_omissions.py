@@ -29,11 +29,11 @@ def _execute(request_name: str, inference_payload: dict[str, Any]) -> dict[str, 
     return value
 
 
-def test_cold_start_omits_group_and_never_emits_cf_reasons() -> None:
+def test_cold_start_want_to_try_is_personal_and_never_emits_cf_reasons() -> None:
     result = _execute("valid-cold-start.json", load_json(INFERENCE_FIXTURES / "valid-cold-start.json"))
     recommendations = result["recommendations"]
     assert isinstance(recommendations, list)
-    assert [item["recommendationType"] for item in recommendations] == ["EXPLORATORY", "PERSONAL"]
+    assert [item["recommendationType"] for item in recommendations] == ["PERSONAL", "PERSONAL"]
     assert all(reason not in {"USER_CF", "ITEM_CF"} for item in recommendations for reason in item["reasons"])
 
 
