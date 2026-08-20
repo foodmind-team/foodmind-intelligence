@@ -33,15 +33,18 @@ def backend_validate(
     if list(_VALIDATOR.iter_errors(response)):
         return False
     recommendations = response["recommendations"]
+    evidence = {item["candidateId"]: item["evidence"] for item in request["candidates"]}
     if recommendations:
-        lead_prediction = max(inference["predictions"], key=lambda item: (item["probability"], item["modelScore"]))
+        lead_prediction = max(
+            inference["predictions"],
+            key=lambda item: (evidence[item["candidateId"]]["wantToTry"], item["probability"], item["modelScore"]),
+        )
         if recommendations[0]["candidateId"] != lead_prediction["candidateId"]:
             return False
     request_ids = {item["candidateId"] for item in request["candidates"]}
     if not {item["candidateId"] for item in recommendations}.issubset(request_ids):
         return False
     predictions = {item["candidateId"]: item for item in inference["predictions"]}
-    evidence = {item["candidateId"]: item["evidence"] for item in request["candidates"]}
     for item in recommendations:
         prediction = predictions.get(item["candidateId"])
         facts = evidence.get(item["candidateId"])
@@ -72,6 +75,7 @@ def _personal_supported(prediction: dict[str, Any], facts: dict[str, Any]) -> bo
     return bool(
         (user_cf["available"] and user_cf["score"] >= 0.6 and user_cf["neighborSupport"] >= 3)
         or facts["preferenceMatch"] >= 0.7
+        or facts["wantToTry"] is True
     )
 
 

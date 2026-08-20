@@ -1,5 +1,15 @@
-"""Static repair-option catalogs, kept separate from proposal behavior."""
+# =============================================================================
+# 静态修复选项目录模块（repair/catalogs）
+# -----------------------------------------------------------------------------
+# 保存食材替代与设备替代的静态目录，与提议行为解耦。
+# =============================================================================
 
+"""Static repair-option catalogs, kept separate from proposal behavior.
+
+静态修复选项目录，与提议行为分开存放。
+"""
+
+# 食材替代目录：食材名 → ((替代食材, 说明), ...)
 _INGREDIENT_SUBSTITUTIONS: dict[str, tuple[tuple[str, str], ...]] = {
     "chicken breast": (
         ("chicken thigh", "same protein, slightly longer cook time"),
@@ -104,6 +114,7 @@ _INGREDIENT_SUBSTITUTIONS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
+# 设备替代目录：设备名 → ((替代设备, 说明), ...)
 _EQUIPMENT_ALTERNATIVES: dict[str, tuple[tuple[str, str], ...]] = {
     "oven": (
         ("air fryer", "faster, similar results for most baked dishes"),

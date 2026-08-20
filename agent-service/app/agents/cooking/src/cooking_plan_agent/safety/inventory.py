@@ -1,4 +1,12 @@
-"""Independently evaluable food-safety rule."""
+# =============================================================================
+# 过期食材规则（safety/inventory）
+# -----------------------------------------------------------------------------
+# ExpiredIngredientRule：检测已过保质期的食材。当烹饪计划使用的库存批次
+# 会在烹饪日期之前过期时标记该食材；过期 ≤3 天为 hard_repairable（可检查），
+# 过期 >3 天为 hard_unrepairable（可能已变质，须丢弃）。
+# =============================================================================
+
+"""Independently evaluable food-safety rule. 可独立评估的食品安全规则。"""
 
 from __future__ import annotations
 
@@ -15,14 +23,23 @@ from cooking_plan_agent.domain.models import (
 class ExpiredIngredientRule:
     """Detect ingredients that have passed their expiry date.
 
+    检测已过保质期的食材。
+
     When a cooking plan uses inventory lots that will expire before the
     cooking date, the ingredient is flagged.  Lots ≤ 3 days past expiry
     are hard_repairable (can inspect); lots > 3 days past expiry are
     hard_unrepairable (likely spoiled — must discard).
 
+    当烹饪计划使用的库存批次会在烹饪日期之前过期时，该食材会被标记。
+    过期不超过 3 天的批次为 hard_repairable（可检查）；
+    过期超过 3 天的批次为 hard_unrepairable（可能已变质 —— 必须丢弃）。
+
     Only evaluates when both context.cooking_date and context.inventory_lots
     are provided.  Non-perishable items (rice, flour, etc.) past their
     best-before date are NOT flagged.
+
+    仅在同时提供 context.cooking_date 与 context.inventory_lots 时才评估。
+    超过最佳食用日期的非易腐食品（米、面粉等）不会被标记。
     """
 
     rule_id: str = "SAFETY_EXPIRED_INGREDIENT"
