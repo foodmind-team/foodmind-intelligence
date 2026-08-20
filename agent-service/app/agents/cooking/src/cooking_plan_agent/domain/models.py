@@ -11,31 +11,32 @@
 # =============================================================================
 
 from datetime import date, datetime  # Date type for expiry_date (no time component needed)
+
 # ↑ date 用于“过期日期”（无需时间分量）；datetime 用于带时区的“开餐时刻”
-
 from decimal import Decimal  # Exact decimal arithmetic — never float for inventory
+
 # ↑ 精确十进制运算 —— 库存数量绝不用 float（避免浮点精度误差）
-
 from enum import StrEnum  # String enum base class (P4-02 response types)
-# ↑ 字符串枚举基类（P4-02 响应类型）
 
+# ↑ 字符串枚举基类（P4-02 响应类型）
 from typing import (  # Typed annotation composition (e.g. PositiveDecimal)
     Annotated,
 )
-# ↑ 类型注解组合（例如 PositiveDecimal 即用 Annotated 附加 Field 约束）
 
+# ↑ 类型注解组合（例如 PositiveDecimal 即用 Annotated 附加 Field 约束）
 from pydantic import (  # Pydantic v2 building blocks
     BaseModel,
     ConfigDict,
     Field,
     model_validator,
 )
-# ↑ Pydantic v2 构建组件
 
+# ↑ Pydantic v2 构建组件
 from cooking_plan_agent.domain.enums import (  # Domain enums used in CookingTask
     HeatLevel,
     WorkMode,
 )
+
 # ↑ CookingTask 用到的领域枚举
 
 # ---------------------------------------------------------------------------

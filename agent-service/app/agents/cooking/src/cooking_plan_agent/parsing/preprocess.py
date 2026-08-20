@@ -13,14 +13,15 @@
 # =============================================================================
 
 import unicodedata  # Python stdlib — provides Unicode character category classification.
-# ↑ Python 标准库 —— 提供 Unicode 字符类别分类
 
+# ↑ Python 标准库 —— 提供 Unicode 字符类别分类
 from cooking_plan_agent.parsing.errors import (  # Local error hierarchy for preprocessing stage.
     DecodeError,  # Bytes could not be decoded (invalid UTF-8).
     EmptyContentError,  # Text is empty or whitespace-only after cleaning.
     NULBytesError,  # Raw content contains NUL (0x00) — binary file signal.
     OversizedInputError,  # Content exceeds configured byte or character limit.
 )
+
 # ↑ 预处理阶段的本地异常层级（DecodeError / EmptyContentError / NULBytesError / OversizedInputError）
 
 # ---------------------------------------------------------------------------
