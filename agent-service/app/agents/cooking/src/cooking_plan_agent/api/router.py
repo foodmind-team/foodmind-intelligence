@@ -12,15 +12,21 @@ validates service authentication and the internal request schema, not
 end-user JWTs.
 """
 
+# 模块概览（中文）：烹饪计划 Agent 的内部 API 路由。
+# 端点（Handbook 9.2）：POST /internal/v1/agents/cooking-plan/generate
+# 边界：粘贴文本/上传 .txt 由 Spring Boot 调用方先转成菜谱文本再调本端点，
+#       使内部契约保持纯 JSON，避免重复的 multipart/文件规则。
+# Handbook 9.1：公共边界在 Spring Boot 侧——本路由只校验服务鉴权与内部请求 schema，不校验终端用户 JWT。
+
 import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from cooking_plan_agent.api.backpressure import request_lease
+from cooking_plan_agent.api.backpressure import request_lease  # 请求级背压（P1-03）
 from cooking_plan_agent.api.dependencies import (
-    extract_correlation_id,
-    require_internal_service,
+    extract_correlation_id,  # 提取关联 ID
+    require_internal_service,  # 内部服务鉴权（X-Internal-Token）
 )
 from cooking_plan_agent.application import GenerateCookingPlanService, ParseRecipeImportService
 from cooking_plan_agent.application.recipe_import_service import InvalidRecipeImportAnswers
@@ -38,17 +44,19 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Router — all endpoints require internal service authentication
+# 路由——所有端点都要求内部服务鉴权
 # ---------------------------------------------------------------------------
 
 router = APIRouter(
     prefix="/internal/v1/agents/cooking-plan",
     tags=["cooking-plan-agent"],
-    dependencies=[Depends(require_internal_service)],
+    dependencies=[Depends(require_internal_service)],  # 路由级内部服务鉴权
 )
 
 
 # ---------------------------------------------------------------------------
 # Service dependency — extracted from request.app.state
+# 服务依赖——从 request.app.state 提取
 # ---------------------------------------------------------------------------
 
 
@@ -57,6 +65,7 @@ def get_generate_service(request: Request) -> GenerateCookingPlanService:
 
     Raises AttributeError if the service was not initialised during startup.
     """
+    # 从启动时注入的 state 取应用服务；未初始化则抛 AttributeError
     service = request.app.state.generate_plan_service
     if not isinstance(service, GenerateCookingPlanService):
         raise AttributeError("generate_plan_service was not initialised during startup")
@@ -65,7 +74,7 @@ def get_generate_service(request: Request) -> GenerateCookingPlanService:
 
 def get_recipe_import_service(request: Request) -> ParseRecipeImportService:
     """Retrieve the recipe-import use case from lifespan-managed state."""
-
+    # 从 lifespan 管理的 state 取菜谱导入用例服务
     service = request.app.state.recipe_import_service
     if not isinstance(service, ParseRecipeImportService):
         raise AttributeError("recipe_import_service was not initialised during startup")
@@ -85,13 +94,14 @@ async def parse_recipe_import(
     body: ParseRecipeImportRequest,
     service: Annotated[ParseRecipeImportService, Depends(get_recipe_import_service)],
     _correlation_id: Annotated[str, Depends(extract_correlation_id)],
-    _lease: Annotated[None, Depends(request_lease)] = None,
+    _lease: Annotated[None, Depends(request_lease)] = None,  # 背压租约
 ) -> ParseRecipeImportResponse:
     """Parse multilingual recipe text into English drafts and structured follow-ups."""
-
+    # 解析多语言菜谱文本为英文草稿 + 结构化追问
     try:
         return await service.execute(body)
     except InvalidRecipeImportAnswers as exception:
+        # 追问答案非法 → 422
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "INVALID_RECIPE_IMPORT_ANSWERS", "message": str(exception)},
@@ -100,6 +110,7 @@ async def parse_recipe_import(
 
 # ---------------------------------------------------------------------------
 # Preprocess endpoint — NL parsing + gap filling, reused by the backend
+# 预处理端点——自然语言解析 + 缺口填补，被后端复用
 # ---------------------------------------------------------------------------
 
 
@@ -117,7 +128,7 @@ async def preprocess_recipes(
     body: PreprocessRecipesRequest,
     service: Annotated[GenerateCookingPlanService, Depends(get_generate_service)],
     _correlation_id: Annotated[str, Depends(extract_correlation_id)],
-    _lease: Annotated[None, Depends(request_lease)] = None,
+    _lease: Annotated[None, Depends(request_lease)] = None,  # 背压租约
 ) -> PreprocessRecipesResponse:
     """Parse raw recipe text and fill missing fields (NL + gap pipeline).
 
@@ -129,6 +140,10 @@ async def preprocess_recipes(
     the agent stays focused on planning while its parsing capability is
     reused by the backend.
     """
+    # 解析原始菜谱文本并填补缺失字段（NL + 缺口流水线）。
+    # Spring Boot 在 generate() 之前调用本端点，复用 Agent 的菜谱理解能力：
+    # 输入原始文本，输出完整填充的 ExtractedRecipeCandidate。后端再把这些候选
+    # 作为 preparsed_candidates 传回 generate，使 generate 不再重复解析、不再追问缺口问题。
     logger.info(
         "Preprocessing recipes | request_id=%s | recipes=%d",
         body.request_id,
@@ -139,6 +154,7 @@ async def preprocess_recipes(
 
 # ---------------------------------------------------------------------------
 # Generate endpoint
+# 生成端点
 # ---------------------------------------------------------------------------
 
 
@@ -156,7 +172,7 @@ async def generate_plan(
     body: GeneratePlanRequest,
     service: Annotated[GenerateCookingPlanService, Depends(get_generate_service)],
     _correlation_id: Annotated[str, Depends(extract_correlation_id)],
-    _lease: Annotated[None, Depends(request_lease)] = None,
+    _lease: Annotated[None, Depends(request_lease)] = None,  # 背压租约（P1-03）
 ) -> PlanResponse:
     """Generate a cooking plan from the supplied recipes and constraints.
 
@@ -172,6 +188,8 @@ async def generate_plan(
     active/queued limiter is saturated the request is rejected with 503 +
     Retry-After instead of piling onto the event loop.
     """
+    # 生成烹饪计划：返回 PlanResponse（READY / NEEDS_CONFIRMATION / INFEASIBLE / FAILED），
+    # 所有业务结果均返回 HTTP 200（handbook 9.8）。
     logger.info(
         "Generating plan | request_id=%s | recipes=%d | time_limit=%s",
         body.request_id,
@@ -180,6 +198,8 @@ async def generate_plan(
     )
     # P2-06: thread_id namespaces checkpoint state per request attempt
     # (request_id + plan_revision), enabling resume after process restart.
+    # P2-06：thread_id 按“每次请求尝试”命名空间隔离检查点状态
+    # （request_id + plan_revision），支持进程重启后恢复。
     from cooking_plan_agent.infrastructure.checkpointer import build_thread_id
 
     thread_id = build_thread_id(body.request_id, body.plan_revision)
@@ -188,6 +208,7 @@ async def generate_plan(
 
 # ---------------------------------------------------------------------------
 # P5-4: Confirm endpoint — resume a paused NEEDS_CONFIRMATION dialog
+# P5-4：确认端点——恢复暂停的 NEEDS_CONFIRMATION 对话
 # ---------------------------------------------------------------------------
 
 
@@ -218,6 +239,8 @@ async def confirm_plan(
     checkpointer; otherwise there is no paused dialog to resume and the
     service returns FAILED.
     """
+    # 用用户答案恢复一个 NEEDS_CONFIRMATION 的计划（P5-4）。
+    # 要求 confirmation_dialog_enabled=true 且有活跃 checkpointer；否则无可恢复的暂停对话，服务返回 FAILED。
     logger.info(
         "Resuming confirmation | plan_id=%s | answers=%d | revision=%s",
         plan_id,

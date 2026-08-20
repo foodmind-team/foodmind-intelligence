@@ -1,8 +1,26 @@
+# =============================================================================
+# IR 构建器模块（parsing/ir_builder）
+# -----------------------------------------------------------------------------
+# 实现手册 4.12–4.14：把 ExtractedRecipeCandidate 转换为规范中间表示（RecipeIR），
+# 并执行语义校验，拒绝“结构合法但逻辑上不可能”的菜谱。
+# 核心职责：
+#   - build_recipe_ir           ：把提取候选转换为已校验的 RecipeIR（含份数缩放 P0-04）
+#   - validate_recipe_ir_semantics：对 RecipeIR 做语义校验（超出 Pydantic 字段校验）
+#   - attach_research_assumptions：把联网证据假设合并进每个 RecipeIR（P1-01）
+# 关键点：份数缩放（P0-04）在可行性 / 安全计算之前应用；连续量精确缩放，
+#         离散量（个/颗/瓣）向上取整，绝不供应不足。
+# =============================================================================
+
 """IR Builder — converts ExtractedRecipeCandidate to validated RecipeIR.
+
+IR 构建器 —— 把 ExtractedRecipeCandidate 转换为已校验的 RecipeIR。
 
 Handbook 4.12–4.14: this module builds the canonical Intermediate Representation
 from one or more extracted candidates. It also performs semantic validation
 to reject structurally valid but logically impossible recipes.
+
+手册 4.12–4.14：本模块从一个或多个提取候选构建规范中间表示，
+并执行语义校验以拒绝“结构合法但逻辑上不可能”的菜谱。
 """
 
 from __future__ import annotations
@@ -24,26 +42,34 @@ from cooking_plan_agent.normalisation.units import UnitClassifier
 
 # =============================================================================
 # SemanticValidationReport
+# 语义校验报告
 # =============================================================================
 
 
 class SemanticIssue(NamedTuple):
-    """A single semantic validation issue."""
+    """单条语义校验问题。"""
 
     code: str
-    """Machine-readable issue code (e.g. 'NO_INGREDIENTS', 'NEGATIVE_DURATION')."""
+    """Machine-readable issue code (e.g. 'NO_INGREDIENTS', 'NEGATIVE_DURATION').
+    机器可读问题码（如 'NO_INGREDIENTS'、'NEGATIVE_DURATION'）。"""
 
     severity: str
-    """'error' (reject) or 'warning' (accept with caution)."""
+    """'error' (reject) or 'warning' (accept with caution).
+    'error'（拒绝）或 'warning'（谨慎接受）。"""
 
     message: str
-    """Human-readable description."""
+    """Human-readable description.
+    可读描述。"""
 
 
 class RecipeValidationReport(NamedTuple):
-    """Result of semantic validation on one or more RecipeIR objects.
+    """对一个或多个 RecipeIR 对象做语义校验的结果。
+
+    Result of semantic validation on one or more RecipeIR objects.
 
     passed=True means no 'error'-severity issues were found.
+
+    passed=True 表示未发现 'error' 级问题。
     """
 
     passed: bool
@@ -53,6 +79,7 @@ class RecipeValidationReport(NamedTuple):
 
 # =============================================================================
 # Public API
+# 公共 API
 # =============================================================================
 
 
@@ -62,7 +89,9 @@ def build_recipe_ir(
     request_recipe_id: str | None = None,
     target_servings: Decimal | None = None,
 ) -> RecipeIR:
-    """Convert an ExtractedRecipeCandidate into a validated RecipeIR.
+    """把 ExtractedRecipeCandidate 转换为已校验的 RecipeIR。
+
+    Convert an ExtractedRecipeCandidate into a validated RecipeIR.
 
     Handles:
       - ExtractedIngredient → IngredientDemand (with unit normalisation)
@@ -74,30 +103,47 @@ def build_recipe_ir(
         Discrete units (piece, egg, …) are rounded up per the configured
         rounding policy, recording an assumption when rounding occurred.
 
+    处理：
+      - ExtractedIngredient → IngredientDemand（含单位规范化）
+      - ExtractedStep → RecipeStep（含技法模式推断）
+      - 从提取过程收集假设
+      - 份数缩放（P0-04）：当 target_servings 与菜谱原始份数不同时，
+        每个连续量食材按 target / original 用 Decimal 算术缩放。
+        离散单位（个、鸡蛋、…）按配置的取整策略向上取整，取整时记录假设。
+
     Args:
         candidate: An extracted recipe candidate (possibly after inference).
+            candidate：提取的菜谱候选（可能已推断）。
         request_recipe_id: The recipe ID from the caller's request. When
             provided it OVERRIDES the extractor's internal recipe_id so the
             final identity always matches the request (P0-04 rule 5).
+            request_recipe_id：调用方请求中的 recipe ID。提供时它覆盖提取器内部
+            recipe_id，使最终标识始终匹配请求（P0-04 规则 5）。
         target_servings: Desired servings. When None, defaults to the
             recipe's original servings (1:1 — unchanged behaviour).
+            target_servings：期望份数。None 时默认用菜谱原始份数（1:1 —— 行为不变）。
 
     Returns:
         A validated RecipeIR ready for the scheduling pipeline.
+        供调度流水线使用的已校验 RecipeIR。
 
     Raises:
         ValueError: If the candidate has no ingredients or no steps.
+        ValueError：候选无食材或无步骤时抛出。
     """
     recipe_id = request_recipe_id or candidate.recipe_id
 
     parsed_demands = tuple(_build_ingredient_demand(ing) for ing in candidate.ingredients)
 
     # Filter out ingredients without a valid name or quantity
+    # 过滤掉无有效名称或数量的食材
     ingredients = tuple(i for i in parsed_demands if i and i.canonical_name)
 
     # P0-04: apply serving scaling before any downstream feasibility/safety
     # computation. Missing quantities are never silently invented — they are
     # left as-is (quantity still present) and gaps are preserved upstream.
+    # P0-04：在任何下游可行性 / 安全计算之前应用份数缩放。缺失数量绝不静默臆造 ——
+    # 它们保持原样（数量仍存在），缺口在上游保留。
     if target_servings is not None:
         ingredients = _scale_ingredients(
             ingredients,
@@ -108,6 +154,7 @@ def build_recipe_ir(
     steps = tuple(_build_recipe_step(step, recipe_id) for step in candidate.steps)
 
     # Collect assumptions from extraction source
+    # 从提取来源收集假设
     assumptions = _collect_assumptions(candidate)
 
     return RecipeIR(
@@ -123,7 +170,9 @@ def build_recipe_ir(
 
 
 def validate_recipe_ir_semantics(recipes: tuple[RecipeIR, ...]) -> RecipeValidationReport:
-    """Run semantic validation on one or more RecipeIR objects.
+    """对一个或多个 RecipeIR 对象运行语义校验。
+
+    Run semantic validation on one or more RecipeIR objects.
 
     Checks that go beyond Pydantic field validation:
       - At least one ingredient per recipe
@@ -132,11 +181,20 @@ def validate_recipe_ir_semantics(recipes: tuple[RecipeIR, ...]) -> RecipeValidat
       - Heat level is not NONE for heating-category steps
       - Ingredient names are not empty
 
+    超出 Pydantic 字段校验的检查：
+      - 每个菜谱至少一个食材
+      - 每个菜谱至少一个步骤
+      - 时长值非负
+      - 加热类步骤的火力档位不是 NONE
+      - 食材名非空
+
     Args:
         recipes: One or more RecipeIR objects to validate.
+            recipes：要校验的一个或多个 RecipeIR。
 
     Returns:
         RecipeValidationReport with passed flag and issue list.
+        含 passed 标志与问题列表的 RecipeValidationReport。
     """
     issues: list[SemanticIssue] = []
 
@@ -157,21 +215,29 @@ def attach_research_assumptions(
     recipes: tuple[RecipeIR, ...],
     research_assumptions: tuple[Assumption, ...],
 ) -> tuple[RecipeIR, ...]:
-    """Merge evidence-backed research assumptions into each RecipeIR (P1-01).
+    """把有证据支撑的研究假设合并进每个 RecipeIR（P1-01）。
+
+    Merge evidence-backed research assumptions into each RecipeIR (P1-01).
 
     Research provenance must be traceable in the final assumption/response:
     each applied evidence value produces an Assumption carrying EvidenceRef
     entries (source title + URL). This helper attaches them to every recipe
     so rendering surfaces them verbatim.
 
+    研究溯源必须在最终假设 / 响应中可追溯：每个应用的证据值产生一个携带 EvidenceRef
+    （来源标题 + URL）的 Assumption。本辅助函数把它们附加到每个菜谱，使渲染能原样呈现。
+
     Args:
         recipes: RecipeIR objects to enrich.
+            recipes：要丰富的 RecipeIR 对象。
         research_assumptions: Assumptions produced by the research evidence
             application node. Empty tuple is a no-op.
+            research_assumptions：研究证据应用节点产生的假设。空元组为 no-op。
 
     Returns:
         New RecipeIR tuple with the research assumptions appended (never
         mutates the input recipes).
+        已追加研究假设的新 RecipeIR 元组（绝不修改输入菜谱）。
     """
     if not research_assumptions:
         return recipes
@@ -182,21 +248,26 @@ def attach_research_assumptions(
 
 # =============================================================================
 # Internal builders
+# 内部构建器
 # =============================================================================
 
 
 def _build_ingredient_demand(ingredient: ExtractedIngredient) -> IngredientDemand | None:
-    """Convert ExtractedIngredient → IngredientDemand.
+    """把 ExtractedIngredient 转换为 IngredientDemand。
+
+    Convert ExtractedIngredient → IngredientDemand.
 
     Returns None if the ingredient lacks a meaningful name.
+
+    若食材缺少有意义名称则返回 None。
     """
     if not ingredient.name or len(ingredient.name.strip()) < 1:
         return None
 
-    # Normalise unit string
+    # Normalise unit string  规范化单位字符串
     unit = _normalise_ingredient_unit(ingredient)
 
-    # Detect allergen tags from ingredient name
+    # Detect allergen tags from ingredient name  从食材名检测过敏原标签
     allergen_tags = _detect_allergens(ingredient.name)
 
     return IngredientDemand(
@@ -212,8 +283,9 @@ def _build_ingredient_demand(ingredient: ExtractedIngredient) -> IngredientDeman
 
 
 def _build_recipe_step(step: ExtractedStep, recipe_id: str) -> RecipeStep:
-    """Convert ExtractedStep → RecipeStep with pattern inference."""
+    """把 ExtractedStep 转换为 RecipeStep（含模式推断）。"""
     # Infer decomposition pattern from category and technique
+    # 从类别与技法推断分解模式
     pattern = _infer_pattern(step)
 
     return RecipeStep(
@@ -231,11 +303,14 @@ def _build_recipe_step(step: ExtractedStep, recipe_id: str) -> RecipeStep:
 
 # =============================================================================
 # P0-04 serving scaling helpers
+# P0-04 份数缩放辅助函数
 # =============================================================================
 
 # Discrete units that must be rounded to whole items.  For these, scaled
 # quantities are rounded UP so a plan never under-supplies (e.g. 1.2 eggs
 # becomes 2 eggs) and an assumption is recorded (P0-04 rule 3).
+# 必须取整到整件的离散单位。对这些，缩放后的数量向上取整，使计划绝不供应不足
+# （如 1.2 个鸡蛋变为 2 个鸡蛋），并记录假设（P0-04 规则 3）。
 _DISCRETE_UNITS = frozenset(
     {
         "piece",
@@ -258,7 +333,7 @@ _DISCRETE_UNITS = frozenset(
 
 
 def _is_discrete_unit(unit: str) -> bool:
-    """Return True when the ingredient unit is counted, not measured."""
+    """当食材单位是“计数”而非“计量”时返回 True。"""
     return unit.strip().lower() in _DISCRETE_UNITS
 
 
@@ -268,20 +343,29 @@ def _scale_ingredients(
     original_servings: Decimal,
     target_servings: Decimal,
 ) -> tuple[IngredientDemand, ...]:
-    """Scale every ingredient from original to target servings (P0-04).
+    """把每个食材从原始份数缩放到目标份数（P0-04）。
+
+    Scale every ingredient from original to target servings (P0-04).
 
     Continuous units scale exactly via Decimal multiplication. Discrete
     units round UP to the nearest whole item; rounding decisions are
     attached as assumptions so they surface for user confirmation.
 
+    连续单位用 Decimal 乘法精确缩放。离散单位向上取整到最近整件；
+    取整决策作为假设附加，使它们呈现给用户确认。
+
     Args:
         ingredients: Demands to scale.
+            ingredients：要缩放的食材需求。
         original_servings: Servings the recipe was written for.
+            original_servings：菜谱原本的份数。
         target_servings: Desired servings.
+            target_servings：期望份数。
 
     Returns:
         A new tuple of scaled IngredientDemand instances. Never mutates
         the input demands.
+        缩放后 IngredientDemand 实例的新元组。绝不修改输入。
     """
     from cooking_plan_agent.normalisation.units import scale_ingredient
 
@@ -304,14 +388,15 @@ def _scale_ingredients(
 
 # =============================================================================
 # Validation helpers
+# 校验辅助函数
 # =============================================================================
 
 
 def _validate_single_recipe(recipe: RecipeIR) -> list[SemanticIssue]:
-    """Validate a single RecipeIR for semantic correctness."""
+    """校验单个 RecipeIR 的语义正确性。"""
     issues: list[SemanticIssue] = []
 
-    # Check: at least one ingredient
+    # Check: at least one ingredient  检查：至少一个食材
     if not recipe.ingredients:
         issues.append(
             SemanticIssue(
@@ -321,7 +406,7 @@ def _validate_single_recipe(recipe: RecipeIR) -> list[SemanticIssue]:
             )
         )
 
-    # Check: at least one step
+    # Check: at least one step  检查：至少一个步骤
     if not recipe.steps:
         issues.append(
             SemanticIssue(
@@ -331,7 +416,7 @@ def _validate_single_recipe(recipe: RecipeIR) -> list[SemanticIssue]:
             )
         )
 
-    # Check: no negative durations
+    # Check: no negative durations  检查：无负时长
     for step in recipe.steps:
         if step.active_duration_minutes is not None and step.active_duration_minutes <= 0:
             issues.append(
@@ -352,7 +437,7 @@ def _validate_single_recipe(recipe: RecipeIR) -> list[SemanticIssue]:
                 )
             )
 
-    # Check: heating steps should have a heat level
+    # Check: heating steps should have a heat level  检查：加热步骤应有火力档位
     for step in recipe.steps:
         if step.category == "heating" and step.heat_level == HeatLevel.NONE:
             issues.append(
@@ -364,7 +449,7 @@ def _validate_single_recipe(recipe: RecipeIR) -> list[SemanticIssue]:
                 )
             )
 
-    # Check: ingredient names are non-empty
+    # Check: ingredient names are non-empty  检查：食材名非空
     for i, ingredient in enumerate(recipe.ingredients):
         if not ingredient.canonical_name.strip():
             issues.append(
@@ -375,7 +460,7 @@ def _validate_single_recipe(recipe: RecipeIR) -> list[SemanticIssue]:
                 )
             )
 
-    # Check: servings are positive
+    # Check: servings are positive  检查：份数为正
     if recipe.original_servings <= 0:
         issues.append(
             SemanticIssue(
@@ -390,24 +475,26 @@ def _validate_single_recipe(recipe: RecipeIR) -> list[SemanticIssue]:
 
 # =============================================================================
 # Internal helpers
+# 内部辅助函数
 # =============================================================================
 
 
 def _normalise_ingredient_unit(ingredient: ExtractedIngredient) -> str:
-    """Normalise ingredient unit to a canonical form."""
+    """把食材单位规范化为规范形式。"""
     if not ingredient.unit:
         return "piece"
 
     unit = ingredient.unit.lower().strip()
 
     # Try to classify — if unknown, default to "piece"
+    # 尝试分类 —— 若未知，默认 "piece"
     try:
         UnitClassifier.classify(unit)
         return unit
     except (ValueError, KeyError):
         pass
 
-    # Common normalisations
+    # Common normalisations  常见规范化
     alias_map = {
         "tablespoon": "tbsp",
         "tablespoons": "tbsp",
@@ -434,7 +521,7 @@ def _normalise_ingredient_unit(ingredient: ExtractedIngredient) -> str:
 
 
 def _detect_allergens(name: str) -> tuple[str, ...]:
-    """Detect common allergens from ingredient name."""
+    """从食材名检测常见过敏原。"""
     name_lower = name.lower()
     allergens: list[str] = []
 
@@ -457,35 +544,41 @@ def _detect_allergens(name: str) -> tuple[str, ...]:
 
 
 def _infer_pattern(step: ExtractedStep) -> str:
-    """Infer the decomposition pattern from step category and instruction text.
+    """从步骤类别与指令文本推断分解模式。
+
+    Infer the decomposition pattern from step category and instruction text.
 
     The pattern drives the decomposition policy in preparation/decompose.py.
+
+    该模式驱动 preparation/decompose.py 中的分解策略。
     """
     instruction_lower = step.instruction.lower()
 
-    # Boil detection
+    # Boil detection  煮检测
     if any(kw in instruction_lower for kw in ("boil", "煮", "焯")):
         return "boil"
 
-    # Stir-fry detection
+    # Stir-fry detection  爆炒检测
     if any(kw in instruction_lower for kw in ("stir-fry", "stir fry", "炒", "爆炒", "翻炒")):
         return "stir_fry"
 
     # Pan-frying is an active stove-and-pan operation. Check it before the
     # marinade keywords below: "将腌好的鸡翅下锅煎制" describes frying, not a
     # new marination step.
+    # 煎是主动的灶台 + 锅操作。在下方“腌”关键词之前检查它：
+    # "将腌好的鸡翅下锅煎制" 描述的是煎，而非新的腌制步骤。
     if any(kw in instruction_lower for kw in ("pan-fry", "pan fry", "煎")):
         return "stir_fry"
 
-    # Bake detection
+    # Bake detection  烘焙检测
     if any(kw in instruction_lower for kw in ("bake", "oven", "烤", "烘烤", "烤箱")):
         return "bake"
 
-    # Simmer detection
+    # Simmer detection  炖煮检测
     if any(kw in instruction_lower for kw in ("simmer", "stew", "焖", "炖", "煲", "慢炖")):
         return "simmer"
 
-    # Marinate detection
+    # Marinate detection  腌制检测
     if any(kw in instruction_lower for kw in ("marinate", "腌制", "腌")):
         return "marinate"
 
@@ -493,14 +586,19 @@ def _infer_pattern(step: ExtractedStep) -> str:
 
 
 def _collect_assumptions(candidate: ExtractedRecipeCandidate) -> tuple[Assumption, ...]:
-    """Collect assumptions from extraction process.
+    """从提取过程收集假设。
+
+    Collect assumptions from extraction process.
 
     When rule-based extraction makes guesses (e.g. default 2 servings),
     those become assumptions that may surface to the user.
+
+    当基于规则的提取做出猜测（如默认 2 份）时，这些变为可能呈现给用户的假设。
     """
     assumptions: list[Assumption] = []
 
     # Rule-based extraction inherently carries assumptions
+    # 基于规则的提取本身就带有假设
     if candidate.extraction_source == "RULE_BASED":
         assumptions.append(
             Assumption(

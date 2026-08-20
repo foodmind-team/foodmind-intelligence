@@ -50,9 +50,8 @@ def test_v1_local_compatibility_route_uses_v2_workflow_and_inference() -> None:
     assert body["featureSchemaVersion"] == "recommendation-features-v1"
     assert len(body["candidates"]) == 3
     assert [candidate["rank"] for candidate in body["candidates"]] == list(range(1, len(body["candidates"]) + 1))
-    assert [candidate["modelScore"] for candidate in body["candidates"]] == sorted(
-        [candidate["modelScore"] for candidate in body["candidates"]], reverse=True
-    )
+    assert body["candidates"][0]["candidateId"].endswith("102")
+    assert "WANT_TO_TRY" in body["candidates"][0]["reasonCodes"]
     assert "WITHIN_BUDGET" in body["candidates"][0]["reasonCodes"]
     assert "NEARBY" in body["candidates"][0]["reasonCodes"]
     assert "within SGD 20 budget" in body["candidates"][0]["explanation"]
