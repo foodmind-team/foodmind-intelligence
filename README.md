@@ -2,6 +2,10 @@
 
 FoodMind Intelligence contains FoodMind's private AI and recommendation runtime: Chatbot, Cooking Plan, Recommendation Agent, and model Inference services. It is not a public API. Web and Android must call only FoodMind Backend, which authenticates the user, supplies authorised context, validates results, and decides what can be returned.
 
+## Live deployment
+
+The user-facing FoodMind application is deployed at [https://13.229.2.154.sslip.io/](https://13.229.2.154.sslip.io/). Its AI features are reached through the authenticated Backend API; the private services in this repository do not have public endpoints.
+
 ## Services
 
 | Service | Local port | Responsibility |
