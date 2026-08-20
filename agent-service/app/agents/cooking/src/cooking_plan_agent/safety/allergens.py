@@ -1,4 +1,14 @@
-"""Independently evaluable food-safety rule."""
+# =============================================================================
+# 过敏原检测规则（safety/allergens）
+# -----------------------------------------------------------------------------
+# AllergenDetectionRule：将菜谱食材与用户声明的过敏原进行匹配，
+# 结合食材显式的过敏原标签与名称关键词匹配，检测过敏风险。
+# =============================================================================
+
+"""Independently evaluable food-safety rule.
+
+可独立评估的食品安全规则。
+"""
 
 from __future__ import annotations
 
@@ -14,16 +24,25 @@ from cooking_plan_agent.domain.models import (
 class AllergenDetectionRule:
     """Match recipe ingredients against the user's declared allergens.
 
+    将菜谱食材与用户声明的过敏原进行匹配。
+
     Checks both IngredientDemand.allergen_tags (explicit tags from extraction)
     and ingredient name keyword matching for common allergens.
 
+    既检查 IngredientDemand.allergen_tags（抽取得到的显式标签），
+    也对常见过敏原做食材名称关键词匹配。
+
     Severity: hard_unrepairable for the "big 9" allergens if present,
               hard_repairable for other sensitivities (can substitute).
+
+    严重级别：若存在“九大”过敏原则为 hard_unrepairable，
+              其他敏感性则为 hard_repairable（可替换）。
     """
 
     rule_id: str = "SAFETY_ALLERGEN_DETECTION"
 
     # Big 9 priority allergens (FAO/WHO) — hard_unrepairable
+    # 九大优先过敏原（FAO/WHO）—— hard_unrepairable
     _priority_allergens: tuple[str, ...] = (
         "peanut",
         "tree nut",
@@ -37,6 +56,7 @@ class AllergenDetectionRule:
     )
 
     # Keyword mapping for ingredient name → allergen type
+    # 食材名称 → 过敏原类型的关键词映射
     _allergen_keywords: dict[str, str] = field(
         default_factory=lambda: {
             "peanut": "peanut",
@@ -79,7 +99,7 @@ class AllergenDetectionRule:
     )
 
     def evaluate(self, context: SafetyContext) -> SafetyFinding | None:
-        """Check all ingredients against user allergens."""
+        """Check all ingredients against user allergens. 对照用户过敏原检查所有食材。"""
         if not context.user_allergens:
             return None
 
@@ -91,6 +111,7 @@ class AllergenDetectionRule:
         for recipe in context.recipes:
             for ingredient in recipe.ingredients:
                 # Check explicit allergen tags from extraction
+                # 检查抽取得到的显式过敏原标签
                 for tag in ingredient.allergen_tags:
                     tag_lower = tag.lower()
                     for user_allergen in user_allergens_lower:
@@ -102,6 +123,7 @@ class AllergenDetectionRule:
                                 matches_other.append(f"{ingredient.raw_name}({tag})")
 
                 # Check ingredient name against allergen keyword map
+                # 对照过敏原关键词映射检查食材名称
                 name_lower = ingredient.canonical_name.lower()
                 for kw, allergen_type in self._allergen_keywords.items():
                     if kw in name_lower and allergen_type in user_allergens_lower:
@@ -144,4 +166,5 @@ class AllergenDetectionRule:
 
 # =============================================================================
 # Rule 3: ProteinSafetyTemperatureRule
+# 规则 3：蛋白质安全温度规则
 # =============================================================================
