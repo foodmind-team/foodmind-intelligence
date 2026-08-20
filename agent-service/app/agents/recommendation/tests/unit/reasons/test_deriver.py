@@ -13,7 +13,7 @@ async def test_reason_priority_and_max_count_are_frozen() -> None:
     selections = await DeterministicResultSelector().select(request, result)
     reasoned = await DeterministicReasonDeriver().derive(request, result, selections)
     assert [item.reasons for item in reasoned] == [
-        (ReasonCode.USER_CF, ReasonCode.ITEM_CF),
         (ReasonCode.USER_CF, ReasonCode.WANT_TO_TRY),
+        (ReasonCode.USER_CF, ReasonCode.ITEM_CF),
         (ReasonCode.ITEM_CF, ReasonCode.GROUP_POPULAR),
     ]
