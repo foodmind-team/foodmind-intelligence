@@ -1,4 +1,13 @@
-"""Repair options — propose, validate, rank, and apply fixes for infeasible plans."""
+# =============================================================================
+# 修复模块（repair 包）— 为不可行计划提出、校验、排序并应用修复方案
+# -----------------------------------------------------------------------------
+# 导出修复选项的公共 API，并对既有导入方保持兼容。
+# =============================================================================
+
+"""Repair options — propose, validate, rank, and apply fixes for infeasible plans.
+
+修复选项 —— 为不可行计划提出、校验、排序并应用修复方案。
+"""
 
 from cooking_plan_agent.repair.options import (
     RepairValidation,

@@ -1,4 +1,13 @@
-"""Pure repair-option proposal and ranking services."""
+# =============================================================================
+# 纯修复选项提议与排序服务模块（repair/proposals）
+# -----------------------------------------------------------------------------
+# 实现修复选项的提议（propose_*）、精确短缺计算与排序（rank_*）等纯函数。
+# =============================================================================
+
+"""Pure repair-option proposal and ranking services.
+
+纯修复选项提议与排序服务。
+"""
 
 from __future__ import annotations
 
@@ -20,10 +29,16 @@ _OPTION_ID_SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
 def _bounded_option_id(prefix: str, raw_label: str) -> str:
     """Build an ASCII option ID that always fits the public persistence contract.
 
+    构建一个始终符合公共持久化契约的 ASCII 选项 ID。
+
     User-provided ingredient and equipment names belong in the option payload,
     not unbounded protocol identifiers. Keep a short readable slug, plus a
     content hash and random suffix so separately generated options remain
     collision-resistant without exceeding the Backend's 128-character ID cap.
+
+    用户提供的食材与设备名称应放在选项负载中，而不是无界的协议标识符。
+    保留一个简短可读的 slug，并加上内容哈希和随机后缀，使分别生成的选项
+    保持抗碰撞，且不超过 Backend 的 128 字符 ID 上限。
     """
 
     digest = hashlib.sha256(raw_label.encode("utf-8")).hexdigest()[:_OPTION_ID_HASH_LENGTH]
@@ -39,15 +54,22 @@ def calculate_exact_shortages(
 ) -> tuple[Shortage, ...]:
     """Extract exact shortage items from a FeasibilityReport.
 
+    从 FeasibilityReport 中提取精确的短缺项。
+
     Covers both ingredient shortages (from ingredient_shortages) and
     resource shortages (from missing_resources). Resource shortages
     are represented with required=1, available=0.
 
+    同时覆盖食材短缺（来自 ingredient_shortages）和资源短缺
+    （来自 missing_resources）。资源短缺以 required=1、available=0 表示。
+
     Args:
         report: A FeasibilityReport from check_all_inventory / check_feasibility.
+            来自 check_all_inventory / check_feasibility 的 FeasibilityReport。
 
     Returns:
         Tuple of Shortage items. Empty if the report is feasible.
+            Shortage 项元组；若报告可行则为空。
     """
     shortages: list[Shortage] = []
 
@@ -76,7 +98,10 @@ def calculate_exact_shortages(
 
 
 def _json_number(value: Decimal) -> int | float:
-    """Return a JSON-native number without losing integral quantities."""
+    """Return a JSON-native number without losing integral quantities.
+
+    返回 JSON 原生数字，且不丢失整数数量。
+    """
     if value == value.to_integral_value():
         return int(value)
     return float(value)
@@ -84,6 +109,7 @@ def _json_number(value: Decimal) -> int | float:
 
 # =============================================================================
 # 5.18  Ingredient substitution proposal
+#      食材替代提议
 # =============================================================================
 
 
@@ -127,6 +153,7 @@ def propose_ingredient_substitutions(
 
 # =============================================================================
 # 5.19  Portion adjustment proposal
+#      份量调整提议
 # =============================================================================
 
 
@@ -143,20 +170,32 @@ def propose_portion_adjustments(
 ) -> tuple[RepairOption, ...]:
     """Propose reducing target servings to match available ingredients.
 
+    提议缩减目标份量以匹配可用食材。
+
     Calculates the maximum feasible servings as:
         new_servings = floor(original * min(available/required for each ingredient))
+
+    按如下公式计算最大可行份量：
+        new_servings = floor(original * min(每种食材的 available/required))
 
     If all shortages are minor (≤ 50%), proposes a specific serving reduction.
     If any shortage is > 50%, proposes reducing to single-serving.
 
+    若所有短缺都较小（≤ 50%），提议具体的份量缩减。
+    若任一短缺 > 50%，则提议缩减为单份。
+
     Args:
         shortages: Ingredient shortages from FeasibilityReport.
+            来自 FeasibilityReport 的食材短缺。
         original_servings: The requested serving count (per-recipe target
             servings). Accepts Decimal so callers pass the user's actual
             serving size instead of a fixed default.
+            请求的份数（每个菜谱的目标份量）。接受 Decimal，以便调用方
+            传入用户实际份量，而非固定默认值。
 
     Returns:
         RepairOption if a reduction is meaningful, empty tuple otherwise.
+            若缩减有意义则返回 RepairOption，否则返回空元组。
     """
     if not shortages or original_servings <= 1:
         return ()
@@ -164,6 +203,7 @@ def propose_portion_adjustments(
     original = Decimal(str(original_servings))
 
     # Find the limiting ingredient: min(available / required)
+    # 找到限制性食材：min(可用 / 所需)
     min_ratio = Decimal(1)
     for s in shortages:
         if s.required > 0:
@@ -172,6 +212,7 @@ def propose_portion_adjustments(
 
     if min_ratio >= Decimal(1):
         return ()  # No reduction needed (should not happen with shortages)
+        # ↑ 无需缩减（在存在短缺时不应发生）
 
     new_servings = max(Decimal(1), (original * min_ratio).to_integral_value(rounding=ROUND_FLOOR))
 
@@ -201,6 +242,7 @@ def propose_portion_adjustments(
 
 # =============================================================================
 # 5.20  Equipment alternative proposal
+#      设备替代提议
 # =============================================================================
 
 
@@ -209,19 +251,26 @@ def propose_equipment_alternatives(
 ) -> tuple[RepairOption, ...]:
     """Propose alternative equipment for each missing resource type.
 
+    为每个缺失的资源类型提议替代设备。
+
     Looks up common alternatives from the built-in table. Resources
     without known alternatives are flagged for manual resolution.
 
+    从内置表中查找常见替代。没有已知替代的资源会被标记为需人工解决。
+
     Args:
         missing_resources: Resource types that are missing/unavailable.
+            缺失/不可用的资源类型。
 
     Returns:
         One or more RepairOption per missing resource.
+            每个缺失资源一个或多个 RepairOption。
     """
     options: list[RepairOption] = []
 
     for resource in missing_resources:
         # Strip capability suffix if present (e.g. "stove:induction" → "stove")
+        # 若存在能力后缀则去除（例如 "stove:induction" → "stove"）
         base_resource = resource.split(":")[0].lower().strip()
         alts = _EQUIPMENT_ALTERNATIVES.get(base_resource)
 
@@ -255,6 +304,7 @@ def propose_equipment_alternatives(
 
 # =============================================================================
 # 5.21  Dish replacement proposal
+#      菜品替换提议
 # =============================================================================
 
 
@@ -283,6 +333,7 @@ def propose_dish_replacements(
 
     if not unsubstitutable:
         return ()  # All shortages have substitutes available
+        # ↑ 所有短缺都有可用替代
 
     ingredient_list = ", ".join(s.ingredient_name for s in unsubstitutable)
     dish_list = ", ".join(recipe_names) if recipe_names else "the current dishes"
@@ -311,6 +362,7 @@ def propose_dish_replacements(
 
 # =============================================================================
 # 5.22  Time extension proposal
+#      延长时间提议
 # =============================================================================
 
 
@@ -320,15 +372,23 @@ def propose_time_extension(
 ) -> RepairOption | None:
     """Propose extending the time limit if the current limit is too tight.
 
+    若当前时间上限过紧，则提议延长时间上限。
+
     Only proposes extension if the gap is reasonable (≤ 3× current limit).
     Extreme gaps suggest deeper problems that a time extension won't fix.
 
+    仅当缺口合理时才提议延长（≤ 当前上限的 3 倍）。
+    极端缺口说明存在更深层问题，延长时间无法解决。
+
     Args:
         current_time_limit: The user-specified time limit in minutes.
+            用户指定的时间上限（分钟）。
         minimum_required_minutes: The minimum feasible makespan.
+            最小可行完工时间。
 
     Returns:
         RepairOption if extension is reasonable, None otherwise.
+            若延长合理则返回 RepairOption，否则返回 None。
     """
     if current_time_limit is None:
         return None
@@ -339,6 +399,7 @@ def propose_time_extension(
     gap = minimum_required_minutes - current_time_limit
 
     # Don't propose extreme extensions (> 3× the current limit)
+    # 不要提议极端延长（> 当前上限的 3 倍）
     if current_time_limit > 0 and minimum_required_minutes > 3 * current_time_limit:
         return None
 
@@ -356,6 +417,7 @@ def propose_time_extension(
 
 # =============================================================================
 # 5.23  Repair option validation
+#      修复选项校验
 # =============================================================================
 
 
@@ -364,17 +426,27 @@ def validate_repair_option(
 ) -> RepairValidation:
     """Validate that a RepairOption is internally consistent.
 
+    校验 RepairOption 是否内部一致。
+
     Checks:
       - option_id is non-empty
       - option_type is a recognised type
       - description, changes, and effects are non-empty
       - revalidation_status is 'validated'
 
+    检查项：
+      - option_id 非空
+      - option_type 是已识别的类型
+      - description、changes、effects 非空
+      - revalidation_status 为 'validated'
+
     Args:
         option: A RepairOption to validate.
+            待校验的 RepairOption。
 
     Returns:
         RepairValidation with is_valid=True and empty issues on success.
+            成功时返回 is_valid=True 且 issues 为空的 RepairValidation。
     """
     issues: list[str] = []
     valid_types = {
@@ -412,16 +484,24 @@ def validate_repair_option(
 
 # =============================================================================
 # 5.24  Rank repair options
+#      排序修复选项
 # =============================================================================
 
 # Priority ordering: least disruptive options first (handbook 5.24).
+# 优先级排序：最不打扰的选项优先（手册 5.24）。
 _OPTION_TYPE_PRIORITY: dict[str, int] = {
     "reduce_servings": 1,  # Least disruptive — just scale down
+    # ↑ 最不打扰 —— 只是缩减份量
     "alternative_equipment": 2,  # Use what you have differently
+    # ↑ 以不同方式利用现有设备
     "substitute_ingredient": 3,  # Swap ingredients
+    # ↑ 替换食材
     "extend_time": 4,  # Just wait longer
+    # ↑ 只是等待更久
     "replace_dish": 5,  # Change the menu
+    # ↑ 更换菜单
     "purchase": 6,  # Most disruptive — go shopping
+    # ↑ 最打扰 —— 出门采购
 }
 
 
@@ -430,14 +510,21 @@ def rank_repair_options(
 ) -> tuple[RepairOption, ...]:
     """Rank repair options from least to most disruptive.
 
+    将修复选项从最不打扰到最打扰排序。
+
     Sorts by option_type priority, then by option_id for determinism.
     Only includes validated options (revalidation_status='validated').
 
+    先按 option_type 优先级排序，再按 option_id 排序以保证确定性。
+    仅包含已校验的选项（revalidation_status='validated'）。
+
     Args:
         options: Unsorted repair options.
+            未排序的修复选项。
 
     Returns:
         Sorted tuple, least disruptive first.
+            排序后的元组，最不打扰的在前。
     """
     valid = [o for o in options if o.revalidation_status == "validated"]
     valid.sort(
@@ -451,4 +538,5 @@ def rank_repair_options(
 
 # =============================================================================
 # 5.25  Apply approved decisions
+#      应用已批准的决策
 # =============================================================================
