@@ -1,8 +1,21 @@
+# =============================================================================
+# 黄金测试夹具模块（parsing/golden_fixtures）
+# -----------------------------------------------------------------------------
+# 7 道真实中文菜谱的“黄金（golden）”测试夹具，用于解析器的回归测试。
+# 每个夹具都是预处理后的菜谱文本：段标题已规范化、行尾已统一、空行已折叠。
+# 它们作为“基于规则的提取流水线”的 ground truth（标准答案 / 基准真值）。
+# =============================================================================
+
 """Golden recipe fixtures — 7 real Chinese dishes for parser testing.
+
+黄金菜谱夹具 —— 7 道真实中文菜谱，用于解析器测试。
 
 Each fixture is a preprocessed recipe text: section headers normalized,
 line endings unified, blank lines collapsed. These serve as ground truth
 for the rule-based extraction pipeline.
+
+每个夹具都是预处理后的菜谱文本：段标题已规范化、行尾已统一、空行已折叠。
+它们作为基于规则的提取流水线的 ground truth。
 """
 
 from __future__ import annotations
@@ -230,6 +243,7 @@ RECIPE_CHICKEN_WINGS = (
 
 # =============================================================================
 # Fixture registry
+# 夹具注册表
 # =============================================================================
 
 GOLDEN_FIXTURES: dict[str, str] = {

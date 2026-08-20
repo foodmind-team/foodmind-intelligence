@@ -1,4 +1,22 @@
+# =============================================================================
+# LLM 多菜谱导入提取器模块（llm/recipe_importer）
+# -----------------------------------------------------------------------------
+# 实现“多菜谱导入”的 LLM 提取。导入边界复用了 Agent 的完整自然语言流水线：
+#   1. clean_recipe_text    —— 确定性清洗（行尾、空行）
+#   2. split_recipe_blocks  —— 确定性多菜切分
+#   3. 多块输入 → 按菜并发 fan-out 到 LLMRecipeExtractor（每块是短小、全结构化的
+#      提取；失败仅对该块降级到规则提取器）
+#   4. 单块输入 → 对整个 recipes 数组做一次 LLM 调用，并抬高输出预算，
+#      避免多菜 JSON 在数组中间被截断
+# 所有路径都回退到 DeterministicRecipeImportExtractor 而非报错，
+# 因此 provider 故障绝不阻塞交互式导入流程。
+# 关键点：多菜识别先做“语义切分”（LLM 识别每道菜的首行标记），再并发提取；
+#        英文规范化（_ensure_english）是“展示级”的最终闸门，失败不回滚结构数据。
+# =============================================================================
+
 """LLM-backed multi-dish recipe import extraction.
+
+基于 LLM 的多菜谱导入提取。
 
 The import boundary reuses the agent's full natural-language pipeline:
 
@@ -61,6 +79,7 @@ _SYSTEM_PROMPT = (
     "means the title is 'Jambalaya'); never copy an introductory sentence as the name. Never invent a serving count, "
     "ingredient, or step that the user did not provide; use null or an empty array when required information is missing."
 )
+# ↑ 主提取提示词：从任意语言文本提取一道或多道菜，强制英文输出、一菜一对象、禁止臆造
 
 _ANSWER_SYSTEM_PROMPT = (
     "Translate recipe clarification answer values into clear English. Return one JSON object only with an "
@@ -69,6 +88,7 @@ _ANSWER_SYSTEM_PROMPT = (
     "add or remove recipe facts. Every textual value must be English. For a servings answer, convert a number "
     "written in words or another numeral system to ASCII digits only."
 )
+# ↑ 答案翻译提示词：把澄清答案翻译成英文，保持 question_id 与事实不变
 
 _SPLIT_SYSTEM_PROMPT = (
     "You split a pasted cooking text into its separate dishes. Return one JSON object only with "
@@ -82,6 +102,7 @@ _SPLIT_SYSTEM_PROMPT = (
     "after an ingredient, e.g. '...Cooking oil Fried Spare Ribs' — when you see such a new "
     "dish name, still report it; a marker does not have to start at a line boundary."
 )
+# ↑ 语义切分提示词：让 LLM 识别每道菜的“首行标记”，用于按菜切分文本
 
 _TRANSLATION_SYSTEM_PROMPT = (
     "You normalize already-extracted recipe drafts into English. Return one JSON object only with a recipes "
@@ -89,15 +110,18 @@ _TRANSLATION_SYSTEM_PROMPT = (
     "proper nouns. Translate name, every ingredient, and every step into clear English. Do not add, remove, "
     "merge, or reinterpret recipe facts. Every letter in user-visible fields must use Latin script."
 )
+# ↑ 英文规范化提示词：把已提取的草稿翻译成英文，保留 draft_id / 份数 / 顺序 / 数量
 
 logger = logging.getLogger(__name__)
 
 
 def _contains_non_latin_letters(value: str) -> bool:
+    """判断字符串是否含非拉丁字母（用于检测未翻译的多语言文本）。"""
     return any(character.isalpha() and "LATIN" not in unicodedata.name(character, "") for character in value)
 
 
 def _needs_english_normalisation(drafts: tuple[RecipeImportDraft, ...]) -> bool:
+    """判断草稿集是否还含有非拉丁文本（需要英文规范化）。"""
     return any(
         _contains_non_latin_letters(value)
         for draft in drafts
@@ -106,7 +130,7 @@ def _needs_english_normalisation(drafts: tuple[RecipeImportDraft, ...]) -> bool:
 
 
 class LLMRecipeImportExtractor:
-    """Extract a bounded list of partial import drafts with safe fallback."""
+    """提取有界数量的部分导入草稿，并带安全兜底。"""
 
     def __init__(
         self,
@@ -123,6 +147,8 @@ class LLMRecipeImportExtractor:
         # Per-dish fan-out reuses the workflow's full-field extractor, so every
         # dish benefits from the same rich prompt and rule degradation as the
         # main cooking-plan pipeline.
+        # 按菜 fan-out 复用工作流的全字段提取器，使每道菜享受与主烹饪计划流水线
+        # 相同的丰富提示词与规则降级。
         self._dish_extractor = LLMRecipeExtractor(client, translate_to_english=True)
 
     async def normalise_answers(
@@ -130,7 +156,7 @@ class LLMRecipeImportExtractor:
         questions: tuple[RecipeImportQuestion, ...],
         answers: tuple[RecipeImportAnswer, ...],
     ) -> tuple[RecipeImportAnswer, ...]:
-        """Translate free-text clarification answers while preserving their IDs."""
+        """翻译澄清答案的自由文本，同时保留其 ID。"""
 
         field_by_id = {question.question_id: question.field_path for question in questions}
         if not answers:
@@ -178,14 +204,19 @@ class LLMRecipeImportExtractor:
         )
 
     async def extract(self, text: str) -> tuple[RecipeImportDraft, ...]:
+        """把粘贴文本提取为若干菜谱草稿。"""
         cleaned = clean_recipe_text(text)
         # Deterministic coarse cut: separators, headings, blank lines, then
         # "Ingredients Preparation" template boundaries (substring-based, so
         # glued headings like "...serve. Ingredients Preparation" still cut).
+        # 确定性粗切：分隔符、标题、空行，然后是 "Ingredients Preparation" 模板边界
+        # （基于子串，因此像 "...serve. Ingredients Preparation" 这种粘连标题仍能切开）。
         coarse: list[str] = []
         # Blank lines are presentation, not a reliable dish boundary. Leave
         # them to the semantic splitter; deterministic fallback can still use
         # the legacy blank-line heuristic when the provider is unavailable.
+        # 空行是排版，不是可靠的菜品边界。交给语义切分器处理；
+        # 确定性兜底在 provider 不可用时仍可用旧版空行启发式。
         for block in split_recipe_blocks(cleaned, split_blank_lines=False):
             coarse.extend(expand_prep_boundaries(block))
         blocks = tuple(coarse)
@@ -195,6 +226,9 @@ class LLMRecipeImportExtractor:
         # see. Running it per block keeps every call short (a full 6-dish paste
         # times out in one shot) and lets still-merged blocks expand. Blocks
         # are independent, so they split concurrently under the LLM semaphore.
+        # LLM 语义切分是主要的边界检测器：它能处理无标题的菜以及其他确定性规则
+        # 看不到的布局。按块运行使每次调用保持短小（一整段 6 道菜的粘贴会一次超时），
+        # 并让仍被合并的块得以展开。块彼此独立，因此在 LLM 信号量下并发切分。
         settings = get_settings()
         semaphore = asyncio.Semaphore(max(1, settings.llm_max_concurrency))
 
@@ -211,12 +245,14 @@ class LLMRecipeImportExtractor:
 
         if len(blocks) > 1:
             # Recognisable multi-dish text → extract each block independently.
+            # 可识别的多菜文本 → 独立提取每个块。
             try:
                 drafts = await self._extract_multi(blocks)
             except (TimeoutError, LLMError, TypeError, ValueError):
                 drafts = await self._fallback.extract(cleaned)
             return await self._ensure_english(drafts)
         # Single block → whole-text recipes-array extraction.
+        # 单块 → 对整个文本做 recipes 数组提取。
         try:
             drafts = await self._extract_single(cleaned)
         except (TimeoutError, LLMError, TypeError, ValueError):
@@ -224,7 +260,7 @@ class LLMRecipeImportExtractor:
         return await self._ensure_english(drafts)
 
     async def _ensure_english(self, drafts: tuple[RecipeImportDraft, ...]) -> tuple[RecipeImportDraft, ...]:
-        """Retry translation as a bounded final gate instead of persisting mixed-script drafts."""
+        """把英文规范化作为“有界最终闸门”重试，而不是持久化混合文字草稿。"""
         if not _needs_english_normalisation(drafts):
             return drafts
         request_payload = {"recipes": [draft.model_dump() for draft in drafts]}
@@ -261,6 +297,9 @@ class LLMRecipeImportExtractor:
             # before anything is persisted. Returning them is safer than
             # discarding a valid multilingual recipe because the optional
             # English normalisation provider had a transient failure.
+            # 导入可用性优先于“仅展示”的翻译步骤。草稿已完成结构化提取，
+            # 审阅界面允许用户在持久化前检查。返回它们比因可选的英文规范化
+            # provider 瞬时故障而丢弃一份有效的多语言菜谱更安全。
             logger.warning(
                 "Recipe-import English normalisation failed; returning reviewable source-language drafts",
                 exc_info=exc,
@@ -268,10 +307,12 @@ class LLMRecipeImportExtractor:
             return drafts
 
     async def _split_with_llm(self, text: str) -> tuple[str, ...]:
-        """Ask the LLM for the first line of every dish, then cut on those lines.
+        """让 LLM 给出每道菜的首行，再按这些行切分。
 
         Returns a single block when the model reports one dish or its markers
         cannot be located, so the caller falls through to whole-text parsing.
+
+        当模型只报告一道菜或标记无法定位时返回单块，调用方将落到整文本解析。
         """
         payload = await asyncio.wait_for(
             self._client.chat_json(
@@ -283,6 +324,7 @@ class LLMRecipeImportExtractor:
             ),
             # The split reply is tiny — never let it consume the whole budget.
             # Per-block calls stay well under this; whole-text pastes may not.
+            # 切分回复很小 —— 绝不让它耗尽整个预算。按块调用远低于此；整文本粘贴可能不会。
             timeout=min(self._timeout_seconds, 6.0),
         )
         markers = payload.get("dishes")
@@ -306,11 +348,13 @@ class LLMRecipeImportExtractor:
                         self._dish_extractor.extract(block),
                         # DeepSeek completes a single dish well under this;
                         # a hung provider must not stall the whole import.
+                        # DeepSeek 单道菜的完成时间远低于此；卡死的 provider 绝不能拖垮整个导入。
                         timeout=min(self._timeout_seconds, 10.0),
                     )
                 except (TimeoutError, LLMError, TypeError, ValueError):
                     # Progressive degradation: a single bad block must not
                     # fail the whole import — use the rule extractor for it.
+                    # 渐进降级：单个坏块绝不能使整个导入失败 —— 对它用规则提取器。
                     candidate = await RecipeExtractor().extract(block)
             return _candidate_to_draft(index, raw_block, candidate)
 
@@ -342,6 +386,7 @@ class LLMRecipeImportExtractor:
 
     @staticmethod
     def _draft(index: int, value: dict[str, Any], *, source_text: str = "") -> RecipeImportDraft:
+        """把 LLM 输出的单个菜谱对象转换为 RecipeImportDraft（防御式）。"""
         raw_servings = value.get("servings")
         servings: int | None = None
         if isinstance(raw_servings, int) and not isinstance(raw_servings, bool) and 1 <= raw_servings <= 50:
@@ -352,6 +397,8 @@ class LLMRecipeImportExtractor:
             # Enforce the public short-title contract even if the provider
             # echoes webpage prose. The deterministic extractor recognises
             # explicit references such as "This Jambalaya is ...".
+            # 即使 provider 回显了网页散文，也要强制执行“简短标题”契约。
+            # 确定性提取器能识别 "This Jambalaya is ..." 这类显式引用。
             name = RecipeExtractor._extract_dish_name(source_text.splitlines())
         name = name[:80] if name else None
         ingredients = tuple(

@@ -1,4 +1,23 @@
+# =============================================================================
+# LLM ReAct 控制器模块（llm/controller）
+# -----------------------------------------------------------------------------
+# P5-2：基于 tool-calling 的真实 LLM 控制器，实现 ``AgentController`` 协议。
+# 把 LLM 的 ``tool_calls`` / 文本响应翻译为节点可消费的结构化决策：
+#   {"type": "tool_call", "tool": str, "arguments": dict}
+#   {"type": "final", "response": dict}
+#   {"type": "fallback"}
+# 安全红线：
+#   - LLM 只做“软决策”（选工具 / 判断完成），工具内部仍由确定性服务执行；
+#     最终动作经 controller_nodes._apply_decision 白名单校验；
+#   - 任何失败路径（LLM 异常 / 非法 JSON / 空输出 / 未知工具名）都收敛为 fallback，
+#     由节点回退确定性 DAG，绝不静默放行；
+#   - 传给 LLM 的状态摘要是紧凑、非敏感的（D4）：只含 request_id / 步数 / 工具调用计数，
+#     不携带菜谱原文、库存或用户身份。
+# =============================================================================
+
 """P5-2: LLMReActController —— 基于 tool-calling 的真实 LLM 控制器。
+
+LLMReActController (P5-2): a real LLM controller based on tool-calling.
 
 实现 ``AgentController`` Protocol：把 LLM 的 ``tool_calls`` / 文本响应
 翻译为节点可消费的结构化决策：
@@ -35,6 +54,7 @@ _SYSTEM_PROMPT = (
     "Never invent tool names. Never call a tool with arguments outside its schema. "
     "Never emit anything other than the three JSON shapes above."
 )
+# ↑ 系统提示词：约束 LLM 只输出三种合法 JSON 决策形态之一，禁止臆造工具名或越界参数
 
 
 def _to_openai_tool(tool: RegisteredTool) -> dict[str, object]:
