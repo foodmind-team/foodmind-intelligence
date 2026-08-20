@@ -1,7 +1,19 @@
+# =============================================================================
+# 节点公共兼容外观模块（workflow/nodes）
+# -----------------------------------------------------------------------------
+# LangGraph 烹饪计划节点的公共兼容外观。实现按流水线阶段拆分，使每个模块
+# 只承担一项内聚职责。保持这些再导出稳定，以便图接线与扩展使用。
+# =============================================================================
+
 """Public compatibility façade for LangGraph cooking-plan nodes.
+
+LangGraph 烹饪计划节点的公共兼容外观。
 
 Implementations are split by pipeline stage so each module owns one cohesive
 responsibility.  Keep these re-exports stable for graph wiring and extensions.
+
+实现按流水线阶段拆分，使每个模块只承担一项内聚职责。保持这些再导出稳定，
+以便图接线与扩展使用。
 """
 
 from cooking_plan_agent.workflow.controller_nodes import (
