@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, cast
 from uuid import UUID
@@ -112,6 +113,116 @@ class BackendToolClient:
             timeout_seconds=timeout_seconds,
         )
         return _profile_response(raw)
+
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        """Return the small, read-only registry exposed to the provider."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "Search the current user's authorised FoodMind records, products, and places. "
+                    "Build a self-contained query from the conversation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 200}},
+                        "required": ["query"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "explore",
+                    "description": "List the current user's authorised FoodMind items when a bounded collection is "
+                    "needed.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "sourceTypes": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": ["FOOD_RECORD", "FOOD_PRODUCT", "PLACE"]},
+                                "maxItems": 3,
+                            }
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "resolve",
+                    "description": "Resolve references that the user has shared in this FoodMind chat session.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "referenceIds": {
+                                "type": "array",
+                                "items": {"type": "string", "format": "uuid"},
+                                "minItems": 1,
+                                "maxItems": 20,
+                            }
+                        },
+                        "required": ["referenceIds"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+        ]
+
+    async def execute_tool_call(
+        self,
+        *,
+        name: str,
+        arguments: str,
+        session_id: UUID,
+        delegation_token: str,
+        timeout_seconds: float,
+    ) -> tuple[GroundedSource, ...]:
+        """Validate and dispatch a provider-requested tool without widening authority."""
+        try:
+            payload = json.loads(arguments)
+        except json.JSONDecodeError as exc:
+            raise BackendToolError("Tool arguments are invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise BackendToolError("Tool arguments must be an object")
+        if name == "search":
+            query = payload.get("query")
+            if set(payload) != {"query"} or not isinstance(query, str) or not query.strip():
+                raise BackendToolError("Search arguments are invalid")
+            return await self.search(query=query, delegation_token=delegation_token, timeout_seconds=timeout_seconds)
+        if name == "explore":
+            source_types = payload.get("sourceTypes", [])
+            if set(payload) != {"sourceTypes"} or not isinstance(source_types, list) or len(source_types) > 3:
+                raise BackendToolError("Explore arguments are invalid")
+            if not all(isinstance(item, str) and item in _SOURCE_TYPES for item in source_types):
+                raise BackendToolError("Explore arguments are invalid")
+            return await self.explore(
+                source_types=cast(list[SourceType], source_types),
+                delegation_token=delegation_token,
+                timeout_seconds=timeout_seconds,
+            )
+        if name == "resolve":
+            reference_ids = payload.get("referenceIds")
+            if (
+                set(payload) != {"referenceIds"}
+                or not isinstance(reference_ids, list)
+                or not 1 <= len(reference_ids) <= 20
+            ):
+                raise BackendToolError("Resolve arguments are invalid")
+            try:
+                parsed_ids = [UUID(str(item)) for item in reference_ids]
+            except (TypeError, ValueError) as exc:
+                raise BackendToolError("Resolve arguments are invalid") from exc
+            return await self.resolve(
+                session_id=session_id,
+                reference_ids=parsed_ids,
+                delegation_token=delegation_token,
+                timeout_seconds=timeout_seconds,
+            )
+        raise BackendToolError("Tool is not registered")
 
     async def _post(
         self,
