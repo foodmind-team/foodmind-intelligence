@@ -43,6 +43,35 @@ docker compose up --build
 
 Set DEEPSEEK_API_KEY in the ignored .env only when deliberately enabling the optional LLM paths. Then start the Backend with matching local service-token values from its .env.example. For the full authenticated product journey, prefer [FoodMind Infrastructure](https://github.com/foodmind-team/foodmind-infra), which composes Backend, PostgreSQL, the runtime, and the model package together.
 
+## Local deployment
+
+For a complete local FoodMind deployment, start
+[FoodMind Infrastructure](https://github.com/foodmind-team/foodmind-infra).
+It builds the model package and runs these services on a private Docker network
+with the matching Backend service tokens. This repository's Compose file is for
+private runtime diagnosis, not for exposing an API directly to Web or Android.
+
+To run the private services independently on Windows PowerShell, first create
+the model package in a sibling ML checkout, then start the agent Compose file:
+
+```powershell
+Set-Location ..\foodmind-ml
+uv sync --frozen --dev
+uv run python scripts/build_runtime_package.py --output .tmp/runtime/model-package
+Set-Location ..\foodmind-intelligence\agent-service\app\agents
+Copy-Item .env.example .env
+# Add DEEPSEEK_API_KEY to .env only when the optional LLM paths are required.
+docker compose -f docker-compose.yml up --build -d
+Invoke-WebRequest http://localhost:8002/health/ready
+```
+
+The diagnostic listeners are Chatbot `8001`, Inference `8002`, Cooking `8003`,
+and Recommendation `8004`. They are private service interfaces: a Backend must
+use matching service tokens and clients must continue to use Backend
+`/api/v1`. Inspect failures with `docker compose -f docker-compose.yml logs -f`
+and stop the diagnostic stack with `docker compose -f docker-compose.yml down`.
+Never commit `.env`, provider keys, or non-local service tokens.
+
 ## Run a component directly
 
 Each service is an independent Python project. For example, start the private inference service after creating the model package:
