@@ -72,6 +72,35 @@ use matching service tokens and clients must continue to use Backend
 and stop the diagnostic stack with `docker compose -f docker-compose.yml down`.
 Never commit `.env`, provider keys, or non-local service tokens.
 
+## Provider keys and private tokens
+
+The independent diagnostic Compose project reads its shared provider key from
+`agent-service/app/agents/.env`. Create the ignored file from `.env.example`:
+
+```powershell
+Set-Location agent-service\app\agents
+Copy-Item .env.example .env
+Add-Content .env 'DEEPSEEK_API_KEY=<provider-api-key>'
+```
+
+`DEEPSEEK_API_KEY` is optional only when the selected Agent path allows its
+deterministic fallback. A service-specific override can use
+`CHAT_AGENT_LLM_API_KEY`, `COOKING_PLAN_LLM_API_KEY`, or
+`RECOMMENDATION_AGENT_LLM_API_KEY`; use one credential source per service and
+never log it. Set the related `*_LLM_ENABLED` flag only when a key and provider
+configuration are present.
+
+Private tokens have two directions: the Backend's
+`CHAT_AGENT_SERVICE_TOKEN`, `COOKING_AGENT_SERVICE_TOKEN`, and
+`RECOMMENDATION_AGENT_SERVICE_TOKEN` must match the respective Agent internal
+token; Chatbot's `CHAT_AGENT_BACKEND_SERVICE_TOKEN` must match Backend
+`INTERNAL_SERVICE_TOKEN`. Recommendation's inference token must similarly
+match Inference. For a full local product, set all of these once in
+[FoodMind Infrastructure](https://github.com/foodmind-team/foodmind-infra)'s
+ignored `.env`; its Compose file makes the pairings. The standalone Compose
+defaults are local diagnostic sentinels only and must not be reused outside a
+local workstation.
+
 ## Run a component directly
 
 Each service is an independent Python project. For example, start the private inference service after creating the model package:
