@@ -65,7 +65,7 @@ jobs:
         working-directory: agent-service/app/agents/chatbot
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -84,7 +84,7 @@ jobs:
         working-directory: agent-service/app/agents/cooking
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -112,7 +112,7 @@ jobs:
         working-directory: inference-service
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
